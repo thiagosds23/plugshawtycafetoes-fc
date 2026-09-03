@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useContext } from 'react';
-import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck } from 'lucide-react';
+import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck, Download, HardDriveDownload } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { toPng } from 'html-to-image';
 import { removeBackground } from '@imgly/background-removal';
 import { AuthContext } from '../AuthContext';
 import { calcOVR } from '../utils/ovr';
@@ -865,6 +866,31 @@ function AuditModal({ onClose, adminUser }) {
     }
   };
 
+  const [isExportingBackup, setIsExportingBackup] = useState(false);
+
+  const handleDownloadBackup = async () => {
+    setIsExportingBackup(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/backup`, {
+        headers: { 'x-user-id': String(adminUser?.id) }
+      });
+      if (!res.ok) throw new Error('Falha ao gerar backup');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      fetchLogs();
+    } catch (err) {
+      alert('Erro ao baixar backup: ' + err.message);
+    } finally {
+      setIsExportingBackup(false);
+    }
+  };
+
   const getActionBadge = (action) => {
     switch (action) {
       case 'LOGIN':
@@ -971,6 +997,16 @@ function AuditModal({ onClose, adminUser }) {
               title="Atualizar registros agora"
             >
               <RefreshCw size={14} className={loading ? 'animate-spin' : ''} /> Atualizar
+            </button>
+            <button 
+              className="btn btn-secondary" 
+              onClick={handleDownloadBackup} 
+              disabled={isExportingBackup}
+              style={{ padding: '8px 12px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', gap: '6px', color: '#60a5fa', borderColor: 'rgba(96, 165, 250, 0.4)' }}
+              title="Baixar backup completo do banco de dados em JSON"
+            >
+              <HardDriveDownload size={14} className={isExportingBackup ? 'animate-spin' : ''} />
+              {isExportingBackup ? 'Baixando...' : 'Backup (.json)'}
             </button>
             {logs.length > 0 && (
               <button 
@@ -1140,6 +1176,86 @@ export default function Players() {
     window.open(EVAL_FORM_URL, '_blank', 'noopener,noreferrer');
     setShowEvalModal(false);
     setEvalConfirmationView(false);
+  };
+
+  const [downloadingCardId, setDownloadingCardId] = useState(null);
+  const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
+
+  const handleDownloadBackupDirect = async () => {
+    setIsDownloadingBackup(true);
+    try {
+      const res = await fetch(`${API_URL}/admin/backup`, {
+        headers: { 'x-user-id': String(user?.id) }
+      });
+      if (!res.ok) throw new Error('Falha ao gerar backup');
+      const data = await res.json();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      alert('✅ Backup do clube exportado com sucesso em JSON!');
+    } catch (err) {
+      alert('Erro ao baixar backup: ' + err.message);
+    } finally {
+      setIsDownloadingBackup(false);
+    }
+  };
+
+  const handleDownloadCard = async (player, e) => {
+    if (e) { e.preventDefault(); e.stopPropagation(); }
+    const cardEl = document.getElementById(`fut-card-${player.id}`);
+    if (!cardEl) return;
+
+    setDownloadingCardId(player.id);
+    try {
+      const dataUrl = await toPng(cardEl, { 
+        cacheBust: true, 
+        pixelRatio: 2.5,
+        style: {
+          transform: 'none',
+          boxShadow: 'none'
+        }
+      });
+
+      const playerName = player.nickname ? player.nickname.split(',')[0].trim() : player.username;
+      const fileName = `carta-fut-${playerName.toLowerCase().replace(/\s+/g, '-')}-ovr${calcOVR(player)}.png`;
+
+      // Suporte a compartilhamento nativo no celular (WhatsApp / Instagram Stories)
+      if (navigator.share && navigator.canShare) {
+        try {
+          const blob = await (await fetch(dataUrl)).blob();
+          const file = new File([blob], fileName, { type: 'image/png' });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              title: `Carta FUT de ${playerName} (OVR ${calcOVR(player)})`,
+              text: `Confira minha Carta FUT oficial no plugshawtycafetoes FC! ⚽🔥`,
+              files: [file]
+            });
+            setDownloadingCardId(null);
+            return;
+          }
+        } catch (shareErr) {
+          if (shareErr.name === 'AbortError') {
+            setDownloadingCardId(null);
+            return;
+          }
+        }
+      }
+
+      // Download direto do arquivo PNG
+      const link = document.createElement('a');
+      link.download = fileName;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error('Erro ao gerar imagem da carta:', err);
+      alert('Não foi possível gerar a imagem da carta FUT. Tente novamente.');
+    } finally {
+      setDownloadingCardId(null);
+    }
   };
 
   const normalize = str => (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
@@ -1431,9 +1547,38 @@ export default function Players() {
         style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-          <div className="fut-card" style={isEditable ? { filter: 'drop-shadow(0 0 18px rgba(0, 245, 155, 0.45))' } : {}}>
+          <div className="fut-card" id={`fut-card-${player.id}`} style={isEditable ? { filter: 'drop-shadow(0 0 18px rgba(0, 245, 155, 0.45))' } : {}}>
             <img src="/fut-bg.png" alt="Card Background" className="fut-card-bg" />
             <div className="fut-card-inner">
+              {/* Botão de Download / Compartilhar Carta FUT */}
+              <button 
+                onClick={(e) => handleDownloadCard(player, e)}
+                style={{ 
+                  position: 'absolute', 
+                  top: -8, 
+                  left: -8, 
+                  background: 'rgba(18, 20, 32, 0.95)', 
+                  border: '1.5px solid rgba(0, 245, 155, 0.5)', 
+                  borderRadius: '50%', 
+                  padding: '9px', 
+                  color: '#fff', 
+                  cursor: 'pointer', 
+                  zIndex: 10,
+                  boxShadow: '0 0 14px rgba(0, 245, 155, 0.35)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center'
+                }}
+                title="Baixar ou Compartilhar Carta FUT em HD"
+                disabled={downloadingCardId === player.id}
+              >
+                {downloadingCardId === player.id ? (
+                  <Loader2 size={16} className="animate-spin" color="var(--primary)" />
+                ) : (
+                  <Download size={16} color="var(--primary)" />
+                )}
+              </button>
+
               {/* Botão de edição: exibido APENAS para o Meu Jogador */}
               {isEditable && (
                 <button 
@@ -1505,7 +1650,7 @@ export default function Players() {
             </div>
           </div>
 
-          {/* Botão de Ação Direta para o Meu Jogador */}
+          {/* Botões de Ação para o Meu Jogador */}
           {isEditable && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '310px' }}>
               <button 
@@ -1527,52 +1672,125 @@ export default function Players() {
                 <Edit2 size={16} /> Editar Meu Jogador
               </button>
 
+              <button 
+                className="btn btn-secondary" 
+                style={{ 
+                  width: '100%', 
+                  padding: '10px 16px', 
+                  fontSize: '0.84rem', 
+                  fontWeight: '800', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '8px',
+                  borderRadius: '12px',
+                  borderColor: 'rgba(0, 245, 155, 0.45)',
+                  background: 'rgba(0, 245, 155, 0.08)',
+                  color: 'var(--primary)'
+                }}
+                onClick={(e) => handleDownloadCard(player, e)}
+                disabled={downloadingCardId === player.id}
+              >
+                {downloadingCardId === player.id ? (
+                  <><Loader2 size={16} className="animate-spin" /> Gerando Imagem...</>
+                ) : (
+                  <><Download size={16} /> 📸 Baixar / Compartilhar Carta</>
+                )}
+              </button>
+
               {isAdmin && (
-                <button 
-                  className="btn btn-secondary" 
-                  style={{ 
-                    width: '100%', 
-                    padding: '10px 16px', 
-                    fontSize: '0.82rem', 
-                    fontWeight: '800', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
-                    gap: '8px',
-                    borderRadius: '12px',
-                    border: '1px solid rgba(139, 92, 246, 0.45)',
-                    background: 'rgba(139, 92, 246, 0.1)',
-                    color: '#c084fc',
-                    boxShadow: '0 0 14px rgba(139, 92, 246, 0.15)'
-                  }}
-                  onClick={() => setShowAuditModal(true)}
-                >
-                  <ShieldCheck size={16} color="#c084fc" /> 🛡️ Auditoria do App (Admin)
-                </button>
+                <>
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ 
+                      width: '100%', 
+                      padding: '10px 16px', 
+                      fontSize: '0.82rem', 
+                      fontWeight: '800', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '8px',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(139, 92, 246, 0.45)',
+                      background: 'rgba(139, 92, 246, 0.1)',
+                      color: '#c084fc',
+                      boxShadow: '0 0 14px rgba(139, 92, 246, 0.15)'
+                    }}
+                    onClick={() => setShowAuditModal(true)}
+                  >
+                    <ShieldCheck size={16} color="#c084fc" /> 🛡️ Auditoria do App (Admin)
+                  </button>
+
+                  <button 
+                    className="btn btn-secondary" 
+                    style={{ 
+                      width: '100%', 
+                      padding: '9px 16px', 
+                      fontSize: '0.80rem', 
+                      fontWeight: '800', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      gap: '8px',
+                      borderRadius: '12px',
+                      border: '1px solid rgba(96, 165, 250, 0.4)',
+                      background: 'rgba(96, 165, 250, 0.08)',
+                      color: '#60a5fa'
+                    }}
+                    onClick={handleDownloadBackupDirect}
+                    disabled={isDownloadingBackup}
+                  >
+                    <HardDriveDownload size={15} color="#60a5fa" className={isDownloadingBackup ? 'animate-spin' : ''} />
+                    {isDownloadingBackup ? 'Gerando Backup...' : '💾 Baixar Backup do Clube (.json)'}
+                  </button>
+                </>
               )}
             </div>
           )}
 
-          {/* Botão de Admin para Editar ou Resetar PIN de outros jogadores */}
-          {!isEditable && isAdmin && (
+          {/* Botões para Outros Atletas */}
+          {!isEditable && (
             <div style={{ width: '310px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
               <button 
-                className="btn" 
+                className="btn btn-secondary" 
                 style={{ 
                   width: '100%', 
-                  padding: '9px 14px', 
-                  fontSize: '0.82rem', 
-                  fontWeight: '800', 
+                  padding: '8px 12px', 
+                  fontSize: '0.78rem', 
+                  fontWeight: '700', 
                   display: 'flex', 
                   alignItems: 'center', 
                   justifyContent: 'center', 
                   gap: '6px',
                   borderRadius: '10px'
                 }}
-                onClick={() => startEditing(player)}
+                onClick={(e) => handleDownloadCard(player, e)}
+                disabled={downloadingCardId === player.id}
               >
-                <Edit2 size={15} /> Editar Jogador (Admin)
+                {downloadingCardId === player.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+                Baixar Carta FUT
               </button>
+
+              {isAdmin && (
+                <button 
+                  className="btn" 
+                  style={{ 
+                    width: '100%', 
+                    padding: '9px 14px', 
+                    fontSize: '0.82rem', 
+                    fontWeight: '800', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '6px',
+                    borderRadius: '10px'
+                  }}
+                  onClick={() => startEditing(player)}
+                >
+                  <Edit2 size={15} /> Editar Jogador (Admin)
+                </button>
+              )}
 
               {player.has_pin ? (
                 <button 

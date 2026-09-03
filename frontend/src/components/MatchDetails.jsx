@@ -452,13 +452,36 @@ export default function MatchDetails() {
     setIsExporting(true);
     try {
       const dataUrl = await toPng(cardRef.current, { cacheBust: true, quality: 0.95 });
+      
+      // Suporte a compartilhamento nativo direto no WhatsApp pelo celular
+      if (navigator.share && navigator.canShare) {
+        try {
+          const blob = await (await fetch(dataUrl)).blob();
+          const file = new File([blob], `escalacao-partida-${match.date}.png`, { type: 'image/png' });
+          if (navigator.canShare({ files: [file] })) {
+            await navigator.share({
+              title: `Escalação plugshawtycafetoes FC — ${match.date}`,
+              text: `Confira a escalação oficial da pelada de ${new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')}! ⚽🔥`,
+              files: [file]
+            });
+            return;
+          }
+        } catch (shareErr) {
+          if (shareErr.name !== 'AbortError') {
+            console.warn('Share API falhou, acionando download:', shareErr);
+          } else {
+            return; // Usuário apenas cancelou a janela de compartilhamento
+          }
+        }
+      }
+
       const link = document.createElement('a');
       link.download = `escalacao-partida-${match.date}.png`;
       link.href = dataUrl;
       link.click();
     } catch (err) {
       console.error('Erro ao exportar imagem:', err);
-      alert('Não foi possível gerar a imagem.');
+      alert('Não foi possível gerar a imagem da escalação.');
     } finally {
       setIsExporting(false);
     }
@@ -1019,28 +1042,85 @@ export default function MatchDetails() {
       {/* Teams Ready: Lineup List & Tactical Pitch View */}
       {teamsReady && !showRating && (
         <>
-          {/* Header Controls: View Switcher & Export */}
-          <div className="flex justify-between items-center flex-wrap gap-3" style={{ marginTop: '24px', marginBottom: '20px' }}>
-            <div className="flex p-1" style={{ background: 'rgba(14, 16, 23, 0.8)', borderRadius: '14px', border: '1px solid var(--border)', flex: '1 1 260px' }}>
-              <button 
-                className={`btn ${viewMode === 'list' ? '' : 'btn-secondary'}`} 
-                style={{ padding: '8px 14px', fontSize: '0.8rem', flex: 1, borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
-                onClick={() => setViewMode('list')}
+          {/* Header Controls: View Switcher Separado da Barra de Ações */}
+          <div style={{ marginTop: '24px', marginBottom: '22px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {/* Linha 1: Seletor de Modo de Visualização (Abas) */}
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <div 
+                style={{ 
+                  display: 'flex', 
+                  background: 'rgba(14, 16, 23, 0.9)', 
+                  padding: '4px', 
+                  borderRadius: '16px', 
+                  border: '1px solid var(--border)',
+                  width: '100%',
+                  maxWidth: '440px',
+                  boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
+                }}
               >
-                <LayoutList size={16} /> Lista Detalhada
-              </button>
-              <button 
-                className={`btn ${viewMode === 'pitch' ? '' : 'btn-secondary'}`} 
-                style={{ padding: '8px 14px', fontSize: '0.8rem', flex: 1, borderRadius: '10px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
-                onClick={() => setViewMode('pitch')}
-              >
-                <MapPin size={16} /> 🏟️ Campo Tático
-              </button>
+                <button 
+                  className={`btn ${viewMode === 'list' ? '' : 'btn-secondary'}`} 
+                  style={{ 
+                    padding: '10px 16px', 
+                    fontSize: '0.84rem', 
+                    flex: 1, 
+                    borderRadius: '12px', 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '6px',
+                    fontWeight: viewMode === 'list' ? '800' : '600'
+                  }} 
+                  onClick={() => setViewMode('list')}
+                >
+                  <LayoutList size={16} /> Lista Detalhada
+                </button>
+                <button 
+                  className={`btn ${viewMode === 'pitch' ? '' : 'btn-secondary'}`} 
+                  style={{ 
+                    padding: '10px 16px', 
+                    fontSize: '0.84rem', 
+                    flex: 1, 
+                    borderRadius: '12px', 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center', 
+                    gap: '6px',
+                    fontWeight: viewMode === 'pitch' ? '800' : '600'
+                  }} 
+                  onClick={() => setViewMode('pitch')}
+                >
+                  <MapPin size={16} /> 🏟️ Campo Tático
+                </button>
+              </div>
             </div>
 
-            <button className="btn btn-secondary" style={{ width: 'auto', padding: '9px 18px', fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px', flexShrink: 0 }} onClick={exportWhatsAppCard} disabled={isExporting}>
-              <Share2 size={16} /> {isExporting ? 'Gerando...' : '📸 Exportar WhatsApp'}
-            </button>
+            {/* Linha 2: Ação de Exportar para WhatsApp (Dedicado e 100% visível em qualquer celular) */}
+            <div style={{ display: 'flex', justifyContent: 'center' }}>
+              <button 
+                className="btn btn-secondary" 
+                style={{ 
+                  width: '100%', 
+                  maxWidth: '440px',
+                  padding: '12px 18px', 
+                  fontSize: '0.86rem', 
+                  fontWeight: '800', 
+                  display: 'inline-flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '8px', 
+                  borderRadius: '14px',
+                  borderColor: 'rgba(0, 245, 155, 0.45)',
+                  background: 'rgba(0, 245, 155, 0.08)',
+                  color: '#00f59b',
+                  boxShadow: '0 0 16px rgba(0, 245, 155, 0.15)'
+                }} 
+                onClick={exportWhatsAppCard} 
+                disabled={isExporting}
+              >
+                <Share2 size={18} /> {isExporting ? 'Gerando Imagem...' : '📸 Exportar Escalação (WhatsApp)'}
+              </button>
+            </div>
           </div>
 
           <div ref={cardRef} style={{ padding: '18px 14px', background: '#08090e', borderRadius: '22px', border: '1px solid var(--border)' }}>

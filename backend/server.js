@@ -152,6 +152,55 @@ app.post('/audit-logs', (req, res) => {
   }
 });
 
+// Exportar Backup Completo do Clube em JSON (Apenas Administrador)
+app.get('/admin/backup', (req, res) => {
+  const requesterId = req.headers['x-user-id'];
+  if (!requesterId) return res.status(403).json({ error: 'Acesso não autorizado.' });
+
+  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+    if (err || !user) return res.status(403).json({ error: 'Usuário não encontrado.' });
+    const isAdmin = user.id === 1 || (user.username && user.username.toLowerCase().includes('thiago')) || (user.nickname && user.nickname.toLowerCase().includes('fela'));
+    if (!isAdmin) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+
+    const backupData = {
+      app: 'plugshawtycafetoes FC',
+      version: '1.0.0',
+      exported_at: new Date().toISOString(),
+      exported_by: user.username,
+      database: {}
+    };
+
+    const tables = ['users', 'matches', 'teams', 'team_players', 'goals', 'assists', 'ratings', 'audit_logs'];
+    let completed = 0;
+
+    tables.forEach(tableName => {
+      db.all(`SELECT * FROM ${tableName}`, [], (tblErr, rows) => {
+        if (!tblErr && rows) {
+          if (tableName === 'users') {
+            backupData.database[tableName] = rows.map(r => {
+              const copy = { ...r };
+              delete copy.pin;
+              return copy;
+            });
+          } else {
+            backupData.database[tableName] = rows;
+          }
+        } else {
+          backupData.database[tableName] = [];
+        }
+
+        completed++;
+        if (completed === tables.length) {
+          logAudit(user.id, user.username, 'ADMIN', 'Baixou backup completo do banco de dados');
+          res.setHeader('Content-Type', 'application/json');
+          res.setHeader('Content-Disposition', `attachment; filename=backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`);
+          res.json(backupData);
+        }
+      });
+    });
+  });
+});
+
 // -- AUTH --
 app.post('/register', (req, res) => {
   const { username, email, phone, inviteCode } = req.body;

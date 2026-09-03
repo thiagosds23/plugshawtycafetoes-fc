@@ -1,0 +1,24 @@
+{
+  "name": "plugshawtycafetoes FC",
+  "short_name": "plugshawty FC",
+  "description": "App oficial de partidas, cartas FUT e estatísticas do plugshawtycafetoes FC",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#07080c",
+  "theme_color": "#07080c",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/logo.jpeg",
+      "sizes": "192x192 512x512",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
