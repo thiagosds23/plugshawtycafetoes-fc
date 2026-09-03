@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Calendar, Plus, ChevronRight, Activity, Clock, CheckCircle2, Trash2 } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, Activity, Clock, CheckCircle2, Trash2, MapPin } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { API_URL } from '../config';
 
@@ -16,6 +16,8 @@ export default function Matches() {
   };
 
   const [newDate, setNewDate] = useState(getTodayDate);
+  const [newTime, setNewTime] = useState('15h');
+  const [newLocation, setNewLocation] = useState('Arena Petrópolis');
   const navigate = useNavigate();
 
   const loadMatches = () => {
@@ -30,10 +32,16 @@ export default function Matches() {
 
   const handleCreate = async (e) => {
     e.preventDefault();
+    const timeToSend = newTime.trim() || '15h';
+    const locToSend = newLocation.trim() || 'Arena Petrópolis';
     const res = await fetch(`${API_URL}/matches`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ date: newDate })
+      body: JSON.stringify({ 
+        date: newDate,
+        time: timeToSend,
+        location: locToSend
+      })
     });
     const data = await res.json();
     navigate(`/matches/${data.id}`);
@@ -84,11 +92,63 @@ export default function Matches() {
           animate={{ height: 'auto', opacity: 1 }} 
           onSubmit={handleCreate} 
           className="glass-card mb-6"
+          style={{ padding: '22px 18px', borderRadius: '18px', border: '1px solid var(--border)' }}
         >
-          <label className="label">Data da Partida</label>
-          <div className="flex gap-3 flex-wrap">
-            <input type="date" className="input" style={{ marginBottom: 0, flex: '1 1 200px' }} value={newDate} onChange={(e) => setNewDate(e.target.value)} required />
-            <button type="submit" className="btn" style={{ width: 'auto', flex: '1 1 120px' }}>Agendar</button>
+          <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 800, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Calendar size={18} /> Agendar Nova Partida
+          </h4>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px', marginBottom: '16px' }}>
+            <div>
+              <label className="label" style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)' }}>
+                Data da Partida *
+              </label>
+              <input 
+                type="date" 
+                className="input" 
+                style={{ marginBottom: 0 }} 
+                value={newDate} 
+                onChange={(e) => setNewDate(e.target.value)} 
+                required 
+              />
+            </div>
+
+            <div>
+              <label className="label" style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)' }}>
+                Horário (Padrão: 15h)
+              </label>
+              <input 
+                type="text" 
+                className="input" 
+                style={{ marginBottom: 0 }} 
+                placeholder="Ex: 15h ou 16:30" 
+                value={newTime} 
+                onChange={(e) => setNewTime(e.target.value)} 
+              />
+            </div>
+
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label className="label" style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)' }}>
+                Local do Jogo (Padrão: Arena Petrópolis)
+              </label>
+              <input 
+                type="text" 
+                className="input" 
+                style={{ marginBottom: 0 }} 
+                placeholder="Ex: Arena Petrópolis" 
+                value={newLocation} 
+                onChange={(e) => setNewLocation(e.target.value)} 
+              />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+            <button type="button" className="btn btn-secondary" style={{ width: 'auto', padding: '9px 18px' }} onClick={() => setIsCreating(false)}>
+              Cancelar
+            </button>
+            <button type="submit" className="btn" style={{ width: 'auto', padding: '9px 24px', fontWeight: 800 }}>
+              Confirmar Agendamento
+            </button>
           </div>
         </motion.form>
       )}
@@ -99,55 +159,129 @@ export default function Matches() {
             <h3 className="text-lg font-bold mb-3 text-primary border-b pb-2" style={{ borderColor: 'var(--border)' }}>
               {monthYear}
             </h3>
-            <motion.div variants={container} initial="hidden" animate="show" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <motion.div variants={container} initial="hidden" animate="show" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {group.map(match => {
                 const matchDate = new Date(match.date + 'T12:00:00');
-                const formattedDate = isNaN(matchDate.getTime()) ? match.date : matchDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' });
+                const rawDate = isNaN(matchDate.getTime()) 
+                  ? match.date 
+                  : matchDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+                const formattedDate = rawDate ? rawDate.charAt(0).toUpperCase() + rawDate.slice(1) : '';
                 
                 return (
-                  <motion.div variants={item} key={match.id} whileHover={{ scale: 1.01, x: 2 }} whileTap={{ scale: 0.99 }}>
-                    <div className="glass-card flex justify-between items-center hover:bg-white/5" style={{ padding: '14px 18px', transition: 'all 0.2s', gap: '12px' }}>
-                      <Link to={`/matches/${match.id}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '16px', flex: 1 }}>
-                        <div style={{ 
-                          width: '48px', 
-                          height: '48px', 
-                          borderRadius: '50%', 
-                          background: match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.15)' : 'rgba(57, 255, 20, 0.15)', 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'center',
-                          flexShrink: 0
-                        }}>
-                          {match.status === 'scheduled' ? (
-                            <Clock size={24} color="#fbbf24" />
-                          ) : (
-                            <CheckCircle2 size={24} color="var(--primary)" />
-                          )}
-                        </div>
-                        <div>
-                          <div className="font-bold text-xl mb-1 text-main flex items-center gap-2">
-                            {formattedDate}
+                  <motion.div variants={item} key={match.id} whileHover={{ scale: 1.01 }} whileTap={{ scale: 0.99 }}>
+                    <div 
+                      className="glass-card" 
+                      style={{ 
+                        padding: '20px 18px', 
+                        borderRadius: '20px',
+                        background: 'linear-gradient(135deg, rgba(16, 19, 28, 0.88), rgba(12, 14, 22, 0.96))',
+                        border: '1px solid var(--border)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '14px',
+                        boxShadow: '0 8px 24px rgba(0,0,0,0.5)'
+                      }}
+                    >
+                      {/* Linha Superior: Ícone de Status + Badge + Botão Excluir */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <div style={{ 
+                            width: '40px', 
+                            height: '40px', 
+                            borderRadius: '12px', 
+                            background: match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.15)' : 'rgba(0, 245, 155, 0.15)', 
+                            border: `1.5px solid ${match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.35)' : 'rgba(0, 245, 155, 0.35)'}`,
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            flexShrink: 0
+                          }}>
+                            {match.status === 'scheduled' ? (
+                              <Clock size={20} color="#fbbf24" />
+                            ) : (
+                              <CheckCircle2 size={20} color="var(--primary)" />
+                            )}
                           </div>
-                          <div style={{ fontSize: '0.85rem', fontWeight: '500', color: match.status === 'scheduled' ? '#fbbf24' : 'var(--primary)' }}>
-                            {match.status === 'scheduled' ? '🟡 Convocação Aberta / A definir times' : '🟢 Partida Encerrada'}
-                          </div>
+                          <span 
+                            className="badge" 
+                            style={{ 
+                              background: match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.15)' : 'rgba(0, 245, 155, 0.15)', 
+                              color: match.status === 'scheduled' ? '#fbbf24' : 'var(--primary)',
+                              border: `1px solid ${match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.35)' : 'rgba(0, 245, 155, 0.35)'}`,
+                              fontSize: '0.72rem',
+                              padding: '4px 10px',
+                              fontWeight: '800'
+                            }}
+                          >
+                            {match.status === 'scheduled' ? 'CONVOCAÇÃO ABERTA' : 'PARTIDA CONCLUÍDA'}
+                          </span>
                         </div>
-                      </Link>
 
-                      <div className="flex items-center gap-3">
-                        <Link to={`/matches/${match.id}`} style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)' }}>
-                          <span style={{ fontSize: '0.85rem' }}>Ver Detalhes</span>
-                          <ChevronRight size={18} />
-                        </Link>
                         <button 
                           type="button" 
                           onClick={(e) => handleDeleteMatch(match.id, e)} 
                           title="Excluir partida do histórico"
-                          style={{ background: 'rgba(239, 68, 68, 0.1)', border: '1px solid rgba(239, 68, 68, 0.3)', color: '#ef4444', borderRadius: '8px', padding: '8px 10px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+                          style={{ 
+                            background: 'rgba(239, 68, 68, 0.08)', 
+                            border: '1px solid rgba(239, 68, 68, 0.25)', 
+                            color: '#ef4444', 
+                            borderRadius: '10px', 
+                            padding: '8px 10px', 
+                            cursor: 'pointer', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            justifyContent: 'center',
+                            transition: 'all 0.2s'
+                          }}
                         >
                           <Trash2 size={16} />
                         </button>
                       </div>
+
+                      {/* Linha Central: Data Completa, Horário, Local e Descrição */}
+                      <div>
+                        <div style={{ fontSize: '1.15rem', fontWeight: '900', color: '#fff', letterSpacing: '-0.3px', marginBottom: '6px' }}>
+                          {formattedDate}
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '8px', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: 'var(--primary)', fontWeight: 700 }}>
+                            <Clock size={14} /> {match.time || '15h'}
+                          </span>
+                          <span>•</span>
+                          <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: '#fff', fontWeight: 600 }}>
+                            <MapPin size={14} color="#38bdf8" /> {match.location || 'Arena Petrópolis'}
+                          </span>
+                        </div>
+                        <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                          {match.status === 'scheduled' 
+                            ? 'Acesse para confirmar presenças, sortear os times e gerenciar a partida.' 
+                            : 'Partida finalizada. Acesse para conferir os gols, assistências e notas dos atletas.'}
+                        </div>
+                      </div>
+
+                      {/* Linha Inferior: Botão Amplo de Ação */}
+                      <Link 
+                        to={`/matches/${match.id}`} 
+                        className="btn btn-secondary"
+                        style={{ 
+                          textDecoration: 'none', 
+                          width: '100%', 
+                          padding: '11px 16px', 
+                          borderRadius: '14px', 
+                          fontSize: '0.86rem', 
+                          fontWeight: '800',
+                          display: 'flex', 
+                          alignItems: 'center', 
+                          justifyContent: 'center', 
+                          gap: '8px',
+                          background: match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.08)' : 'rgba(0, 245, 155, 0.08)',
+                          color: match.status === 'scheduled' ? '#fbbf24' : 'var(--primary)',
+                          borderColor: match.status === 'scheduled' ? 'rgba(251, 191, 36, 0.35)' : 'rgba(0, 245, 155, 0.35)'
+                        }}
+                      >
+                        <span>{match.status === 'scheduled' ? 'Ver Escalação & Sorteio' : 'Ver Súmula & Estatísticas'}</span>
+                        <ChevronRight size={18} />
+                      </Link>
                     </div>
                   </motion.div>
                 );

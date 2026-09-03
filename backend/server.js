@@ -364,8 +364,8 @@ app.post('/users/:id/reset-pin', (req, res) => {
 
 // -- USERS --
 app.get('/users', (req, res) => {
-  db.all('SELECT id, username, photo, original_photo, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email, (CASE WHEN pin IS NOT NULL AND pin != "" THEN 1 ELSE 0 END) as has_pin FROM users', [], (err, rows) => {
-    res.json(rows);
+  db.all("SELECT id, username, photo, original_photo, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin FROM users", [], (err, rows) => {
+    res.json(rows || []);
   });
 });
 
@@ -747,29 +747,70 @@ app.delete('/users/:id', (req, res) => {
 
 // -- MATCHES --
 app.post('/matches', (req, res) => {
-  const { date } = req.body;
-  db.run('INSERT INTO matches (date) VALUES (?)', [date], function(err) {
-    res.json({ id: this.lastID, date, status: 'scheduled' });
+  const { date, time, location } = req.body;
+  const matchTime = (time && time.trim()) ? time.trim() : '15h';
+  const matchLocation = (location && location.trim()) ? location.trim() : 'Arena Petrópolis';
+  db.run('INSERT INTO matches (date, time, location) VALUES (?, ?, ?)', [date, matchTime, matchLocation], function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ id: this.lastID, date, time: matchTime, location: matchLocation, status: 'scheduled' });
   });
 });
 
 app.put('/matches/:id', (req, res) => {
-  const { status, date } = req.body;
-  if (status && date) {
-    db.run('UPDATE matches SET status = ?, date = ? WHERE id = ?', [status, date, req.params.id], function(err) {
-      res.json({ success: true });
-    });
-  } else if (status) {
-    db.run('UPDATE matches SET status = ? WHERE id = ?', [status, req.params.id], function(err) {
-      res.json({ success: true });
-    });
-  } else if (date) {
-    db.run('UPDATE matches SET date = ? WHERE id = ?', [date, req.params.id], function(err) {
-      res.json({ success: true });
-    });
-  } else {
-    res.json({ success: false });
+  const { status, date, time, location } = req.body;
+  const fields = [];
+  const args = [];
+  if (status !== undefined) { fields.push('status = ?'); args.push(status); }
+  if (date !== undefined) { fields.push('date = ?'); args.push(date); }
+  if (time !== undefined) { fields.push('time = ?'); args.push(time); }
+  if (location !== undefined) { fields.push('location = ?'); args.push(location); }
+
+  if (fields.length === 0) {
+    return res.json({ success: false });
   }
+
+  args.push(req.params.id);
+  db.run(`UPDATE matches SET ${fields.join(', ')} WHERE id = ?`, args, function(err) {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json({ success: true });
+  });
+});
+
+// Histórico detalhado de partidas e desempenho do atleta
+app.get('/users/:id/history', (req, res) => {
+  const userId = req.params.id;
+  db.all(`
+    SELECT m.id as match_id, m.date, m.status, t.id as team_id, t.name as team_name, t.manual_score
+    FROM matches m
+    JOIN teams t ON t.match_id = m.id
+    JOIN team_players tp ON tp.team_id = t.id
+    WHERE tp.user_id = ?
+    ORDER BY m.date DESC, m.id DESC
+  `, [userId], (err, userMatchRows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    
+    db.all('SELECT match_id, COUNT(*) as goals_count FROM goals WHERE user_id = ? GROUP BY match_id', [userId], (errG, userGoals) => {
+      db.all('SELECT match_id, COUNT(*) as assists_count FROM assists WHERE user_id = ? GROUP BY match_id', [userId], (errA, userAssists) => {
+        db.all('SELECT match_id, AVG(score) as avg_rating FROM ratings WHERE rated_id = ? GROUP BY match_id', [userId], (errR, userRatings) => {
+          const goalsMap = Object.fromEntries((userGoals || []).map(g => [g.match_id, g.goals_count]));
+          const assistsMap = Object.fromEntries((userAssists || []).map(a => [a.match_id, a.assists_count]));
+          const ratingsMap = Object.fromEntries((userRatings || []).map(r => [r.match_id, r.avg_rating]));
+
+          const history = (userMatchRows || []).map(m => ({
+            match_id: m.match_id,
+            date: m.date,
+            status: m.status,
+            team_name: m.team_name,
+            goals: goalsMap[m.match_id] || 0,
+            assists: assistsMap[m.match_id] || 0,
+            rating: ratingsMap[m.match_id] ? Number(ratingsMap[m.match_id]).toFixed(1) : null
+          }));
+
+          res.json(history);
+        });
+      });
+    });
+  });
 });
 
 app.get('/matches', (req, res) => {
@@ -1146,8 +1187,13 @@ app.get('/stats', (req, res) => {
 
                   const winRate = matchesCount > 0 ? Math.round((wins / matchesCount) * 100) : 0;
 
+                  const userHasPin = !!(user.pin && String(user.pin).trim() !== '');
+                  const safeUser = { ...user };
+                  delete safeUser.pin;
+
                   return {
-                    ...user,
+                    ...safeUser,
+                    has_pin: userHasPin,
                     goals: userGoals,
                     assists: userAssists,
                     avg_rating: avgRating,

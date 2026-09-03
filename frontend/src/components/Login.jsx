@@ -342,7 +342,7 @@ export default function Login() {
                 )}
               </div>
               <div className="font-extrabold text-main" style={{ fontSize: '1rem' }}>
-                Olá, {matchedUser.nickname ? matchedUser.nickname.split(',')[0].trim() : matchedUser.username}! 👋
+                Olá, {matchedUser.nickname ? matchedUser.nickname.split(',')[0].trim() : matchedUser.username}!
               </div>
               <p className="text-muted text-xs" style={{ margin: '4px 0 0' }}>
                 Digite seu PIN de 4 dígitos para acessar sua conta

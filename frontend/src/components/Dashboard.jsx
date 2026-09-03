@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useContext } from 'react';
-import { Trophy, Star, Goal, Award, ThumbsDown, Crown, Coffee, Calendar, Target, Flame, Activity, TrendingUp, ShieldCheck, Zap, ArrowRight, PlusCircle, Search, User } from 'lucide-react';
+import { Trophy, Star, Goal, Award, ThumbsDown, Crown, Coffee, Calendar, Target, Flame, Activity, TrendingUp, ShieldCheck, Zap, ArrowRight, PlusCircle, Search, User, Footprints, Handshake, Swords, Star as StarIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AuthContext } from '../AuthContext';
@@ -142,8 +142,8 @@ export default function Dashboard() {
             <Zap size={13} /> TEMPORADA OFICIAL 2026
           </div>
           
-          <h2 className="text-2xl font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.5px' }}>
-            Fala, {user ? getPrimaryName(user) : 'Atleta'}! ⚽
+          <h2 className="text-2xl font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+            Fala, {user ? getPrimaryName(user) : 'Atleta'}! <Swords size={22} color="var(--primary)" />
           </h2>
           <p className="text-muted" style={{ margin: 0, fontSize: '0.88rem', lineHeight: 1.45, maxWidth: '620px' }}>
             Acompanhe suas estatísticas individuais, a classificação do elenco e os próximos confrontos do clube.
@@ -233,7 +233,7 @@ export default function Dashboard() {
                 </h4>
 
                 <p className="text-muted" style={{ fontSize: '0.80rem', margin: 0, lineHeight: 1.45 }}>
-                  Os times ainda não foram sorteados. Acesse para confirmar presença e sortear as equipes da pelada!
+                  Os times ainda não foram sorteados. Acesse para confirmar presença e sortear as equipes da partida!
                 </p>
               </div>
             </div>
@@ -340,11 +340,11 @@ export default function Dashboard() {
           </div>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Gols Marcados</div>
-            <div className="font-extrabold text-2xl text-primary" style={{ marginTop: '6px' }}>{totalClubGoals} ⚽</div>
+            <div className="font-extrabold text-2xl text-primary" style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Goal size={20} />{totalClubGoals}</div>
           </div>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Assistências</div>
-            <div className="font-extrabold text-2xl text-cyan" style={{ marginTop: '6px' }}>{totalClubAssists} 👟</div>
+            <div className="font-extrabold text-2xl text-cyan" style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Footprints size={20} />{totalClubAssists}</div>
           </div>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Média de Gols / Jogo</div>
@@ -382,7 +382,7 @@ export default function Dashboard() {
           </div>
           <div className="flex justify-between items-center pt-3 border-t border-border">
             <span className="text-xs text-muted font-bold tracking-wider uppercase">NOTA MÉDIA</span>
-            <span className="font-extrabold text-xl text-gold">{mvp ? (mvp.avg_rating || 0).toFixed(1) : '0.0'} ⭐</span>
+            <span className="font-extrabold text-xl text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? (mvp.avg_rating || 0).toFixed(1) : '0.0'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
           </div>
         </div>
 
@@ -408,8 +408,8 @@ export default function Dashboard() {
             <span className="text-xs text-muted font-bold tracking-wider uppercase">SEQUÊNCIA</span>
             <span className="font-extrabold text-xl" style={{ color: '#ff7700' }}>
               {hotPlayer && (hotPlayer.win_streak || 0) > 1 
-                ? `${hotPlayer.win_streak} Vitórias 🔥` 
-                : (hotPlayer && hotPlayer.avg_rating > 0 ? `${hotPlayer.avg_rating.toFixed(1)} ⭐` : 'Fase Regular')}
+                ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{hotPlayer.win_streak} Vitórias <Flame size={16} color="#ff7700" /></span>
+                : (hotPlayer && hotPlayer.avg_rating > 0 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{hotPlayer.avg_rating.toFixed(1)} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span> : 'Fase Regular')}
             </span>
           </div>
         </div>
@@ -432,7 +432,7 @@ export default function Dashboard() {
           </div>
           <div className="flex justify-between items-center pt-3 border-t border-border">
             <span className="text-xs text-muted font-bold tracking-wider uppercase">GOLS MARCADOS</span>
-            <span className="font-extrabold text-xl text-primary">{topScorer ? topScorer.goals : 0} ⚽</span>
+            <span className="font-extrabold text-xl text-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{topScorer ? topScorer.goals : 0} <Goal size={16} color="var(--primary)" /></span>
           </div>
         </div>
 
@@ -454,7 +454,7 @@ export default function Dashboard() {
           </div>
           <div className="flex justify-between items-center pt-3 border-t border-border">
             <span className="text-xs text-muted font-bold tracking-wider uppercase">ASSISTÊNCIAS</span>
-            <span className="font-extrabold text-xl text-cyan">{topPlaymaker ? topPlaymaker.assists : 0} 👟</span>
+            <span className="font-extrabold text-xl text-cyan" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{topPlaymaker ? topPlaymaker.assists : 0} <Footprints size={16} color="var(--cyan)" /></span>
           </div>
         </div>
       </div>
@@ -626,15 +626,15 @@ export default function Dashboard() {
 
                   <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.02)', padding: '6px 2px', borderRadius: '10px' }}>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Gols / Ast</div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 900, color: 'var(--primary)', marginTop: '2px' }}>
-                      ⚽{player.goals || 0} <span style={{ color: 'var(--cyan)' }}>👟{player.assists || 0}</span>
+                    <div style={{ fontSize: '0.82rem', fontWeight: 900, color: 'var(--primary)', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                      <Goal size={13} color="var(--primary)" />{player.goals || 0} <Footprints size={13} color="var(--cyan)" style={{ marginLeft: '4px' }} /><span style={{ color: 'var(--cyan)' }}>{player.assists || 0}</span>
                     </div>
                   </div>
 
                   <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.02)', padding: '6px 2px', borderRadius: '10px' }}>
                     <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Nota Média</div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 900, color: '#00e5ff', marginTop: '2px' }}>
-                      {player.avg_rating && player.avg_rating > 0 ? `${player.avg_rating.toFixed(1)} ⭐` : '-'}
+                    <div style={{ fontSize: '0.82rem', fontWeight: 900, color: '#00e5ff', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
+                      {player.avg_rating && player.avg_rating > 0 ? <><StarIcon size={13} fill="#fbbf24" color="#fbbf24" />{player.avg_rating.toFixed(1)}</> : '-'}
                     </div>
                   </div>
                 </div>
@@ -768,9 +768,10 @@ export default function Dashboard() {
                         <span style={{ 
                           fontWeight: '900', 
                           fontSize: '0.95rem',
-                          color: player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)')
+                          color: player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)'),
+                          display: 'inline-flex', alignItems: 'center', gap: '4px'
                         }}>
-                          {player.avg_rating.toFixed(1)} ⭐
+                          <StarIcon size={14} fill={player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)')} color={player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)')} />{player.avg_rating.toFixed(1)}
                         </span>
                       ) : (
                         <span className="text-muted text-xs">-</span>

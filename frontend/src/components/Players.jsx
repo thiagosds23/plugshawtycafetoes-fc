@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useRef, useContext } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck, Download, HardDriveDownload } from 'lucide-react';
+import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck, Download, HardDriveDownload, User, Tag, Info, Phone, Mail, ShieldAlert, Zap } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import { removeBackground } from '@imgly/background-removal';
@@ -201,8 +201,8 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
       canvas.height = targetHeight;
       const ctx = canvas.getContext('2d');
 
-      const previewPhotoW = 260 * 0.42;
-      const previewPhotoH = 260 * 0.44;
+      const previewPhotoW = 190 * 0.42;
+      const previewPhotoH = 190 * 0.44;
       const scaleFactorX = targetWidth / previewPhotoW;
       const scaleFactorY = targetHeight / previewPhotoH;
 
@@ -238,160 +238,215 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(10px)', zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-      <div className="glass-card" style={{ width: '100%', maxWidth: '440px', padding: '24px', textAlign: 'center' }}>
-        <h3 className="font-bold text-xl mb-1 text-primary">Ajustar Posição & Fundo da Foto</h3>
-        <p className="text-muted text-xs mb-4">Arraste a foto com o mouse/dedo diretamente dentro da carta para posicionar.</p>
-
-        {/* Real FUT Card Preview inside Modal */}
-        <div className="fut-card mb-4" style={{ width: '260px', margin: '0 auto 16px', position: 'relative' }}>
-          <img src="/fut-bg.png" alt="Card Background" className="fut-card-bg" />
-          <div className="fut-card-inner">
-            <div className="fut-rating">{overall}</div>
-            <div className="fut-position">{player.position || 'MEI'}</div>
-            
-            <div 
-              className="fut-photo"
-              onMouseDown={handleMouseDown}
-              onMouseMove={handleMouseMove}
-              onMouseUp={handleMouseUp}
-              onMouseLeave={handleMouseUp}
-              onTouchStart={handleTouchStart}
-              onTouchMove={handleTouchMove}
-              onTouchEnd={handleTouchEnd}
-              onWheel={handleWheel}
-              style={{
-                cursor: isDragging ? 'grabbing' : 'grab',
-                touchAction: 'none',
-                background: isRemovingBg ? 'rgba(0,0,0,0.6)' : 'transparent'
-              }}
-            >
-              {isRemovingBg && (
-                <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#fff', fontSize: '10px' }}>
-                  <Loader2 className="animate-spin" size={20} color="var(--primary)" />
-                  <span>Removendo fundo (IA)...</span>
-                </div>
-              )}
-
-              <img 
-                ref={previewImgRef}
-                src={src} 
-                alt="Preview" 
-                crossOrigin="anonymous"
-                draggable={false}
-                style={{ 
-                  width: '100%', 
-                  height: '100%', 
-                  objectFit: 'cover', 
-                  transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
-                  transformOrigin: 'center top',
-                  transition: isDragging ? 'none' : 'transform 0.05s ease-out'
-                }} 
-              />
-            </div>
-
-            <div className="fut-name">{player.nickname ? player.nickname.split(',')[0].trim() : player.username}</div>
-
-            {/* Official Horizontal Row of 6 Stats */}
-            <div className="fut-stats">
-              <div className="fut-stat-item"><span className="fut-stat-label">PAC</span><span className="fut-stat-val">{player.pace || 50}</span></div>
-              <div className="fut-stat-item"><span className="fut-stat-label">SHO</span><span className="fut-stat-val">{player.shooting || 50}</span></div>
-              <div className="fut-stat-item"><span className="fut-stat-label">PAS</span><span className="fut-stat-val">{player.passing || 50}</span></div>
-              <div className="fut-stat-item"><span className="fut-stat-label">DRI</span><span className="fut-stat-val">{player.dribbling || 50}</span></div>
-              <div className="fut-stat-item"><span className="fut-stat-label">DEF</span><span className="fut-stat-val">{player.defending || 50}</span></div>
-              <div className="fut-stat-item"><span className="fut-stat-label">PHY</span><span className="fut-stat-val">{player.physical || 50}</span></div>
-            </div>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.90)', backdropFilter: 'blur(10px)', zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px' }}>
+      <div 
+        className="glass-card" 
+        style={{ 
+          width: '100%', 
+          maxWidth: '380px', 
+          maxHeight: '98dvh',
+          padding: '14px 14px 12px', 
+          textAlign: 'center', 
+          display: 'flex', 
+          flexDirection: 'column', 
+          background: 'rgba(16, 18, 28, 0.98)',
+          border: '1px solid var(--border)',
+          borderRadius: '20px',
+          boxShadow: '0 20px 50px rgba(0,0,0,0.9)',
+          overflow: 'hidden'
+        }}
+      >
+        {/* Header Compacto com Botão Fechar */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+          <div style={{ textAlign: 'left' }}>
+            <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 900, color: 'var(--primary)', letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <Camera size={16} color="var(--primary)" /> Ajustar Foto da Carta
+            </h3>
+            <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+              Arraste dentro da carta para enquadrar
+            </span>
           </div>
+          <button 
+            type="button"
+            onClick={onClose} 
+            style={{ 
+              background: 'rgba(255,255,255,0.06)', 
+              border: '1px solid var(--border)', 
+              color: 'var(--text-muted)', 
+              width: '32px', 
+              height: '32px', 
+              borderRadius: '50%', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              cursor: 'pointer' 
+            }}
+            title="Fechar"
+          >
+            <X size={16} />
+          </button>
         </div>
 
-        {/* Ações de Recorte de Fundo: Remove.bg (Instantâneo) + IA no Aparelho */}
-        <div className="mb-4 flex flex-col items-center justify-center gap-2">
-          <div className="flex justify-center gap-2 flex-wrap">
-            {/* Opção 1: Remove.bg - 100% à prova de falhas em qualquer celular */}
-            <a 
-              href="https://www.remove.bg/pt-br/upload" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="btn" 
-              style={{ 
-                background: 'linear-gradient(135deg, #00f59b 0%, #00d285 100%)', 
-                color: '#000', 
-                fontWeight: '800', 
-                fontSize: '0.84rem',
-                padding: '9px 15px',
-                borderRadius: '10px',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '6px',
-                textDecoration: 'none',
-                boxShadow: '0 0 16px rgba(0, 245, 155, 0.35)'
-              }}
-              title="Abre o Remove.bg em nova aba para recortar em 2 segundos"
-            >
-              <ExternalLink size={15} /> ⚡ Recortar no Remove.bg
-            </a>
-
-            {!hasRemovedBg ? (
-              <button 
-                className="btn btn-secondary flex items-center justify-center gap-2 py-2 text-xs" 
-                onClick={handleRemoveBackground} 
-                disabled={isRemovingBg}
-                style={{ borderRadius: '10px', padding: '9px 13px', fontSize: '0.8rem' }}
-                title="Tenta recortar usando a memória do seu próprio navegador"
+        {/* Carta FUT Proporcional Compacta (190px de largura - cabe 100% na tela) */}
+        <div style={{ display: 'flex', justifyContent: 'center', margin: '2px 0 6px' }}>
+          <div className="fut-card" style={{ width: '190px', margin: 0, position: 'relative' }}>
+            <img src="/fut-bg.png" alt="Card Background" className="fut-card-bg" />
+            <div className="fut-card-inner">
+              <div className="fut-rating" style={{ fontSize: '1.55rem' }}>{overall}</div>
+              <div className="fut-position" style={{ fontSize: '0.68rem' }}>{player.position || 'MEI'}</div>
+              
+              <div 
+                className="fut-photo"
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                onMouseLeave={handleMouseUp}
+                onTouchStart={handleTouchStart}
+                onTouchMove={handleTouchMove}
+                onTouchEnd={handleTouchEnd}
+                onWheel={handleWheel}
+                style={{
+                  cursor: isDragging ? 'grabbing' : 'grab',
+                  touchAction: 'none',
+                  background: isRemovingBg ? 'rgba(0,0,0,0.6)' : 'transparent'
+                }}
               >
-                {isRemovingBg ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
-                {isRemovingBg ? `IA (${bgProgress}%)...` : 'Tentar IA no Aparelho'}
-              </button>
-            ) : (
-              <button 
-                className="btn btn-secondary flex items-center justify-center gap-2 py-2 text-xs" 
-                onClick={handleRestoreOriginal}
-                disabled={isRemovingBg}
-                style={{ borderRadius: '10px', padding: '9px 13px', fontSize: '0.8rem' }}
-              >
-                <RefreshCw size={15} /> Fundo Original
-              </button>
-            )}
+                {isRemovingBg && (
+                  <div style={{ position: 'absolute', inset: 0, background: 'rgba(0,0,0,0.85)', zIndex: 20, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '4px', color: '#fff', fontSize: '9px' }}>
+                    <Loader2 className="animate-spin" size={16} color="var(--primary)" />
+                    <span>IA ({bgProgress}%)...</span>
+                  </div>
+                )}
 
-            {player.photo && (
-              <button 
-                className="btn btn-secondary flex items-center justify-center gap-1.5 py-2 text-xs text-red-400" 
-                onClick={onDeletePhoto}
-                disabled={isRemovingBg}
-                style={{ borderColor: 'rgba(239, 68, 68, 0.4)', borderRadius: '10px', padding: '9px 12px' }}
-              >
-                <Trash2 size={15} /> Remover Foto
-              </button>
-            )}
-          </div>
+                <img 
+                  ref={previewImgRef}
+                  src={src} 
+                  alt="Preview" 
+                  crossOrigin="anonymous"
+                  draggable={false}
+                  style={{ 
+                    width: '100%', 
+                    height: '100%', 
+                    objectFit: 'cover', 
+                    transform: `translate(${offsetX}px, ${offsetY}px) scale(${zoom})`,
+                    transformOrigin: 'center top',
+                    transition: isDragging ? 'none' : 'transform 0.05s ease-out'
+                  }} 
+                />
+              </div>
 
-          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', margin: '4px 0 6px' }}>
-            💡 <strong>Recomendado no celular:</strong> O <em>Remove.bg</em> não trava nem esquenta o aparelho. Após baixar a foto recortada, clique em <strong>"Outra Foto"</strong> abaixo!
-          </div>
+              <div className="fut-name" style={{ fontSize: '0.78rem' }}>
+                {player.nickname ? player.nickname.split(',')[0].trim() : player.username}
+              </div>
 
-          {isRemovingBg && (
-            <div style={{ width: '100%', maxWidth: '280px', marginTop: '4px' }}>
-              <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ width: `${bgProgress}%`, height: '100%', background: 'linear-gradient(90deg, #8b5cf6, #00f59b)', transition: 'width 0.2s ease-out' }}></div>
+              {/* Atributos da Carta */}
+              <div className="fut-stats" style={{ fontSize: '0.60rem' }}>
+                <div className="fut-stat-item"><span className="fut-stat-label">PAC</span><span className="fut-stat-val">{player.pace || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">SHO</span><span className="fut-stat-val">{player.shooting || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">PAS</span><span className="fut-stat-val">{player.passing || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">DRI</span><span className="fut-stat-val">{player.dribbling || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">DEF</span><span className="fut-stat-val">{player.defending || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">PHY</span><span className="fut-stat-val">{player.physical || 50}</span></div>
               </div>
             </div>
-          )}
+          </div>
         </div>
 
-        {/* Controls */}
-        <div className="flex justify-center gap-2 mb-6 items-center flex-wrap">
-          <button className="btn btn-secondary" style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem' }} onClick={() => setZoom(prev => Math.max(prev - 0.2, 0.8))}>- Zoom</button>
-          <button className="btn btn-secondary" style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem' }} onClick={() => setZoom(prev => Math.min(prev + 0.2, 3.5))}>+ Zoom</button>
-
-          <label className="btn btn-secondary" style={{ width: 'auto', padding: '6px 14px', fontSize: '0.8rem', cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-            <ImageIcon size={14} /> Outra Foto
+        {/* Linha 1 de Controles: Zoom e Trocar Foto */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1.3fr', gap: '6px', marginBottom: '6px' }}>
+          <button 
+            type="button"
+            className="btn btn-secondary" 
+            style={{ padding: '6px 4px', fontSize: '0.74rem', fontWeight: 800, width: '100%', borderRadius: '10px' }} 
+            onClick={() => setZoom(prev => Math.max(prev - 0.15, 0.8))}
+          >
+            - Zoom
+          </button>
+          <button 
+            type="button"
+            className="btn btn-secondary" 
+            style={{ padding: '6px 4px', fontSize: '0.74rem', fontWeight: 800, width: '100%', borderRadius: '10px' }} 
+            onClick={() => setZoom(prev => Math.min(prev + 0.15, 3.5))}
+          >
+            + Zoom
+          </button>
+          <label 
+            className="btn btn-secondary" 
+            style={{ padding: '6px 6px', fontSize: '0.74rem', fontWeight: 800, width: '100%', cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', borderRadius: '10px' }}
+          >
+            <ImageIcon size={13} color="var(--primary)" /> Trocar
             <input type="file" style={{ display: 'none' }} accept="image/*" onChange={handleNewFile} />
           </label>
         </div>
 
-        <div className="flex gap-3">
-          <button className="btn py-3 text-base" onClick={handleSave} disabled={isRemovingBg}><Check size={18} /> Confirmar Ajuste</button>
-          <button className="btn btn-secondary py-3 text-base" onClick={onClose} disabled={isRemovingBg}><X size={18} /> Cancelar</button>
+        {/* Linha 2 de Controles: Recorte e Limpeza de Fundo */}
+        <div style={{ display: 'grid', gridTemplateColumns: (hasRemovedBg || player.photo) ? '1.4fr 1fr' : '1fr', gap: '6px', marginBottom: '8px' }}>
+          <a 
+            href="https://www.remove.bg/pt-br/upload" 
+            target="_blank" 
+            rel="noopener noreferrer" 
+            className="btn btn-secondary" 
+            style={{ 
+              color: '#00f59b', 
+              borderColor: 'rgba(0, 245, 155, 0.45)', 
+              background: 'rgba(0, 245, 155, 0.08)',
+              fontWeight: 800, 
+              fontSize: '0.74rem',
+              padding: '7px 8px',
+              borderRadius: '10px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '5px',
+              textDecoration: 'none',
+              width: '100%'
+            }}
+            title="Recortar fundo no remove.bg"
+          >
+            <ExternalLink size={13} /> Recortar Fundo
+          </a>
+
+          {hasRemovedBg ? (
+            <button 
+              type="button"
+              className="btn btn-secondary" 
+              onClick={handleRestoreOriginal} 
+              style={{ borderRadius: '10px', padding: '7px 6px', fontSize: '0.74rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+            >
+              <RefreshCw size={13} /> Original
+            </button>
+          ) : player.photo ? (
+            <button 
+              type="button"
+              className="btn btn-secondary" 
+              onClick={onDeletePhoto} 
+              style={{ borderColor: 'rgba(239, 68, 68, 0.35)', color: '#ef4444', background: 'rgba(239, 68, 68, 0.06)', borderRadius: '10px', padding: '7px 6px', fontSize: '0.74rem', width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+            >
+              <Trash2 size={13} /> Excluir
+            </button>
+          ) : null}
+        </div>
+
+        {/* Linha 3: Botões de Ação (Confirmar / Cancelar) */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: '8px' }}>
+          <button 
+            type="button"
+            className="btn" 
+            style={{ padding: '9px', fontSize: '0.84rem', fontWeight: 900, borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
+            onClick={handleSave} 
+            disabled={isRemovingBg}
+          >
+            <Check size={16} /> Confirmar
+          </button>
+          <button 
+            type="button"
+            className="btn btn-secondary" 
+            style={{ padding: '9px', fontSize: '0.84rem', borderRadius: '12px' }} 
+            onClick={onClose} 
+            disabled={isRemovingBg}
+          >
+            Cancelar
+          </button>
         </div>
       </div>
     </div>
@@ -426,10 +481,15 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
 
   const primaryName = currentNicknames[0] || editForm.username || player.username;
 
+  const { user } = useContext(AuthContext);
   const [pinVal, setPinVal] = useState('');
   const [isSavingPin, setIsSavingPin] = useState(false);
   const [pinFeedback, setPinFeedback] = useState('');
-  const [hasPinState, setHasPinState] = useState(!!player.has_pin);
+  const [hasPinState, setHasPinState] = useState(Boolean(player?.has_pin || (user?.id === player?.id && user?.has_pin)));
+
+  useEffect(() => {
+    setHasPinState(Boolean(player?.has_pin || (user?.id === player?.id && user?.has_pin)));
+  }, [player?.has_pin, player?.id, user?.has_pin, user?.id]);
 
   const handleSavePin = async (val) => {
     setIsSavingPin(true);
@@ -447,6 +507,9 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
       if (!res.ok) throw new Error(data.error || 'Erro ao salvar PIN');
       setHasPinState(data.has_pin);
       player.has_pin = data.has_pin;
+      if (user && user.id === player.id) {
+        user.has_pin = data.has_pin;
+      }
       setPinFeedback(val ? '✅ PIN atualizado!' : '✅ PIN removido! Acesso livre.');
       setPinVal('');
       setTimeout(() => setPinFeedback(''), 3500);
@@ -487,22 +550,21 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button className="btn" style={{ padding: '8px 18px', fontSize: '0.85rem', fontWeight: 'bold', width: 'auto' }} onClick={onSave}>
-              <Save size={16} /> Salvar Alterações
-            </button>
-            <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.05)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '8px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-muted)', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} title="Fechar">
               <X size={18} />
             </button>
           </div>
         </div>
 
         {/* Scrollable Content Area */}
-        <div style={{ padding: '20px 20px 30px', overflowY: 'auto', flex: 1 }}>
+        <div style={{ padding: '20px 20px 30px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
           
           {/* Manage Photo Section */}
-          <div style={{ padding: '14px', borderRadius: '14px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', marginBottom: '18px' }}>
-            <div style={{ fontWeight: 'bold', fontSize: '0.75rem', marginBottom: '10px', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>📸 Foto da Carta FUT</span>
+          <div style={{ padding: '16px', borderRadius: '16px', background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)' }}>
+            <div style={{ fontWeight: '800', fontSize: '0.75rem', marginBottom: '16px', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <Camera size={14} color="var(--primary)" /> Foto da Carta FUT
+              </span>
               {player.photo ? (
                 <span style={{ fontSize: '10px', color: '#fbbf24', background: 'rgba(251,191,36,0.15)', padding: '2px 8px', borderRadius: '10px', fontWeight: 'bold' }}>Foto Ativa</span>
               ) : (
@@ -510,44 +572,59 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
               )}
             </div>
 
-            <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <div style={{ width: '56px', height: '56px', borderRadius: '12px', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--primary)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', alignItems: 'center' }}>
+              <div style={{ 
+                width: '100px', 
+                height: '100px', 
+                borderRadius: '16px', 
+                background: '#0a0a0f', 
+                overflow: 'hidden', 
+                border: '2px solid var(--primary)', 
+                boxShadow: '0 0 16px rgba(0, 245, 155, 0.25)', 
+                flexShrink: 0, 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                position: 'relative'
+              }}>
                 {player.photo ? (
                   <img src={formatPhotoUrl(player.photo)} alt="Thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
-                  <UserCircle size={40} color="rgba(255,255,255,0.3)" />
+                  <UserCircle size={56} color="rgba(255,255,255,0.3)" />
                 )}
               </div>
 
-              <div style={{ display: 'flex', gap: '8px', flex: 1, flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '100%' }}>
                 {player.photo ? (
                   <>
-                    <button 
-                      type="button" 
-                      className="btn btn-secondary"
-                      onClick={onOpenAdjustPhoto}
-                      style={{ padding: '8px 14px', fontSize: '0.75rem', width: 'auto', flex: 1, color: 'var(--primary)', borderColor: 'var(--primary)' }}
-                    >
-                      <Sliders size={14} /> Ajustar Foto
-                    </button>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <button 
+                        type="button" 
+                        className="btn btn-secondary"
+                        onClick={onOpenAdjustPhoto}
+                        style={{ padding: '8px 12px', fontSize: '0.78rem', fontWeight: 800, flex: 1, color: 'var(--primary)', borderColor: 'var(--primary)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
+                      >
+                        <Sliders size={14} /> Ajustar
+                      </button>
 
-                    <label className="btn btn-secondary" style={{ padding: '8px 14px', fontSize: '0.75rem', width: 'auto', flex: 1, cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                      <Camera size={14} /> Trocar Foto
-                      <input type="file" style={{ display: 'none' }} accept="image/*" onChange={onSelectNewPhoto} />
-                    </label>
+                      <label className="btn btn-secondary" style={{ padding: '8px 12px', fontSize: '0.78rem', fontWeight: 800, flex: 1, cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '5px', borderRadius: '10px' }}>
+                        <Camera size={14} /> Trocar
+                        <input type="file" style={{ display: 'none' }} accept="image/*" onChange={onSelectNewPhoto} />
+                      </label>
+                    </div>
 
                     <button 
                       type="button" 
                       className="btn btn-secondary"
                       onClick={onDeletePhoto}
-                      style={{ padding: '8px 14px', fontSize: '0.75rem', width: 'auto', color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)' }}
+                      style={{ padding: '7px 12px', fontSize: '0.74rem', width: '100%', color: '#ef4444', borderColor: 'rgba(239,68,68,0.35)', background: 'rgba(239,68,68,0.06)', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '5px' }}
                     >
-                      <Trash2 size={14} /> Deletar
+                      <Trash2 size={14} /> Deletar Foto
                     </button>
                   </>
                 ) : (
-                  <label className="btn" style={{ padding: '10px 16px', fontSize: '0.8rem', width: '100%', cursor: 'pointer', margin: 0, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                    <Camera size={16} /> Adicionar Foto do Jogador
+                  <label className="btn" style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer', margin: 0, borderRadius: '10px' }}>
+                    <Plus size={16} /> Adicionar Foto
                     <input type="file" style={{ display: 'none' }} accept="image/*" onChange={onSelectNewPhoto} />
                   </label>
                 )}
@@ -556,13 +633,15 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
           </div>
 
           {/* Personal Info Grid (Explicit 2 columns) */}
-          <div style={{ marginBottom: '18px' }}>
-            <h4 style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>📋 Dados Pessoais & Posição</h4>
+          <div style={{ marginBottom: '10px' }}>
+            <h4 style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <User size={14} color="var(--primary)" /> Dados Pessoais & Posição
+            </h4>
             
             {/* Nome (Usuário) */}
             <div style={{ marginBottom: '12px' }}>
-              <label className="label text-xs font-bold" style={{ color: 'var(--primary)' }}>
-                👤 Nome (Usuário)
+              <label className="label text-xs font-bold" style={{ color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                <UserCheck size={14} color="var(--primary)" /> Nome (Usuário)
               </label>
               <input 
                 type="text" 
@@ -578,8 +657,8 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
             {/* Multiple Nicknames Manager Section */}
             <div style={{ background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border)', marginBottom: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <label className="label text-xs" style={{ margin: 0, fontWeight: 'bold', color: 'var(--primary)' }}>
-                  🏷️ Apelidos de Jogo ({currentNicknames.length})
+                <label className="label text-xs" style={{ margin: 0, fontWeight: '800', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Tag size={13} color="var(--primary)" /> Apelidos de Jogo ({currentNicknames.length})
                 </label>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
                   Pressione Enter ou Vírgula para adicionar
@@ -628,7 +707,7 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
                   type="text" 
                   className="input" 
                   style={{ marginBottom: 0, padding: '8px 12px', fontSize: '0.85rem' }} 
-                  placeholder="Novo apelido (ex: Mursilha Jr, Caça Rato, Olise...)" 
+                  placeholder="Ex: Mursilha Jr" 
                   value={newNickInput} 
                   onChange={e => setNewNickInput(e.target.value)} 
                   onKeyDown={e => {
@@ -685,32 +764,30 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
               </div>
 
               <div>
-                <label className="label text-xs">WhatsApp / Telefone</label>
-                <input type="text" className="input" style={{ marginBottom: 0, padding: '8px 12px' }} placeholder="(11) 99999-8888" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+                <label className="label text-xs" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Phone size={12} color="var(--primary)" /> Telefone
+                </label>
+                <input type="text" className="input" style={{ marginBottom: 0, padding: '8px 12px' }} placeholder="54999999999" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
               </div>
-              <div>
-                <label className="label text-xs">E-mail de Login</label>
-                <input type="email" className="input" style={{ marginBottom: 0, padding: '8px 12px' }} placeholder="seu@email.com" value={editForm.email} onChange={e => setEditForm({...editForm, email: e.target.value})} />
+              <div style={{ gridColumn: 'span 2' }}>
+                <label className="label text-xs" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                  <Mail size={12} color="var(--primary)" /> E-mail de Login
+                </label>
+                <input type="email" className="input" style={{ marginBottom: 0, padding: '8px 12px', width: '100%' }} placeholder="seu@email.com" value={editForm.email} onChange={e => setEditForm({...editForm, email: e.target.value})} />
               </div>
             </div>
           </div>
 
           {/* Seção PIN / Senha de Segurança da Conta */}
           <div style={{ padding: '14px 16px', borderRadius: '16px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '6px' }}>
               <h4 style={{ fontSize: '0.78rem', fontWeight: '800', color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <KeyRound size={14} color="var(--primary)" /> Senha / PIN de Segurança
+                <Lock size={14} color="var(--primary)" /> Senha / PIN de Segurança
               </h4>
-              <span className={hasPinState ? 'badge badge-volt' : 'badge'} style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
-                {hasPinState ? '🔒 Protegido com PIN' : '🔓 Sem Senha (Livre)'}
+              <span className={hasPinState ? 'badge badge-volt' : 'badge'} style={{ fontSize: '0.68rem', padding: '3px 8px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                {hasPinState ? <><ShieldCheck size={12} /> Protegido com PIN</> : <><ShieldAlert size={12} /> Sem Senha (Livre)</>}
               </span>
             </div>
-
-            <p className="text-muted text-xs" style={{ margin: '0 0 10px', fontSize: '0.72rem', lineHeight: 1.35 }}>
-              {hasPinState 
-                ? 'Sua conta está protegida. Apenas quem tem seu PIN pode alterar sua foto e dados.' 
-                : 'Você pode definir um PIN de 4 números para proteger sua carta oficial contra alterações.'}
-            </p>
 
             {pinFeedback && (
               <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '8px', color: pinFeedback.startsWith('✅') ? 'var(--primary)' : '#ff3366' }}>
@@ -758,8 +835,8 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
                 <h4 style={{ fontSize: '0.78rem', fontWeight: '800', color: 'var(--text-main)', textTransform: 'uppercase', letterSpacing: '0.5px', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Shield size={14} color="var(--primary)" /> Estatísticas Oficiais do Atleta
                 </h4>
-                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  🔒 Definidas pelas avaliações do elenco e planilha oficial
+                <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <Info size={12} color="var(--text-muted)" /> Definidas pelas avaliações do elenco e planilha oficial
                 </div>
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '6px', background: 'rgba(0, 245, 155, 0.1)', padding: '4px 10px', borderRadius: '10px', border: '1px solid var(--primary-glow)' }}>
@@ -895,22 +972,22 @@ function AuditModal({ onClose, adminUser }) {
   const getActionBadge = (action) => {
     switch (action) {
       case 'LOGIN':
-        return { bg: 'rgba(0, 245, 155, 0.15)', color: '#00f59b', border: 'rgba(0, 245, 155, 0.4)', icon: '🔑' };
+        return { bg: 'rgba(0, 245, 155, 0.15)', color: '#00f59b', border: 'rgba(0, 245, 155, 0.4)', icon: <KeyRound size={11} /> };
       case 'FOTO':
-        return { bg: 'rgba(0, 210, 255, 0.15)', color: '#00d2ff', border: 'rgba(0, 210, 255, 0.4)', icon: '📸' };
+        return { bg: 'rgba(0, 210, 255, 0.15)', color: '#00d2ff', border: 'rgba(0, 210, 255, 0.4)', icon: <Camera size={11} /> };
       case 'PERFIL':
       case 'POSIÇÃO':
-        return { bg: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: 'rgba(168, 85, 247, 0.4)', icon: '✏️' };
+        return { bg: 'rgba(168, 85, 247, 0.15)', color: '#c084fc', border: 'rgba(168, 85, 247, 0.4)', icon: <Edit2 size={11} /> };
       case 'PIN':
-        return { bg: 'rgba(234, 179, 8, 0.15)', color: '#eab308', border: 'rgba(234, 179, 8, 0.4)', icon: '🔒' };
+        return { bg: 'rgba(234, 179, 8, 0.15)', color: '#eab308', border: 'rgba(234, 179, 8, 0.4)', icon: <Lock size={11} /> };
       case 'AVALIAÇÃO':
-        return { bg: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: 'rgba(59, 130, 246, 0.4)', icon: '📋' };
+        return { bg: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', border: 'rgba(59, 130, 246, 0.4)', icon: <ClipboardList size={11} /> };
       case 'ADMIN':
-        return { bg: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: 'rgba(239, 68, 68, 0.4)', icon: '🛡️' };
+        return { bg: 'rgba(239, 68, 68, 0.15)', color: '#f87171', border: 'rgba(239, 68, 68, 0.4)', icon: <Shield size={11} /> };
       case 'PLANILHA':
-        return { bg: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', border: 'rgba(34, 197, 94, 0.4)', icon: '📊' };
+        return { bg: 'rgba(34, 197, 94, 0.15)', color: '#4ade80', border: 'rgba(34, 197, 94, 0.4)', icon: <FileSpreadsheet size={11} /> };
       default:
-        return { bg: 'rgba(255, 255, 255, 0.1)', color: '#e2e8f0', border: 'rgba(255, 255, 255, 0.2)', icon: '⚡' };
+        return { bg: 'rgba(255, 255, 255, 0.1)', color: '#e2e8f0', border: 'rgba(255, 255, 255, 0.2)', icon: <Zap size={11} /> };
     }
   };
 
@@ -1025,12 +1102,12 @@ function AuditModal({ onClose, adminUser }) {
           <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '4px' }}>
             {[
               { id: 'ALL', label: 'Todos' },
-              { id: 'LOGIN', label: '🔑 Logins' },
-              { id: 'FOTO', label: '📸 Fotos' },
-              { id: 'PERFIL', label: '✏️ Perfis' },
-              { id: 'PIN', label: '🔒 PINs' },
-              { id: 'AVALIAÇÃO', label: '📋 Avaliações' },
-              { id: 'ADMIN', label: '🛡️ Admin' }
+              { id: 'LOGIN', label: 'Logins' },
+              { id: 'FOTO', label: 'Fotos' },
+              { id: 'PERFIL', label: 'Perfis' },
+              { id: 'PIN', label: 'PINs' },
+              { id: 'AVALIAÇÃO', label: 'Avaliações' },
+              { id: 'ADMIN', label: 'Admin' }
             ].map(cat => (
               <button 
                 key={cat.id}
@@ -1158,6 +1235,27 @@ export default function Players() {
   const [evalConfirmationView, setEvalConfirmationView] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
 
+  // Player Stats Modal state
+  const [selectedPlayerModal, setSelectedPlayerModal] = useState(null);
+  const [playerHistory, setPlayerHistory] = useState([]);
+  const [playerHistoryLoading, setPlayerHistoryLoading] = useState(false);
+
+  useEffect(() => {
+    if (selectedPlayerModal) {
+      setPlayerHistoryLoading(true);
+      fetch(`${API_URL}/users/${selectedPlayerModal.id}/history`)
+        .then(res => res.json())
+        .then(data => {
+          setPlayerHistory(data);
+          setPlayerHistoryLoading(false);
+        })
+        .catch(err => {
+          console.error(err);
+          setPlayerHistoryLoading(false);
+        });
+    }
+  }, [selectedPlayerModal]);
+
   const EVAL_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdBKBRFIXYLRsJwf0FwNqQJqhD8a5PvD0xLbB9zY1v3x26gQw/viewform';
 
   const handleConfirmAlreadyAnswered = () => {
@@ -1215,6 +1313,7 @@ export default function Players() {
       const dataUrl = await toPng(cardEl, { 
         cacheBust: true, 
         pixelRatio: 2.5,
+        filter: (node) => !node.classList?.contains('fut-card-btn-action') && !node.classList?.contains('fut-card-shine'),
         style: {
           transform: 'none',
           boxShadow: 'none'
@@ -1292,7 +1391,7 @@ export default function Players() {
   }, []);
 
   const handlePhotoSelect = (player, e) => {
-    if (!isMyPlayer(player)) {
+    if (!isMyPlayer(player) && !isAdmin) {
       alert('Você só pode alterar a foto do seu próprio atleta.');
       return;
     }
@@ -1309,7 +1408,7 @@ export default function Players() {
   };
 
   const openAdjustExistingPhoto = (player) => {
-    if (!isMyPlayer(player)) {
+    if (!isMyPlayer(player) && !isAdmin) {
       alert('Você só pode alterar a foto do seu próprio atleta.');
       return;
     }
@@ -1322,7 +1421,7 @@ export default function Players() {
 
   const removePlayerPhoto = async (playerId) => {
     const targetPlayer = players.find(p => p.id === playerId);
-    if (!isMyPlayer(targetPlayer)) {
+    if (!isMyPlayer(targetPlayer) && !isAdmin) {
       alert('Você só pode remover a foto do seu próprio atleta.');
       return;
     }
@@ -1347,7 +1446,7 @@ export default function Players() {
 
   const handleSaveCroppedPhoto = async (croppedBlob, originalFile) => {
     if (!cropModalPlayer || !croppedBlob) return;
-    if (!isMyPlayer(cropModalPlayer)) {
+    if (!isMyPlayer(cropModalPlayer) && !isAdmin) {
       alert('Você só pode alterar a foto do seu próprio atleta.');
       return;
     }
@@ -1540,35 +1639,47 @@ export default function Players() {
         style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}
       >
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-          <div className="fut-card" id={`fut-card-${player.id}`} style={isEditable ? { filter: 'drop-shadow(0 0 18px rgba(0, 245, 155, 0.45))' } : {}}>
+          <div 
+            className="fut-card" 
+            id={`fut-card-${player.id}`} 
+            style={{ 
+              cursor: 'pointer',
+              ...(isEditable ? { filter: 'drop-shadow(0 0 18px rgba(0, 245, 155, 0.45))' } : {}) 
+            }}
+            onClick={() => setSelectedPlayerModal(player)}
+          >
             <img src="/fut-bg.png" alt="Card Background" className="fut-card-bg" />
+            <div className="fut-card-shine" />
             <div className="fut-card-inner">
               {/* Botão de Download / Compartilhar Carta FUT */}
               <button 
                 onClick={(e) => handleDownloadCard(player, e)}
                 style={{ 
                   position: 'absolute', 
-                  top: -8, 
-                  left: -8, 
-                  background: 'rgba(18, 20, 32, 0.95)', 
-                  border: '1.5px solid rgba(0, 245, 155, 0.5)', 
+                  top: 14, 
+                  left: 16, 
+                  width: '34px',
+                  height: '34px',
+                  background: 'rgba(18, 20, 32, 0.94)', 
+                  border: '1.5px solid rgba(0, 245, 155, 0.55)', 
                   borderRadius: '50%', 
-                  padding: '9px', 
+                  padding: 0, 
                   color: '#fff', 
                   cursor: 'pointer', 
                   zIndex: 10,
-                  boxShadow: '0 0 14px rgba(0, 245, 155, 0.35)',
+                  boxShadow: '0 0 12px rgba(0, 245, 155, 0.35)',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center'
                 }}
+                className="fut-card-btn-action"
                 title="Baixar ou Compartilhar Carta FUT em HD"
                 disabled={downloadingCardId === player.id}
               >
                 {downloadingCardId === player.id ? (
-                  <Loader2 size={16} className="animate-spin" color="var(--primary)" />
+                  <Loader2 size={15} className="animate-spin" color="var(--primary)" />
                 ) : (
-                  <Download size={16} color="var(--primary)" />
+                  <Download size={15} color="var(--primary)" />
                 )}
               </button>
 
@@ -1578,20 +1689,26 @@ export default function Players() {
                   onClick={() => startEditing(player)}
                   style={{ 
                     position: 'absolute', 
-                    top: -8, 
-                    right: -8, 
-                    background: 'rgba(18, 20, 32, 0.95)', 
+                    top: 14, 
+                    right: 16, 
+                    width: '34px',
+                    height: '34px',
+                    background: 'rgba(18, 20, 32, 0.94)', 
                     border: '1.5px solid var(--primary)', 
                     borderRadius: '50%', 
-                    padding: '9px', 
+                    padding: 0, 
                     color: '#fff', 
                     cursor: 'pointer', 
                     zIndex: 10,
-                    boxShadow: '0 0 14px rgba(0, 245, 155, 0.5)'
+                    boxShadow: '0 0 12px rgba(0, 245, 155, 0.45)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
                   }}
+                  className="fut-card-btn-action"
                   title="Editar Meu Perfil & Carta"
                 >
-                  <Edit2 size={16} color="var(--primary)" />
+                  <Edit2 size={15} color="var(--primary)" />
                 </button>
               )}
               
@@ -1665,31 +1782,7 @@ export default function Players() {
                 <Edit2 size={16} /> Editar Meu Jogador
               </button>
 
-              <button 
-                className="btn btn-secondary" 
-                style={{ 
-                  width: '100%', 
-                  padding: '10px 16px', 
-                  fontSize: '0.84rem', 
-                  fontWeight: '800', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  gap: '8px',
-                  borderRadius: '12px',
-                  borderColor: 'rgba(0, 245, 155, 0.45)',
-                  background: 'rgba(0, 245, 155, 0.08)',
-                  color: 'var(--primary)'
-                }}
-                onClick={(e) => handleDownloadCard(player, e)}
-                disabled={downloadingCardId === player.id}
-              >
-                {downloadingCardId === player.id ? (
-                  <><Loader2 size={16} className="animate-spin" /> Gerando Imagem...</>
-                ) : (
-                  <><Download size={16} /> Baixar Carta FUT (HD)</>
-                )}
-              </button>
+
 
               {isAdmin && (
                 <>
@@ -1712,7 +1805,7 @@ export default function Players() {
                     }}
                     onClick={() => setShowAuditModal(true)}
                   >
-                    <ShieldCheck size={16} color="#c084fc" /> 🛡️ Auditoria do App (Admin)
+                    <ShieldCheck size={16} color="#c084fc" /> Auditoria do App (Admin)
                   </button>
 
                   <button 
@@ -1735,7 +1828,7 @@ export default function Players() {
                     disabled={isDownloadingBackup}
                   >
                     <HardDriveDownload size={15} color="#60a5fa" className={isDownloadingBackup ? 'animate-spin' : ''} />
-                    {isDownloadingBackup ? 'Gerando Backup...' : '💾 Baixar Backup do Clube (.json)'}
+                    {isDownloadingBackup ? 'Gerando Backup...' : 'Baixar Backup do Clube (.json)'}
                   </button>
                 </>
               )}
@@ -1745,25 +1838,7 @@ export default function Players() {
           {/* Botões para Outros Atletas */}
           {!isEditable && (
             <div style={{ width: '310px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <button 
-                className="btn btn-secondary" 
-                style={{ 
-                  width: '100%', 
-                  padding: '8px 12px', 
-                  fontSize: '0.78rem', 
-                  fontWeight: '700', 
-                  display: 'flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  gap: '6px',
-                  borderRadius: '10px'
-                }}
-                onClick={(e) => handleDownloadCard(player, e)}
-                disabled={downloadingCardId === player.id}
-              >
-                {downloadingCardId === player.id ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-                Baixar Carta FUT
-              </button>
+
 
               {isAdmin && (
                 <button 
@@ -1785,17 +1860,7 @@ export default function Players() {
                 </button>
               )}
 
-              {player.has_pin ? (
-                <button 
-                  type="button" 
-                  className="btn btn-secondary" 
-                  style={{ width: '100%', padding: '7px 12px', fontSize: '0.74rem', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
-                  onClick={() => handleAdminResetPin(player)}
-                  title="Resetar PIN deste atleta caso ele tenha esquecido"
-                >
-                  <KeyRound size={14} color="var(--primary)" /> Resetar PIN do Atleta
-                </button>
-              ) : null}
+
             </div>
           )}
         </div>
@@ -1815,19 +1880,19 @@ export default function Players() {
               Plantel do Elenco
             </h2>
             <div className="text-muted text-sm">
-              {players.length} Atletas cadastrados • Cartas Oficiais dos Atletas
+              {players.length} Atletas cadastrados
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', width: '100%' }}>
             {/* Botão de Avaliação do Elenco (Para todos os jogadores) */}
             <button 
               type="button" 
               className="btn" 
               style={{ 
-                width: 'auto', 
-                padding: '10px 16px', 
-                fontSize: '0.84rem', 
+                flex: 1, 
+                padding: '10px 6px', 
+                fontSize: '0.8rem', 
                 fontWeight: '800',
                 background: evalAnswered 
                   ? 'rgba(0, 245, 155, 0.08)' 
@@ -1837,14 +1902,16 @@ export default function Players() {
                 boxShadow: evalAnswered ? 'none' : '0 0 16px rgba(0, 245, 155, 0.25)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: '8px',
-                cursor: 'pointer'
+                justifyContent: 'center',
+                gap: '6px',
+                cursor: 'pointer',
+                whiteSpace: 'nowrap'
               }}
               onClick={() => { setShowEvalModal(true); setEvalConfirmationView(evalAnswered); }}
               title="Preencher ou consultar formulário de avaliação dos jogadores"
             >
-              <ClipboardList size={16} color="var(--primary)" />
-              <span>Avaliação do Elenco {evalAnswered && '✅'}</span>
+              <ClipboardList size={16} color="var(--primary)" style={{ flexShrink: 0 }} />
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Avaliação {evalAnswered && '✅'}</span>
             </button>
 
             {isAdmin && (
@@ -1866,8 +1933,8 @@ export default function Players() {
                   />
                 </label>
 
-                <button className="btn" style={{ width: 'auto', padding: '10px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
-                  <Plus size={16} /> Novo Jogador
+                <button className="btn" style={{ flex: 1, padding: '10px 6px', fontSize: '0.8rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', whiteSpace: 'nowrap' }} onClick={() => setIsCreating(!isCreating)}>
+                  <Plus size={16} style={{ flexShrink: 0 }} /> Novo Atleta
                 </button>
               </>
             )}
@@ -1915,9 +1982,6 @@ export default function Players() {
                 Sua carta oficial no clube. Apenas você pode alterar seu perfil, apelido e foto.
               </p>
             </div>
-            <span className="badge" style={{ background: 'rgba(0, 245, 155, 0.12)', color: 'var(--primary)', border: '1px solid rgba(0, 245, 155, 0.35)', fontSize: '0.78rem', padding: '5px 12px' }}>
-              ⭐ Perfil Próprio
-            </span>
           </div>
 
           <div 
@@ -1951,35 +2015,43 @@ export default function Players() {
 
         {/* Search, Position Filter and Sort Bar */}
         <div className="glass-card mb-8" style={{ padding: '14px 16px' }}>
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
             
             {/* Search Box */}
-            <div style={{ position: 'relative', flex: '1 1 100%' }}>
+            <div style={{ position: 'relative', width: '100%' }}>
               <Search size={16} color="var(--text-muted)" style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)' }} />
               <input 
                 type="text" 
                 className="input" 
-                placeholder="Buscar atleta por apelido ou nome..."
+                placeholder="Buscar atleta..."
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
-                style={{ paddingLeft: '40px', marginBottom: 0 }}
+                style={{ paddingLeft: '40px', marginBottom: 0, width: '100%', height: '40px' }}
               />
             </div>
 
-            {/* Position Pills */}
-            <div className="hide-scrollbar" style={{ display: 'flex', gap: '6px', overflowX: 'auto', WebkitOverflowScrolling: 'touch', maxWidth: '100%', padding: '2px 0' }}>
+            {/* Position Pills (5 colunas simétricas no grid - cabem todos na tela de uma vez) */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '6px', width: '100%' }}>
               {[
                 { id: 'ALL', label: 'Todos' },
-                { id: 'ATA', label: 'Atacantes' },
-                { id: 'MEI', label: 'Meias' },
-                { id: 'DEF', label: 'Defesa' },
-                { id: 'GOL', label: 'Goleiros' }
+                { id: 'ATA', label: 'ATA' },
+                { id: 'MEI', label: 'MEI' },
+                { id: 'DEF', label: 'DEF' },
+                { id: 'GOL', label: 'GOL' }
               ].map(pos => (
                 <button
                   key={pos.id}
                   type="button"
                   className={`btn ${selectedPosition === pos.id ? '' : 'btn-secondary'}`}
-                  style={{ padding: '6px 12px', fontSize: '0.75rem', width: 'auto', borderRadius: '10px', whiteSpace: 'nowrap', flexShrink: 0 }}
+                  style={{ 
+                    padding: '8px 2px', 
+                    fontSize: '0.78rem', 
+                    fontWeight: 800, 
+                    width: '100%', 
+                    borderRadius: '10px', 
+                    textAlign: 'center', 
+                    justifyContent: 'center' 
+                  }}
                   onClick={() => setSelectedPosition(pos.id)}
                 >
                   {pos.label}
@@ -1987,12 +2059,12 @@ export default function Players() {
               ))}
             </div>
 
-            {/* Sort Selector */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              <ArrowUpDown size={15} color="var(--text-muted)" />
+            {/* Sort Selector (100% da largura, perfeitamente visível) */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+              <ArrowUpDown size={15} color="var(--primary)" style={{ flexShrink: 0 }} />
               <select 
                 className="input" 
-                style={{ width: 'auto', marginBottom: 0, padding: '6px 12px', fontSize: '0.78rem', height: '36px', borderRadius: '10px' }}
+                style={{ width: '100%', marginBottom: 0, padding: '7px 12px', fontSize: '0.80rem', height: '38px', borderRadius: '10px', background: 'rgba(255,255,255,0.03)' }}
                 value={sortBy}
                 onChange={e => setSortBy(e.target.value)}
               >
@@ -2146,11 +2218,11 @@ export default function Players() {
                   <Check size={28} color="var(--primary)" />
                 </div>
 
-                <h3 className="text-xl font-extrabold text-main" style={{ margin: '0 0 8px' }}>
-                  Tudo Certo! ✅
+                <h3 className="text-xl font-extrabold text-main" style={{ margin: '0 0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                  <Check size={22} color="var(--primary)" /> Tudo Certo!
                 </h3>
                 <p className="text-muted text-sm" style={{ margin: '0 0 22px', lineHeight: 1.45 }}>
-                  Suas notas já foram enviadas e são levadas em conta no cálculo oficial do OVR do elenco. Segue o jogo! ⚽🔥
+                  Suas notas já foram enviadas e são levadas em conta no cálculo oficial do OVR do elenco. Segue o jogo!
                 </p>
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
@@ -2182,6 +2254,217 @@ export default function Players() {
       {showAuditModal && (
         <AuditModal onClose={() => setShowAuditModal(false)} adminUser={user} />
       )}
+
+      {/* Modal de Estatísticas e Histórico do Atleta */}
+      <AnimatePresence>
+        {selectedPlayerModal && (
+          <div 
+            style={{ 
+              position: 'fixed', 
+              inset: 0, 
+              background: 'rgba(0,0,0,0.85)', 
+              backdropFilter: 'blur(16px)', 
+              WebkitBackdropFilter: 'blur(16px)',
+              zIndex: 1200, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              padding: '16px' 
+            }}
+            onClick={() => setSelectedPlayerModal(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.92, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.92, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="glass-card"
+              style={{ 
+                width: '100%', 
+                maxWidth: '520px', 
+                maxHeight: '90dvh', 
+                overflowY: 'auto',
+                background: 'rgba(14, 16, 26, 0.98)', 
+                borderRadius: '24px', 
+                border: '1.5px solid rgba(0, 245, 155, 0.35)',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 30px rgba(0,245,155,0.15)',
+                padding: '24px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '20px'
+              }}
+            >
+              {/* Barra Superior do Modal */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                  Perfil & Histórico do Atleta
+                </span>
+                <button 
+                  onClick={() => setSelectedPlayerModal(null)} 
+                  style={{ background: 'rgba(255,255,255,0.06)', border: 'none', color: '#fff', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Cabeçalho do Atleta: Foto, Nome, Posição e OVR */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(255,255,255,0.03)', padding: '16px', borderRadius: '18px', border: '1px solid var(--border)' }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#0a0a0f', border: '2.5px solid var(--primary)', boxShadow: '0 0 16px rgba(0, 245, 155, 0.3)', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {selectedPlayerModal.photo ? (
+                    <img src={formatPhotoUrl(selectedPlayerModal.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <span style={{ fontSize: '24px', fontWeight: 900, color: 'var(--primary)' }}>
+                      {selectedPlayerModal.username?.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', letterSpacing: '-0.3px', lineHeight: 1.2 }}>
+                    {selectedPlayerModal.nickname ? String(selectedPlayerModal.nickname).split(',')[0].trim() : (selectedPlayerModal.username || 'Atleta')}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span className="badge badge-volt" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                      {selectedPlayerModal.position || 'MEI'}
+                    </span>
+                    {selectedPlayerModal.height && <span>• {Number(selectedPlayerModal.height).toFixed(2)}m</span>}
+                    {selectedPlayerModal.weight && <span>• {selectedPlayerModal.weight}kg</span>}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center', background: 'linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 215, 0, 0.05))', border: '1.5px solid rgba(255, 215, 0, 0.4)', borderRadius: '14px', padding: '8px 12px', flexShrink: 0 }}>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#ffd700', lineHeight: 1 }}>
+                    {calcOVR(selectedPlayerModal)}
+                  </div>
+                  <div style={{ fontSize: '0.62rem', fontWeight: 800, color: '#ffd700', textTransform: 'uppercase', marginTop: '2px' }}>
+                    OVR
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid de Estatísticas na Temporada */}
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                  Estatísticas na Temporada
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', lineHeight: 1.1 }}>{selectedPlayerModal.matches_count || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>PARTIDAS</div>
+                  </div>
+                  <div style={{ background: 'rgba(0, 245, 155, 0.06)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid rgba(0, 245, 155, 0.3)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: 'var(--primary)', lineHeight: 1.1 }}>{selectedPlayerModal.goals || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--primary)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>GOLS</div>
+                  </div>
+                  <div style={{ background: 'rgba(251, 191, 36, 0.06)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid rgba(251, 191, 36, 0.3)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fbbf24', lineHeight: 1.1 }}>{selectedPlayerModal.assists || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: '#fbbf24', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>ASSISTS</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#38bdf8', lineHeight: 1.1 }}>{selectedPlayerModal.win_rate || 0}%</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>VITÓRIAS</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#ffd700', lineHeight: 1.1 }}>
+                      {selectedPlayerModal.avg_rating ? Number(selectedPlayerModal.avg_rating).toFixed(1) : '-'}
+                    </div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>NOTA MÉDIA</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#f43f5e', lineHeight: 1.1 }}>{selectedPlayerModal.win_streak || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>SEQUÊNCIA</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Atributos da Carta FUT */}
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                  Atributos da Carta FUT
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                  {[
+                    { label: 'Ritmo (PAC)', val: selectedPlayerModal.pace || 50 },
+                    { label: 'Finalização (SHO)', val: selectedPlayerModal.shooting || 50 },
+                    { label: 'Passe (PAS)', val: selectedPlayerModal.passing || 50 },
+                    { label: 'Drible (DRI)', val: selectedPlayerModal.dribbling || 50 },
+                    { label: 'Defesa (DEF)', val: selectedPlayerModal.defending || 50 },
+                    { label: 'Físico (PHY)', val: selectedPlayerModal.physical || 50 }
+                  ].map(attr => (
+                    <div key={attr.label} style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, marginBottom: '4px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{attr.label}</span>
+                        <span style={{ color: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', fontWeight: 900 }}>{attr.val}</span>
+                      </div>
+                      <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                        <div style={{ width: `${Math.min(100, Math.max(0, attr.val))}%`, height: '100%', background: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', borderRadius: '2px' }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Histórico em Peladas Recentes */}
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                  Histórico em Partidas
+                </div>
+                {playerHistoryLoading ? (
+                  <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Carregando histórico...</div>
+                ) : playerHistory.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.85rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
+                    Nenhuma partida anterior registrada para este atleta.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {playerHistory.map(h => {
+                      const hDate = new Date(h.date + 'T12:00:00');
+                      const rawHDate = isNaN(hDate.getTime()) ? h.date : hDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+                      const formattedHDate = rawHDate ? rawHDate.charAt(0).toUpperCase() + rawHDate.slice(1) : '';
+
+                      return (
+                        <div key={h.match_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                          <div>
+                            <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#fff' }}>{formattedHDate}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{h.team_name}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.82rem', fontWeight: 800 }}>
+                            {h.goals > 0 && <span style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Goal size={13} /> {h.goals}</span>}
+                            {h.assists > 0 && <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Footprints size={13} /> {h.assists}</span>}
+                            {h.rating && <span style={{ color: '#ffd700', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Star size={13} fill="#ffd700" color="#ffd700" /> {h.rating}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Botões de Ação do Modal */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                {(isMyPlayer(selectedPlayerModal) || isAdmin) && (
+                  <button 
+                    className="btn" 
+                    style={{ flex: 1, padding: '11px', fontSize: '0.85rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    onClick={() => {
+                      const p = selectedPlayerModal;
+                      setSelectedPlayerModal(null);
+                      startEditing(p);
+                    }}
+                  >
+                    <Edit2 size={16} /> Editar Dados e Carta FUT
+                  </button>
+                )}
+                <button 
+                  className="btn btn-secondary" 
+                  style={{ flex: (isMyPlayer(selectedPlayerModal) || isAdmin) ? '0 0 100px' : 1, padding: '11px', fontSize: '0.85rem' }}
+                  onClick={() => setSelectedPlayerModal(null)}
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
     </motion.div>
   );

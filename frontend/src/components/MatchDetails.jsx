@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useContext, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
-import { Users, Shuffle, Star, Shield, ArrowLeft, Share2, Trophy, Goal, Award, Trash2, RefreshCw, UserPlus, UserCheck, X, CheckCircle2, Clipboard, Check, Sparkles, LayoutList, MapPin, Plus, Zap } from 'lucide-react';
+import { Users, Shuffle, Star, Shield, ArrowLeft, Share2, Trophy, Goal, Award, Trash2, RefreshCw, UserPlus, UserCheck, X, CheckCircle2, Clipboard, Check, Sparkles, LayoutList, MapPin, Plus, Zap, Footprints, Lightbulb, Clock, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
@@ -63,6 +63,15 @@ export function formatShortTeamName(name) {
   if (upper.includes('SEM')) return 'SEM';
   if (upper.includes('COM')) return 'COM';
   return name;
+}
+
+export function formatHeight(val) {
+  if (val === null || val === undefined || val === '') return '';
+  let str = String(val).trim().replace(',', '.');
+  const num = parseFloat(str);
+  if (isNaN(num)) return str;
+  if (num > 3) return (num / 100).toFixed(2);
+  return num.toFixed(2);
 }
 
 // Intelligent WhatsApp List Parser with Fuzzy Matching
@@ -201,6 +210,51 @@ export default function MatchDetails() {
 
   // Cinematic Team Draft Animation state
   const [draftAnim, setDraftAnim] = useState(null);
+
+  // Tactical Pitch Tab: 'both' | 0 | 1
+  const [pitchTab, setPitchTab] = useState('both');
+
+  // Player Stats & History Modal State
+  const [selectedPlayerModal, setSelectedPlayerModal] = useState(null);
+  const [playerHistory, setPlayerHistory] = useState([]);
+  const [playerHistoryLoading, setPlayerHistoryLoading] = useState(false);
+
+  const normalizeStr = str => (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+
+  const isMyPlayer = (p) => {
+    if (!user || !p) return false;
+    if (user.id && p.id && String(p.id) === String(user.id)) return true;
+    if (user.username && p.username && normalizeStr(p.username) === normalizeStr(user.username)) return true;
+    if (user.nickname && p.nickname && normalizeStr(user.nickname).length >= 2) {
+      const uNick = normalizeStr(user.nickname);
+      const pNick = normalizeStr(p.nickname);
+      if (pNick.split(',').map(s => s.trim()).includes(uNick)) return true;
+    }
+    return false;
+  };
+
+  useEffect(() => {
+    if (selectedPlayerModal && selectedPlayerModal.id) {
+      setPlayerHistoryLoading(true);
+      fetch(`${API_URL}/users/${selectedPlayerModal.id}/history`)
+        .then(res => res.json())
+        .then(data => {
+          setPlayerHistory(Array.isArray(data) ? data : []);
+        })
+        .catch(err => {
+          console.error('Erro ao carregar histórico do jogador:', err);
+          setPlayerHistory([]);
+        })
+        .finally(() => setPlayerHistoryLoading(false));
+    } else {
+      setPlayerHistory([]);
+    }
+  }, [selectedPlayerModal]);
+
+  const openPlayerDetails = (p) => {
+    const fullP = allPlayers.find(ap => ap.id === p.id) || p;
+    setSelectedPlayerModal(fullP);
+  };
 
   const cardRef = useRef(null);
 
@@ -459,7 +513,28 @@ export default function MatchDetails() {
     if (!cardRef.current) return;
     setIsExporting(true);
     try {
-      const dataUrl = await toPng(cardRef.current, { cacheBust: true, quality: 0.95 });
+      const node = cardRef.current;
+      const width = node.offsetWidth;
+      const height = node.offsetHeight;
+
+      const dataUrl = await toPng(node, { 
+        cacheBust: true, 
+        quality: 1,
+        pixelRatio: 2, // Resolução Retina 2x ultra nítida para WhatsApp e celular
+        backgroundColor: '#08090e',
+        width: width,
+        height: height,
+        style: {
+          margin: '0',
+          transform: 'none',
+          maxWidth: `${width}px`,
+          width: `${width}px`,
+          height: `${height}px`,
+          left: '0',
+          top: '0',
+          position: 'static'
+        }
+      });
       const link = document.createElement('a');
       link.download = `escalacao-partida-${match.date}.png`;
       link.href = dataUrl;
@@ -550,6 +625,18 @@ export default function MatchDetails() {
 
   const allMatchPlayers = teamsReady ? match.teams.flatMap(t => t.players) : [];
 
+  const sortDefensiveLine = (defList) => {
+    const isLateral = (p) => ['LAT', 'LE', 'LD'].includes((p.position || '').toUpperCase());
+    const laterais = defList.filter(isLateral);
+    const zagueiros = defList.filter(p => !isLateral(p));
+    
+    if (laterais.length === 0) return zagueiros;
+    if (laterais.length === 1) {
+      return [laterais[0], ...zagueiros];
+    }
+    return [laterais[0], ...zagueiros, ...laterais.slice(1)];
+  };
+
   // Group players by formation line for the Tactical Pitch View
   const groupTeamByLines = (teamPlayers, isTopTeam) => {
     const gk = [];
@@ -560,16 +647,18 @@ export default function MatchDetails() {
     (teamPlayers || []).forEach(p => {
       const pos = (p.position || 'MEI').toUpperCase();
       if (pos === 'GOL') gk.push(p);
-      else if (['ZAG', 'LAT', 'DEF'].includes(pos)) def.push(p);
-      else if (['VOL', 'MEI'].includes(pos)) mid.push(p);
+      else if (['ZAG', 'LAT', 'DEF', 'LE', 'LD'].includes(pos)) def.push(p);
+      else if (['VOL', 'MEI', 'MC'].includes(pos)) mid.push(p);
       else fwd.push(p);
     });
+
+    const sortedDef = sortDefensiveLine(def);
 
     if (isTopTeam) {
       // Top team: Goal at top, forwards near halfway line
       return [
         { label: 'Goleiro', players: gk },
-        { label: 'Defesa', players: def },
+        { label: 'Defesa', players: sortedDef },
         { label: 'Meio-Campo', players: mid },
         { label: 'Ataque', players: fwd }
       ];
@@ -578,10 +667,70 @@ export default function MatchDetails() {
       return [
         { label: 'Ataque', players: fwd },
         { label: 'Meio-Campo', players: mid },
-        { label: 'Defesa', players: def },
+        { label: 'Defesa', players: sortedDef },
         { label: 'Goleiro', players: gk }
       ];
     }
+  };
+
+  const renderTacticalPlayer = (p, themeColor, glowColor) => {
+    const gCount = getPlayerEventCount(p.id, 'goals');
+    const aCount = getPlayerEventCount(p.id, 'assists');
+    const displayName = getPrimaryName(p);
+    const pOvr = calcOVR(p);
+    const pos = (p.position || 'MEI').toUpperCase();
+    const posColor = pos === 'GOL' ? '#fbbf24' : (['ZAG', 'LAT', 'DEF', 'LE', 'LD'].includes(pos) ? '#38bdf8' : (['VOL', 'MEI', 'MC'].includes(pos) ? '#00f59b' : '#f43f5e'));
+
+    return (
+      <div 
+        key={p.id}
+        onClick={() => openPlayerDetails(p)}
+        style={{ 
+          display: 'flex', 
+          flexDirection: 'column', 
+          alignItems: 'center', 
+          justifyContent: 'center',
+          cursor: 'pointer', 
+          transition: 'transform 0.18s',
+          width: '100%',
+          maxWidth: '84px',
+          textAlign: 'center',
+          margin: '0 auto'
+        }}
+        className="hover:scale-110"
+        title="Toque para ver estatísticas e histórico"
+      >
+        {/* Avatar Circular com Borda Brilhante e Badges Flutuantes */}
+        <div style={{ position: 'relative' }}>
+          <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(7, 10, 16, 0.55)', backdropFilter: 'blur(3px)', border: `2px solid ${themeColor}`, overflow: 'hidden', boxShadow: `0 0 14px ${glowColor}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            {p.photo ? (
+              <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 900, color: themeColor, textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
+                {p.username.charAt(0).toUpperCase()}
+              </div>
+            )}
+          </div>
+
+          {/* Badge Flutuante de OVR */}
+          <div style={{ position: 'absolute', top: -4, right: -6, background: '#07080c', border: `1px solid ${themeColor}`, color: themeColor, fontSize: '0.60rem', fontWeight: 900, padding: '1px 5px', borderRadius: '7px', boxShadow: '0 2px 6px rgba(0,0,0,0.8)' }}>
+            {pOvr}
+          </div>
+
+          {/* Badge Flutuante de Posição */}
+          <div style={{ position: 'absolute', bottom: -4, left: '50%', transform: 'translateX(-50%)', background: posColor, color: '#07080c', fontSize: '0.52rem', fontWeight: 900, padding: '0 4px', borderRadius: '4px', boxShadow: '0 2px 6px rgba(0,0,0,0.8)' }}>
+            {pos}
+          </div>
+        </div>
+
+        {/* Rótulo com Nome e Contadores de Gol/Assist */}
+        <div style={{ background: 'rgba(7, 8, 14, 0.94)', padding: '2px 7px', borderRadius: '7px', fontSize: '0.70rem', fontWeight: 800, color: '#fff', marginTop: '5px', whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,0.12)', maxWidth: '95px', overflow: 'hidden', textOverflow: 'ellipsis', boxShadow: '0 4px 12px rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+          <span>{displayName}</span>
+          {gCount > 0 && <span style={{ color: 'var(--primary)', fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '1px' }}><Goal size={10} />{gCount}</span>}
+          {aCount > 0 && <span style={{ color: '#fbbf24', fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '1px' }}><Footprints size={10} />{aCount}</span>}
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -712,7 +861,7 @@ export default function MatchDetails() {
             fontWeight: 'bold', 
             fontSize: '0.82rem' 
           }}>
-            {match.status === 'completed' ? '✅ Partida Encerrada' : '🟡 Convocação & Em Andamento'}
+            {match.status === 'completed' ? <><CheckCircle2 size={14} style={{ marginRight: '5px' }} />Partida Encerrada</> : <><Clock size={14} style={{ marginRight: '5px' }} />Convocação & Em Andamento</>}
           </span>
         </div>
       </div>
@@ -970,8 +1119,8 @@ export default function MatchDetails() {
                     <div style={{ paddingLeft: '28px' }}>
                       {item.matchedPlayer ? (
                         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(0, 245, 155, 0.12)', border: '1px solid rgba(0, 245, 155, 0.3)', padding: '4px 10px', borderRadius: '8px' }}>
-                          <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--primary)' }}>
-                            ✅ Atleta: {getPrimaryName(item.matchedPlayer)}
+                          <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
+                            <Check size={13} /> Atleta: {getPrimaryName(item.matchedPlayer)}
                           </span>
                           <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
                             (OVR {calcOVR(item.matchedPlayer)})
@@ -1085,7 +1234,60 @@ export default function MatchDetails() {
               </div>
             </div>
 
-            {/* Linha 2: Ação de Exportar para WhatsApp (Dedicado e 100% visível em qualquer celular) */}
+            {/* Linha 2: Seletor de Time no Campo Tático (Fora da exportação da imagem) */}
+            {viewMode === 'pitch' && (
+              <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                <button 
+                  type="button"
+                  onClick={() => setPitchTab('both')}
+                  className={`btn ${pitchTab === 'both' ? '' : 'btn-secondary'}`}
+                  style={{ 
+                    padding: '8px 16px', 
+                    fontSize: '0.82rem', 
+                    borderRadius: '12px',
+                    fontWeight: pitchTab === 'both' ? '800' : '600'
+                  }}
+                >
+                  Ambos os Times
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => setPitchTab('team0')}
+                  className={`btn ${pitchTab === 'team0' ? '' : 'btn-secondary'}`}
+                  style={{ 
+                    padding: '8px 16px', 
+                    fontSize: '0.82rem', 
+                    borderRadius: '12px',
+                    fontWeight: pitchTab === 'team0' ? '800' : '600',
+                    borderColor: pitchTab === 'team0' ? '#00f59b' : 'rgba(0, 245, 155, 0.35)',
+                    color: pitchTab === 'team0' ? '#07080c' : '#00f59b',
+                    background: pitchTab === 'team0' ? '#00f59b' : 'rgba(0, 245, 155, 0.08)'
+                  }}
+                >
+                  {match.teams[0]?.name || 'COM COLETE'} (OVR {getTeamOVR(match.teams[0])})
+                </button>
+
+                <button 
+                  type="button"
+                  onClick={() => setPitchTab('team1')}
+                  className={`btn ${pitchTab === 'team1' ? '' : 'btn-secondary'}`}
+                  style={{ 
+                    padding: '8px 16px', 
+                    fontSize: '0.82rem', 
+                    borderRadius: '12px',
+                    fontWeight: pitchTab === 'team1' ? '800' : '600',
+                    borderColor: pitchTab === 'team1' ? '#ffffff' : 'rgba(255, 255, 255, 0.35)',
+                    color: pitchTab === 'team1' ? '#07080c' : '#ffffff',
+                    background: pitchTab === 'team1' ? '#ffffff' : 'rgba(255, 255, 255, 0.08)'
+                  }}
+                >
+                  {match.teams[1]?.name || 'SEM COLETE'} (OVR {getTeamOVR(match.teams[1])})
+                </button>
+              </div>
+            )}
+
+            {/* Linha 3: Ação de Exportar para WhatsApp (Dedicado e 100% visível em qualquer celular) */}
             <div style={{ display: 'flex', justifyContent: 'center' }}>
               <button 
                 className="btn btn-secondary" 
@@ -1113,10 +1315,14 @@ export default function MatchDetails() {
             </div>
           </div>
 
-          <div ref={cardRef} style={{ padding: '18px 14px', background: '#08090e', borderRadius: '22px', border: '1px solid var(--border)' }}>
-            <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-              <h4 style={{ color: 'var(--primary)', fontWeight: '900', fontSize: '1.3rem', margin: 0, letterSpacing: '-0.3px' }}>plugshawtycafetoes FC</h4>
-              <div style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '4px' }}>Escalação Oficial da Partida — {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')}</div>
+          <div ref={cardRef} style={{ maxWidth: viewMode === 'pitch' ? '540px' : '960px', width: '100%', margin: '0 auto', padding: '24px 14px 20px', background: '#08090e', borderRadius: '0px', border: '1px solid var(--border)' }}>
+            <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+              <h4 style={{ color: 'var(--primary)', fontWeight: '900', fontSize: '1.35rem', margin: 0, letterSpacing: '-0.3px', textTransform: 'uppercase' }}>
+                Escalação Oficial da Partida
+              </h4>
+              <div style={{ color: '#ffffff', fontSize: '0.88rem', marginTop: '6px', fontWeight: '700' }}>
+                {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')} — {match.time || '15h'} — {match.location || 'Arena Petrópolis'}
+              </div>
             </div>
 
             {/* VIEW MODE TRANSITION */}
@@ -1164,6 +1370,7 @@ export default function MatchDetails() {
                         return (
                           <div 
                             key={p.id} 
+                            onClick={() => openPlayerDetails(p)}
                             style={{ 
                               padding: '12px 12px', 
                               background: 'rgba(255,255,255,0.03)', 
@@ -1171,12 +1378,15 @@ export default function MatchDetails() {
                               border: '1px solid var(--border)',
                               display: 'flex',
                               flexDirection: 'column',
-                              gap: '10px'
+                              gap: '10px',
+                              cursor: 'pointer',
+                              transition: 'background 0.15s, border-color 0.15s'
                             }}
+                            title="Toque no card para ver estatísticas e histórico"
                           >
                             {/* Linha 1: Avatar + Nome Completo + Posição e Botões de Ação */}
                             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1, padding: '2px 0' }}>
                                 <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'var(--secondary)', overflow: 'hidden', flexShrink: 0, border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                   {p.photo ? (
                                     <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
@@ -1199,12 +1409,12 @@ export default function MatchDetails() {
                               </div>
 
                               {/* Botões de Ação Rápida: Trocar de Time & Substituir */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                 <button 
                                   className="btn btn-secondary" 
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
                                   title="Trocar de time (COM COLETE ⇄ SEM COLETE)" 
-                                  onClick={() => handleSwitchTeam(p.id)}
+                                  onClick={(e) => { e.stopPropagation(); handleSwitchTeam(p.id); }}
                                   disabled={match.status === 'completed'}
                                 >
                                   <RefreshCw size={14} />
@@ -1214,7 +1424,7 @@ export default function MatchDetails() {
                                   className="btn btn-secondary" 
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
                                   title="Substituir por outro atleta do elenco" 
-                                  onClick={() => setSubstituteTarget({ user_id: p.id, name: displayName, team_name: team.name })}
+                                  onClick={(e) => { e.stopPropagation(); setSubstituteTarget({ user_id: p.id, name: displayName, team_name: team.name }); }}
                                   disabled={match.status === 'completed'}
                                 >
                                   <UserPlus size={14} />
@@ -1223,8 +1433,8 @@ export default function MatchDetails() {
                             </div>
 
                             {/* Linha 2: Contadores de Gols e Assistências Claros e Espaçosos */}
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)' }}>
-                              {/* Goals Counter Pill with ⚽ Emoji */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)' }} onClick={e => e.stopPropagation()}>
+                              {/* Goals Counter Pill with ⚽ Emoji lado a lado */}
                               <div 
                                 style={{ 
                                   display: 'flex', 
@@ -1235,13 +1445,15 @@ export default function MatchDetails() {
                                   border: '1px solid rgba(0, 245, 155, 0.3)', 
                                   borderRadius: '10px', 
                                   padding: '4px 10px',
-                                  height: '36px',
-                                  flex: 1
+                                  height: '38px',
+                                  flex: 1,
+                                  minWidth: 0
                                 }} 
                                 title="Gols marcados pelo atleta"
                               >
-                                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  ⚽ Gols
+                                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  <Goal size={14} />
+                                  <span>Gols</span>
                                 </span>
                                 <input 
                                   type="number" 
@@ -1262,12 +1474,13 @@ export default function MatchDetails() {
                                     color: 'var(--primary)', 
                                     padding: 0, 
                                     margin: 0,
-                                    outline: 'none'
+                                    outline: 'none',
+                                    flexShrink: 0
                                   }}
                                 />
                               </div>
 
-                              {/* Assists Counter Pill with 👟 Emoji */}
+                              {/* Assists Counter Pill with 👟 Emoji e palavra lado a lado */}
                               <div 
                                 style={{ 
                                   display: 'flex', 
@@ -1278,13 +1491,15 @@ export default function MatchDetails() {
                                   border: '1px solid rgba(251, 191, 36, 0.3)', 
                                   borderRadius: '10px', 
                                   padding: '4px 10px',
-                                  height: '36px',
-                                  flex: 1
+                                  height: '38px',
+                                  flex: 1,
+                                  minWidth: 0
                                 }} 
                                 title="Assistências do atleta"
                               >
-                                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#fbbf24', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                  👟 Assist.
+                                <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                  <Footprints size={14} />
+                                  <span>Assist.</span>
                                 </span>
                                 <input 
                                   type="number" 
@@ -1305,7 +1520,8 @@ export default function MatchDetails() {
                                     color: '#fbbf24', 
                                     padding: 0, 
                                     margin: 0,
-                                    outline: 'none'
+                                    outline: 'none',
+                                    flexShrink: 0
                                   }}
                                 />
                               </div>
@@ -1318,173 +1534,402 @@ export default function MatchDetails() {
                 ))}
               </motion.div>
             ) : (
-              /* 2. TACTICAL SOCCER PITCH VIEW */
+              /* 2. TACTICAL SOCCER PITCH VIEW - EA SPORTS FC 24 BROADCAST STYLE */
               <motion.div 
                 key="pitch-view"
-                initial={{ opacity: 0, scale: 0.98 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.98 }}
-                transition={{ duration: 0.28 }}
-                style={{ maxWidth: '820px', margin: '0 auto' }}
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.2 }}
+                style={{ width: '100%', maxWidth: '500px', margin: '0 auto' }}
               >
+                {/* Gramado Tático com Textura Hiper-Realista e Proporções de Transmissão */}
                 <div 
                   style={{
                     width: '100%',
-                    minHeight: '680px',
-                    borderRadius: '20px',
-                    border: '2px solid rgba(255,255,255,0.4)',
+                    minHeight: pitchTab === 'both' ? '540px' : '430px',
+                    borderRadius: '22px',
+                    border: '2px solid rgba(255, 255, 255, 0.35)',
                     position: 'relative',
                     overflow: 'hidden',
-                    background: 'repeating-linear-gradient(0deg, #134e23, #134e23 45px, #0f3f1c 45px, #0f3f1c 90px)',
-                    boxShadow: 'inset 0 0 60px rgba(0,0,0,0.5)',
+                    background: `
+                      radial-gradient(ellipse at 50% 10%, rgba(0, 245, 155, 0.22), transparent 60%),
+                      radial-gradient(ellipse at 50% 90%, rgba(255, 255, 255, 0.14), transparent 60%),
+                      radial-gradient(circle at 50% 50%, rgba(0,0,0,0) 30%, rgba(0,0,0,0.45) 100%),
+                      repeating-linear-gradient(0deg, #0b2e13 0px, #0b2e13 40px, #0e3817 40px, #0e3817 80px)
+                    `,
+                    boxShadow: 'inset 0 0 80px rgba(0,0,0,0.7), 0 16px 40px rgba(0,0,0,0.6)',
                     display: 'flex',
                     flexDirection: 'column',
-                    justifyContent: 'space-between',
-                    padding: '20px 16px'
+                    padding: '12px 6px'
                   }}
                 >
-                  {/* Pitch Markings */}
-                  <div style={{ position: 'absolute', top: '50%', left: 0, right: 0, height: '2px', background: 'rgba(255,255,255,0.4)', transform: 'translateY(-50%)', pointerEvents: 'none' }}></div>
-                  <div style={{ position: 'absolute', top: '50%', left: '50%', width: '130px', height: '130px', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.4)', transform: 'translate(-50%, -50%)', pointerEvents: 'none' }}></div>
-                  <div style={{ position: 'absolute', top: 0, left: '50%', width: '180px', height: '65px', border: '2px solid rgba(255,255,255,0.4)', borderTop: 'none', transform: 'translateX(-50%)', pointerEvents: 'none' }}></div>
-                  <div style={{ position: 'absolute', bottom: 0, left: '50%', width: '180px', height: '65px', border: '2px solid rgba(255,255,255,0.4)', borderBottom: 'none', transform: 'translateX(-50%)', pointerEvents: 'none' }}></div>
+                  {/* Linhas Demarcatórias Oficiais do Campo */}
+                  {/* Borda interna das quatro linhas */}
+                  <div style={{ position: 'absolute', inset: '8px', border: '2px solid rgba(255,255,255,0.45)', borderRadius: '14px', pointerEvents: 'none' }} />
 
-                  {/* Top Half: COM COLETE */}
-                  <div style={{ zIndex: 5, display: 'flex', flexDirection: 'column', gap: '22px' }}>
-                    <div style={{ textAlign: 'center' }}>
-                      <span className="badge badge-volt" style={{ fontSize: '0.85rem', padding: '6px 16px', background: 'rgba(0,0,0,0.7)' }}>
-                        👕 COM COLETE (OVR {getTeamOVR(match.teams[0])})
-                      </span>
-                    </div>
+                  {/* Linha do Meio de Campo e Círculo Central com Escudo Oficial Preenchendo */}
+                  {pitchTab === 'both' && (
+                    <>
+                      <div style={{ position: 'absolute', top: '50%', left: '8px', right: '8px', height: '2px', background: 'rgba(255,255,255,0.45)', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
+                      
+                      {/* Círculo Central */}
+                      <div style={{ position: 'absolute', top: '50%', left: '50%', width: '118px', height: '118px', borderRadius: '50%', border: '2px solid rgba(255,255,255,0.45)', transform: 'translate(-50%, -50%)', pointerEvents: 'none' }} />
 
-                    {groupTeamByLines(match.teams[0]?.players, true).map((line, lIdx) => (
-                      <div key={lIdx} style={{ display: 'flex', justifyContent: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                        {line.players.map(p => {
-                          const gCount = getPlayerEventCount(p.id, 'goals');
-                          const aCount = getPlayerEventCount(p.id, 'assists');
-                          const displayName = getPrimaryName(p);
+                      {/* Escudo Oficial do Clube em Marca d'Água Preenchendo Completamente o Círculo Central */}
+                      <div 
+                        style={{ 
+                          position: 'absolute', 
+                          top: '50%', 
+                          left: '50%', 
+                          transform: 'translate(-50%, -50%)', 
+                          width: '114px', 
+                          height: '114px', 
+                          borderRadius: '50%', 
+                          overflow: 'hidden', 
+                          opacity: 0.28, 
+                          pointerEvents: 'none',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          zIndex: 2
+                        }}
+                      >
+                        <img src="/logo.jpeg" alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                      </div>
+                    </>
+                  )}
 
+                  {/* Grande Área e Gol Superior */}
+                  <div style={{ position: 'absolute', top: '8px', left: '50%', width: '190px', height: '68px', border: '2px solid rgba(255,255,255,0.45)', borderTop: 'none', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+                    {/* Pequena Área */}
+                    <div style={{ position: 'absolute', top: 0, left: '50%', width: '88px', height: '24px', border: '2px solid rgba(255,255,255,0.45)', borderTop: 'none', transform: 'translateX(-50%)' }} />
+                    {/* Marca do Pênalti */}
+                    <div style={{ position: 'absolute', bottom: '12px', left: '50%', width: '6px', height: '6px', borderRadius: '50%', background: '#fff', transform: 'translateX(-50%)' }} />
+                    {/* Meia-lua da grande área */}
+                    <div style={{ position: 'absolute', bottom: '-20px', left: '50%', width: '56px', height: '20px', border: '2px solid rgba(255,255,255,0.45)', borderTop: 'none', borderRadius: '0 0 50px 50px', transform: 'translateX(-50%)' }} />
+                  </div>
+
+                  {/* Grande Área e Gol Inferior */}
+                  <div style={{ position: 'absolute', bottom: '8px', left: '50%', width: '190px', height: '68px', border: '2px solid rgba(255,255,255,0.45)', borderBottom: 'none', transform: 'translateX(-50%)', pointerEvents: 'none' }}>
+                    {/* Pequena Área */}
+                    <div style={{ position: 'absolute', bottom: 0, left: '50%', width: '88px', height: '24px', border: '2px solid rgba(255,255,255,0.45)', borderBottom: 'none', transform: 'translateX(-50%)' }} />
+                    {/* Marca do Pênalti */}
+                    <div style={{ position: 'absolute', top: '12px', left: '50%', width: '6px', height: '6px', borderRadius: '50%', background: '#fff', transform: 'translateX(-50%)' }} />
+                    {/* Meia-lua da grande área */}
+                    <div style={{ position: 'absolute', top: '-20px', left: '50%', width: '56px', height: '20px', border: '2px solid rgba(255,255,255,0.45)', borderBottom: 'none', borderRadius: '50px 50px 0 0', transform: 'translateX(-50%)' }} />
+                  </div>
+
+                  {/* Arcos de Escanteio */}
+                  <div style={{ position: 'absolute', top: '10px', left: '10px', width: '20px', height: '20px', borderRight: '2px solid rgba(255,255,255,0.45)', borderBottom: '2px solid rgba(255,255,255,0.45)', borderRadius: '0 0 20px 0', pointerEvents: 'none' }} />
+                  <div style={{ position: 'absolute', top: '10px', right: '10px', width: '20px', height: '20px', borderLeft: '2px solid rgba(255,255,255,0.45)', borderBottom: '2px solid rgba(255,255,255,0.45)', borderRadius: '0 0 0 20px', pointerEvents: 'none' }} />
+                  <div style={{ position: 'absolute', bottom: '10px', left: '10px', width: '20px', height: '20px', borderRight: '2px solid rgba(255,255,255,0.45)', borderTop: '2px solid rgba(255,255,255,0.45)', borderRadius: '0 20px 0 0', pointerEvents: 'none' }} />
+                  <div style={{ position: 'absolute', bottom: '10px', right: '10px', width: '20px', height: '20px', borderLeft: '2px solid rgba(255,255,255,0.45)', borderTop: '2px solid rgba(255,255,255,0.45)', borderRadius: '20px 0 0 0', pointerEvents: 'none' }} />
+
+                  {/* Renderização Tática dos Jogadores */}
+                  {pitchTab === 'both' ? (
+                    <>
+                      {/* Metade Superior: Time 0 */}
+                      {match.teams[0] && (
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, paddingBottom: '10px' }}>
+                          <div style={{ textAlign: 'center' }}>
+                            <span 
+                              style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '8px', 
+                                fontSize: '0.80rem', 
+                                fontWeight: 900, 
+                                padding: '4px 16px', 
+                                borderRadius: '14px', 
+                                background: 'rgba(7, 8, 12, 0.88)', 
+                                color: '#00f59b', 
+                                border: '1.5px solid #00f59b',
+                                boxShadow: '0 0 14px rgba(0, 245, 155, 0.35)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px'
+                              }}
+                            >
+                              <span>{match.teams[0].name}</span>
+                              <span style={{ opacity: 0.6 }}>•</span>
+                              <span>OVR {getTeamOVR(match.teams[0])}</span>
+                            </span>
+                          </div>
+
+                          {groupTeamByLines(match.teams[0].players, true).map((line, lIdx) => {
+                            if (line.players.length === 0) return null;
+                            return (
+                              <div 
+                                key={lIdx} 
+                                style={{ 
+                                  display: 'grid', 
+                                  gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
+                                  justifyItems: 'center', 
+                                  alignItems: 'center', 
+                                  width: '100%', 
+                                  maxWidth: '460px', 
+                                  margin: '0 auto', 
+                                  padding: '0 4px' 
+                                }}
+                              >
+                                {line.players.map(p => renderTacticalPlayer(p, '#00f59b', 'rgba(0, 245, 155, 0.45)'))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+
+                      {/* Metade Inferior: Time 1 */}
+                      {match.teams[1] && (
+                        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, paddingTop: '10px' }}>
+                          {groupTeamByLines(match.teams[1].players, false).map((line, lIdx) => {
+                            if (line.players.length === 0) return null;
+                            return (
+                              <div 
+                                key={lIdx} 
+                                style={{ 
+                                  display: 'grid', 
+                                  gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
+                                  justifyItems: 'center', 
+                                  alignItems: 'center', 
+                                  width: '100%', 
+                                  maxWidth: '460px', 
+                                  margin: '0 auto', 
+                                  padding: '0 4px' 
+                                }}
+                              >
+                                {line.players.map(p => renderTacticalPlayer(p, '#ffffff', 'rgba(255, 255, 255, 0.45)'))}
+                              </div>
+                            );
+                          })}
+
+                          <div style={{ textAlign: 'center' }}>
+                            <span 
+                              style={{ 
+                                display: 'inline-flex', 
+                                alignItems: 'center', 
+                                gap: '8px', 
+                                fontSize: '0.80rem', 
+                                fontWeight: 900, 
+                                padding: '4px 16px', 
+                                borderRadius: '14px', 
+                                background: 'rgba(7, 8, 12, 0.88)', 
+                                color: '#ffffff', 
+                                border: '1.5px solid #ffffff',
+                                boxShadow: '0 0 14px rgba(255, 255, 255, 0.3)',
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.4px'
+                              }}
+                            >
+                              <span>{match.teams[1].name}</span>
+                              <span style={{ opacity: 0.6 }}>•</span>
+                              <span>OVR {getTeamOVR(match.teams[1])}</span>
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                    </>
+                  ) : pitchTab === 'team0' ? (
+                    match.teams[0] && (
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, padding: '12px 0' }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <span 
+                            style={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '8px', 
+                              fontSize: '0.84rem', 
+                              fontWeight: 900, 
+                              padding: '5px 16px', 
+                              borderRadius: '16px', 
+                              background: 'rgba(7, 8, 12, 0.88)', 
+                              color: '#00f59b', 
+                              border: '1.5px solid #00f59b',
+                              boxShadow: '0 0 16px rgba(0, 245, 155, 0.35)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.4px'
+                            }}
+                          >
+                            <span>{match.teams[0].name}</span>
+                            <span style={{ opacity: 0.6 }}>•</span>
+                            <span>OVR {getTeamOVR(match.teams[0])}</span>
+                          </span>
+                        </div>
+
+                        {groupTeamByLines(match.teams[0].players, true).map((line, lIdx) => {
+                          if (line.players.length === 0) return null;
                           return (
                             <div 
-                              key={p.id}
-                              onClick={() => match.status !== 'completed' && setFieldActionPlayer({ player: p, teamName: match.teams[0]?.name })}
-                              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: match.status !== 'completed' ? 'pointer' : 'default', transition: 'transform 0.15s' }}
-                              className="hover:scale-110"
+                              key={lIdx} 
+                              style={{ 
+                                display: 'grid', 
+                                gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
+                                justifyItems: 'center', 
+                                alignItems: 'center', 
+                                width: '100%', 
+                                maxWidth: '460px', 
+                                margin: '0 auto', 
+                                padding: '0 4px' 
+                              }}
                             >
-                              <div style={{ position: 'relative', width: '42px', height: '42px', borderRadius: '50%', background: '#0a0a0f', border: '2px solid #00f59b', overflow: 'hidden', boxShadow: '0 0 12px rgba(0, 245, 155, 0.4)' }}>
-                                {p.photo ? (
-                                  <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                ) : (
-                                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', color: '#00f59b' }}>
-                                    {p.username.charAt(0).toUpperCase()}
-                                  </div>
-                                )}
-                              </div>
-                              <div style={{ background: 'rgba(0,0,0,0.88)', padding: '2px 6px', borderRadius: '8px', fontSize: '0.68rem', fontWeight: '800', color: '#fff', marginTop: '3px', whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,0.1)', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {displayName} {gCount > 0 && `⚽${gCount}`} {aCount > 0 && `👟${aCount}`}
-                              </div>
+                              {line.players.map(p => renderTacticalPlayer(p, '#00f59b', 'rgba(0, 245, 155, 0.45)'))}
                             </div>
                           );
                         })}
                       </div>
-                    ))}
-                  </div>
+                    )
+                  ) : (
+                    match.teams[1] && (
+                      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, padding: '12px 0' }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <span 
+                            style={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '8px', 
+                              fontSize: '0.84rem', 
+                              fontWeight: 900, 
+                              padding: '5px 16px', 
+                              borderRadius: '16px', 
+                              background: 'rgba(7, 8, 12, 0.88)', 
+                              color: '#ffffff', 
+                              border: '1.5px solid #ffffff',
+                              boxShadow: '0 0 16px rgba(255, 255, 255, 0.3)',
+                              textTransform: 'uppercase',
+                              letterSpacing: '0.4px'
+                            }}
+                          >
+                            <span>{match.teams[1].name}</span>
+                            <span style={{ opacity: 0.6 }}>•</span>
+                            <span>OVR {getTeamOVR(match.teams[1])}</span>
+                          </span>
+                        </div>
 
-                  {/* Bottom Half: SEM COLETE */}
-                  <div style={{ zIndex: 5, display: 'flex', flexDirection: 'column', gap: '18px', marginTop: '30px' }}>
-                    {groupTeamByLines(match.teams[1]?.players, false).map((line, lIdx) => (
-                      <div key={lIdx} style={{ display: 'flex', justifyContent: 'center', gap: '14px', flexWrap: 'wrap' }}>
-                        {line.players.map(p => {
-                          const gCount = getPlayerEventCount(p.id, 'goals');
-                          const aCount = getPlayerEventCount(p.id, 'assists');
-                          const displayName = getPrimaryName(p);
-
+                        {groupTeamByLines(match.teams[1].players, true).map((line, lIdx) => {
+                          if (line.players.length === 0) return null;
                           return (
                             <div 
-                              key={p.id}
-                              onClick={() => match.status !== 'completed' && setFieldActionPlayer({ player: p, teamName: match.teams[1]?.name })}
-                              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', cursor: match.status !== 'completed' ? 'pointer' : 'default', transition: 'transform 0.15s' }}
-                              className="hover:scale-110"
+                              key={lIdx} 
+                              style={{ 
+                                display: 'grid', 
+                                gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
+                                justifyItems: 'center', 
+                                alignItems: 'center', 
+                                width: '100%', 
+                                maxWidth: '460px', 
+                                margin: '0 auto', 
+                                padding: '0 4px' 
+                              }}
                             >
-                              <div style={{ position: 'relative', width: '42px', height: '42px', borderRadius: '50%', background: '#0a0a0f', border: '2px solid #ffffff', overflow: 'hidden', boxShadow: '0 0 12px rgba(255, 255, 255, 0.4)' }}>
-                                {p.photo ? (
-                                  <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                                ) : (
-                                  <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>
-                                    {p.username.charAt(0).toUpperCase()}
-                                  </div>
-                                )}
-                              </div>
-                              <div style={{ background: 'rgba(0,0,0,0.88)', padding: '2px 6px', borderRadius: '8px', fontSize: '0.68rem', fontWeight: '800', color: '#fff', marginTop: '3px', whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,0.1)', maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                                {displayName} {gCount > 0 && `⚽${gCount}`} {aCount > 0 && `👟${aCount}`}
-                              </div>
+                              {line.players.map(p => renderTacticalPlayer(p, '#ffffff', 'rgba(255, 255, 255, 0.45)'))}
                             </div>
                           );
                         })}
                       </div>
-                    ))}
-
-                    <div style={{ textAlign: 'center' }}>
-                      <span className="badge" style={{ fontSize: '0.85rem', padding: '6px 16px', background: 'rgba(0,0,0,0.7)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }}>
-                        ⬛ SEM COLETE (OVR {getTeamOVR(match.teams[1])})
-                      </span>
-                    </div>
-                  </div>
+                    )
+                  )}
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
 
-            {/* Match Goals Timeline Summary */}
-            {match.goals && match.goals.length > 0 && (
-              <div className="mt-8 pt-5 border-t border-border">
-                <h5 className="font-extrabold mb-3 flex items-center gap-2 text-primary" style={{ fontSize: '0.95rem' }}><Goal size={18} /> Gols Registrados na Partida ({match.goals.length})</h5>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {match.goals.map((g) => (
-                    <span key={g.id} style={{ background: 'rgba(0,245,155,0.1)', padding: '5px 12px', borderRadius: '12px', fontSize: '0.82rem', border: '1px solid rgba(0,245,155,0.3)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                      ⚽ <strong>{getPrimaryName(g)}</strong>
-                      {match.status !== 'completed' && (
-                        <button 
-                          onClick={() => removeEvent('goals', g.id)}
-                          title="Excluir este gol"
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Match Assists Timeline Summary */}
-            {match.assists && match.assists.length > 0 && (
-              <div className="mt-4 pt-4 border-t border-border">
-                <h5 className="font-extrabold mb-3 flex items-center gap-2 text-yellow-400" style={{ fontSize: '0.95rem' }}><Award size={18} /> Assistências Registradas na Partida ({match.assists.length})</h5>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                  {match.assists.map((a) => (
-                    <span key={a.id} style={{ background: 'rgba(251,191,36,0.1)', padding: '5px 12px', borderRadius: '12px', fontSize: '0.82rem', border: '1px solid rgba(251,191,36,0.3)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                      👟 <strong>{getPrimaryName(a)}</strong>
-                      {match.status !== 'completed' && (
-                        <button 
-                          onClick={() => removeEvent('assists', a.id)}
-                          title="Excluir esta assistência"
-                          style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}
-                        >
-                          ×
-                        </button>
-                      )}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
+          {/* Rodapé Oficial de Matchday (Alinhamento perfeito, sem quebra de ponto) */}
+          <div 
+            style={{ 
+              marginTop: '14px', 
+              paddingTop: '10px', 
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)', 
+              display: 'flex', 
+              flexDirection: 'column',
+              alignItems: 'center', 
+              justifyContent: 'center',
+              gap: '4px',
+              fontSize: '0.68rem',
+              fontWeight: '800',
+              letterSpacing: '0.5px',
+              textTransform: 'uppercase',
+              textAlign: 'center'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
+              <span style={{ color: 'var(--primary)', fontWeight: '900' }}>PLUGSHAWTYCAFETOES FC</span>
+              <span style={{ opacity: 0.35, fontSize: '0.62rem' }}>•</span>
+              <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>TEMPORADA 2026</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '0.64rem', color: 'rgba(255, 255, 255, 0.45)', whiteSpace: 'nowrap' }}>
+              <span>{match.teams && match.teams[0]?.players && match.teams[1]?.players ? `${match.teams[0].players.length} VS ${match.teams[1].players.length}` : ''}</span>
+              <span style={{ opacity: 0.35, fontSize: '0.62rem' }}>•</span>
+              <span style={{ color: '#ffffff', fontWeight: '900' }}>MATCHDAY OFICIAL</span>
+            </div>
           </div>
+        </div>
+
+        {/* Dica para o usuário (Apenas na tela, fora da imagem exportada) */}
+        {viewMode === 'pitch' && (
+          <div style={{ textAlign: 'left', marginTop: '14px', fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: '10px', padding: '0 10px' }}>
+            <Lightbulb size={24} color="#fbbf24" style={{ flexShrink: 0, marginTop: '2px' }} /> 
+            <span>Toque em qualquer atleta no campo para ver suas estatísticas completas, OVR e histórico da temporada.</span>
+          </div>
+        )}
+
+        {/* Resumo de Gols e Assistências da Partida (Apenas na tela, fora da imagem exportada) */}
+        {match.goals && match.goals.length > 0 && (
+          <div className="mt-8 pt-5 border-t border-border">
+            <h5 className="font-extrabold mb-3 flex items-center gap-2 text-primary" style={{ fontSize: '0.95rem' }}><Goal size={18} /> Gols Registrados na Partida ({match.goals.length})</h5>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {match.goals.map((g) => (
+                <span key={g.id} style={{ background: 'rgba(0,245,155,0.1)', padding: '5px 12px', borderRadius: '12px', fontSize: '0.82rem', border: '1px solid rgba(0,245,155,0.3)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  <Goal size={13} color="var(--primary)" /> <strong>{getPrimaryName(g)}</strong>
+                  {match.status !== 'completed' && (
+                    <button 
+                      onClick={() => removeEvent('goals', g.id)}
+                      title="Excluir este gol"
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Match Assists Timeline Summary */}
+        {match.assists && match.assists.length > 0 && (
+          <div className="mt-4 pt-4 border-t border-border">
+            <h5 className="font-extrabold mb-3 flex items-center gap-2 text-yellow-400" style={{ fontSize: '0.95rem' }}><Award size={18} /> Assistências Registradas na Partida ({match.assists.length})</h5>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {match.assists.map((a) => (
+                <span key={a.id} style={{ background: 'rgba(251,191,36,0.1)', padding: '5px 12px', borderRadius: '12px', fontSize: '0.82rem', border: '1px solid rgba(251,191,36,0.3)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  <Footprints size={13} color="#fbbf24" /> <strong>{getPrimaryName(a)}</strong>
+                  {match.status !== 'completed' && (
+                    <button 
+                      onClick={() => removeEvent('assists', a.id)}
+                      title="Excluir esta assistência"
+                      style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
           
           {match.status !== 'completed' && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.2 }}>
-              <button className="btn mt-8 py-4 text-lg font-extrabold" onClick={() => setShowRating(true)}>
+            <motion.div 
+              initial={{ opacity: 0 }} 
+              animate={{ opacity: 1 }} 
+              transition={{ delay: 0.2 }}
+              style={{ display: 'flex', justifyContent: 'center', marginTop: '28px' }}
+            >
+              <button 
+                className="btn py-4 text-lg font-extrabold" 
+                style={{ width: '100%', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', margin: '0 auto', boxShadow: '0 4px 20px rgba(0, 245, 155, 0.25)' }}
+                onClick={() => setShowRating(true)}
+              >
                 <Star size={22} fill="#000" /> Encerrar Partida & Avaliar Atletas
               </button>
             </motion.div>
@@ -1508,7 +1953,7 @@ export default function MatchDetails() {
             {/* Quick Number Inputs for Field Player */}
             <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '20px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: 'var(--primary)' }}>⚽ Gols:</span>
+                <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}><Goal size={14} /> Gols:</span>
                 <input 
                   type="number" 
                   min="0" 
@@ -1520,7 +1965,7 @@ export default function MatchDetails() {
               </div>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#fbbf24' }}>👟 Assist:</span>
+                <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '5px' }}><Footprints size={14} /> Assist.:</span>
                 <input 
                   type="number" 
                   min="0" 
@@ -1710,8 +2155,8 @@ export default function MatchDetails() {
                   <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 16px', borderRadius: '20px', background: draftAnim.stage === 'done' ? 'rgba(0, 245, 155, 0.15)' : 'rgba(255, 255, 255, 0.08)', color: draftAnim.stage === 'done' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 800, fontSize: '0.75rem', letterSpacing: '0.5px', marginBottom: '8px' }}>
                     {draftAnim.stage === 'done' ? <><Sparkles size={16} /> SORTEIO FINALIZADO COM SUCESSO</> : <><RefreshCw size={16} className="radar-spinner" /> SNAKE DRAFT ({draftAnim.revealedCount} / {draftAnim.total})</>}
                   </div>
-                  <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fff', margin: 0 }}>
-                    {draftAnim.stage === 'done' ? '🔥 Times Prontos para o Jogo!' : 'Sorteando Jogador a Jogador...'}
+                  <h3 style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+                    {draftAnim.stage === 'done' ? <><Sparkles size={22} color="var(--primary)" /> Times Prontos para o Jogo!</> : 'Sorteando Jogador a Jogador...'}
                   </h3>
                 </div>
 
@@ -1812,6 +2257,216 @@ export default function MatchDetails() {
               </motion.div>
             )}
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Modal de Estatísticas e Histórico do Atleta */}
+      <AnimatePresence>
+        {selectedPlayerModal && (
+          <div 
+            style={{ 
+              position: 'fixed', 
+              inset: 0, 
+              background: 'rgba(0,0,0,0.85)', 
+              backdropFilter: 'blur(16px)', 
+              WebkitBackdropFilter: 'blur(16px)',
+              zIndex: 1200, 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              padding: '16px' 
+            }}
+            onClick={() => setSelectedPlayerModal(null)}
+          >
+            <motion.div 
+              initial={{ scale: 0.92, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.92, opacity: 0 }}
+              onClick={e => e.stopPropagation()}
+              className="glass-card"
+              style={{ 
+                width: '100%', 
+                maxWidth: '520px', 
+                maxHeight: '90dvh', 
+                overflowY: 'auto',
+                background: 'rgba(14, 16, 26, 0.98)', 
+                borderRadius: '24px', 
+                border: '1.5px solid rgba(0, 245, 155, 0.35)',
+                boxShadow: '0 20px 60px rgba(0,0,0,0.8), 0 0 30px rgba(0,245,155,0.15)',
+                padding: '24px 20px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '20px'
+              }}
+            >
+              {/* Barra Superior do Modal */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                  Perfil & Histórico do Atleta
+                </span>
+                <button 
+                  onClick={() => setSelectedPlayerModal(null)} 
+                  style={{ background: 'rgba(255,255,255,0.06)', border: 'none', color: '#fff', borderRadius: '50%', width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* Cabeçalho do Atleta: Foto, Nome, Posição e OVR */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px', background: 'rgba(255,255,255,0.03)', padding: '16px', borderRadius: '18px', border: '1px solid var(--border)' }}>
+                <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#0a0a0f', border: '2.5px solid var(--primary)', boxShadow: '0 0 16px rgba(0, 245, 155, 0.3)', overflow: 'hidden', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  {selectedPlayerModal.photo ? (
+                    <img src={formatPhotoUrl(selectedPlayerModal.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  ) : (
+                    <span style={{ fontSize: '24px', fontWeight: 900, color: 'var(--primary)' }}>
+                      {selectedPlayerModal.username?.charAt(0).toUpperCase()}
+                    </span>
+                  )}
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', letterSpacing: '-0.3px', lineHeight: 1.2 }}>
+                    {getPrimaryName(selectedPlayerModal)}
+                  </div>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                    <span className="badge badge-volt" style={{ fontSize: '0.72rem', padding: '2px 8px' }}>
+                      {selectedPlayerModal.position || 'MEI'}
+                    </span>
+                    {selectedPlayerModal.height && <span>• {formatHeight(selectedPlayerModal.height)}m</span>}
+                    {selectedPlayerModal.weight && <span>• {selectedPlayerModal.weight}kg</span>}
+                  </div>
+                </div>
+                <div style={{ textAlign: 'center', background: 'linear-gradient(135deg, rgba(255, 215, 0, 0.15), rgba(255, 215, 0, 0.05))', border: '1.5px solid rgba(255, 215, 0, 0.4)', borderRadius: '14px', padding: '8px 12px', flexShrink: 0 }}>
+                  <div style={{ fontSize: '1.4rem', fontWeight: 900, color: '#ffd700', lineHeight: 1 }}>
+                    {calcOVR(selectedPlayerModal)}
+                  </div>
+                  <div style={{ fontSize: '0.62rem', fontWeight: 800, color: '#ffd700', textTransform: 'uppercase', marginTop: '2px' }}>
+                    OVR
+                  </div>
+                </div>
+              </div>
+
+              {/* Grid de Estatísticas na Temporada */}
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                  Estatísticas na Temporada
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '10px' }}>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', lineHeight: 1.1 }}>{selectedPlayerModal.matches_count || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>PARTIDAS</div>
+                  </div>
+                  <div style={{ background: 'rgba(0, 245, 155, 0.06)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid rgba(0, 245, 155, 0.3)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: 'var(--primary)', lineHeight: 1.1 }}>{selectedPlayerModal.goals || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--primary)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>GOLS</div>
+                  </div>
+                  <div style={{ background: 'rgba(251, 191, 36, 0.06)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid rgba(251, 191, 36, 0.3)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fbbf24', lineHeight: 1.1 }}>{selectedPlayerModal.assists || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: '#fbbf24', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>ASSISTS</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#38bdf8', lineHeight: 1.1 }}>{selectedPlayerModal.win_rate || 0}%</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>VITÓRIAS</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#ffd700', lineHeight: 1.1 }}>
+                      {selectedPlayerModal.avg_rating ? Number(selectedPlayerModal.avg_rating).toFixed(1) : '-'}
+                    </div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>NOTA MÉDIA</div>
+                  </div>
+                  <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
+                    <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#f43f5e', lineHeight: 1.1 }}>{selectedPlayerModal.win_streak || 0}</div>
+                    <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>SEQUÊNCIA</div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Atributos da Carta FUT */}
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                  Atributos da Carta FUT
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
+                  {[
+                    { label: 'Ritmo (PAC)', val: selectedPlayerModal.pace || 50 },
+                    { label: 'Finalização (SHO)', val: selectedPlayerModal.shooting || 50 },
+                    { label: 'Passe (PAS)', val: selectedPlayerModal.passing || 50 },
+                    { label: 'Drible (DRI)', val: selectedPlayerModal.dribbling || 50 },
+                    { label: 'Defesa (DEF)', val: selectedPlayerModal.defending || 50 },
+                    { label: 'Físico (PHY)', val: selectedPlayerModal.physical || 50 }
+                  ].map(attr => (
+                    <div key={attr.label} style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, marginBottom: '4px' }}>
+                        <span style={{ color: 'var(--text-muted)' }}>{attr.label}</span>
+                        <span style={{ color: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', fontWeight: 900 }}>{attr.val}</span>
+                      </div>
+                      <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                        <div style={{ width: `${Math.min(100, Math.max(0, attr.val))}%`, height: '100%', background: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', borderRadius: '2px' }} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* Histórico em Peladas Recentes */}
+              <div>
+                <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
+                  Histórico em Peladas
+                </div>
+                {playerHistoryLoading ? (
+                  <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Carregando histórico...</div>
+                ) : playerHistory.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.85rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
+                    Nenhuma partida anterior registrada para este atleta.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
+                    {playerHistory.map(h => {
+                      const hDate = new Date(h.date + 'T12:00:00');
+                      const rawHDate = isNaN(hDate.getTime()) ? h.date : hDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+                      const formattedHDate = rawHDate ? rawHDate.charAt(0).toUpperCase() + rawHDate.slice(1) : '';
+
+                      return (
+                        <div key={h.match_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                          <div>
+                            <div style={{ fontSize: '0.84rem', fontWeight: 800, color: '#fff' }}>{formattedHDate}</div>
+                            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{h.team_name}</div>
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.82rem', fontWeight: 800 }}>
+                            {h.goals > 0 && <span style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Goal size={13} /> {h.goals}</span>}
+                            {h.assists > 0 && <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Footprints size={13} /> {h.assists}</span>}
+                            {h.rating && <span style={{ color: '#ffd700', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Star size={13} fill="#ffd700" color="#ffd700" /> {h.rating}</span>}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+
+              {/* Botões de Ação do Modal */}
+              <div style={{ display: 'flex', gap: '10px', marginTop: '4px' }}>
+                {isMyPlayer(selectedPlayerModal) && (
+                  <button 
+                    className="btn" 
+                    style={{ flex: 1, padding: '11px', fontSize: '0.85rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    onClick={() => {
+                      setSelectedPlayerModal(null);
+                      navigate('/players', { state: { autoEdit: true } });
+                    }}
+                  >
+                    <Edit2 size={16} /> Editar Minha Carta FUT
+                  </button>
+                )}
+                <button 
+                  className="btn btn-secondary" 
+                  style={{ flex: isMyPlayer(selectedPlayerModal) ? '0 0 100px' : 1, padding: '11px', fontSize: '0.85rem' }}
+                  onClick={() => setSelectedPlayerModal(null)}
+                >
+                  Fechar
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
     </motion.div>
