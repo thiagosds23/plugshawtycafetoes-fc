@@ -173,49 +173,150 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* 2. Próxima Partida Widget */}
+      {/* 2. Próxima Partida Widget (Design Moderno, Espaçado e 100% Responsivo no Celular) */}
       {nextScheduledMatch ? (
-        <div className="glass-card" style={{ padding: '24px 30px', borderColor: 'rgba(251, 191, 36, 0.3)', background: 'linear-gradient(135deg, rgba(30, 24, 10, 0.4), rgba(16, 19, 28, 0.8))', marginBottom: '44px' }}>
-          <div className="flex justify-between items-center flex-wrap gap-4">
-            <div className="flex items-center gap-4">
-              <div style={{ width: '52px', height: '52px', borderRadius: '16px', background: 'rgba(251, 191, 36, 0.15)', border: '1px solid rgba(251, 191, 36, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <Calendar size={26} color="#fbbf24" />
+        <div 
+          className="glass-card" 
+          style={{ 
+            padding: '22px 20px', 
+            borderColor: 'rgba(251, 191, 36, 0.35)', 
+            background: 'linear-gradient(135deg, rgba(30, 24, 10, 0.5) 0%, rgba(14, 17, 26, 0.95) 100%)', 
+            borderRadius: '24px',
+            marginBottom: '40px',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.45)'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            {/* Top Row: Ícone + Título + Badge */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '14px' }}>
+              {/* Ícone de Calendário com dimensões fixas e respiro */}
+              <div 
+                style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  minWidth: '48px', 
+                  flexShrink: 0, 
+                  borderRadius: '16px', 
+                  background: 'rgba(251, 191, 36, 0.12)', 
+                  border: '1.5px solid rgba(251, 191, 36, 0.35)', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  boxShadow: '0 0 16px rgba(251, 191, 36, 0.15)'
+                }}
+              >
+                <Calendar size={24} color="#fbbf24" />
               </div>
-              <div>
-                <span className="badge badge-gold" style={{ marginBottom: '4px' }}>CONVOCAÇÃO ABERTA</span>
-                <h4 className="font-extrabold text-xl text-main" style={{ margin: '2px 0 0' }}>
-                  Próxima Partida: {new Date(nextScheduledMatch.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}
-                </h4>
-                <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
-                  Os times ainda não foram sorteados. Acesse para confirmar presença e sortear equipes!
+
+              {/* Informações da Partida */}
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'inline-flex', marginBottom: '6px' }}>
+                  <span 
+                    className="badge badge-gold" 
+                    style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center', 
+                      textAlign: 'center', 
+                      padding: '4px 12px',
+                      fontSize: '0.72rem',
+                      fontWeight: '800',
+                      letterSpacing: '0.4px'
+                    }}
+                  >
+                    CONVOCAÇÃO ABERTA
+                  </span>
                 </div>
+
+                <h4 className="font-extrabold text-main" style={{ fontSize: '1.08rem', margin: '0 0 6px', letterSpacing: '-0.3px', lineHeight: 1.25 }}>
+                  Próxima Partida: <span style={{ color: '#fff', textTransform: 'capitalize' }}>{new Date(nextScheduledMatch.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
+                </h4>
+
+                <p className="text-muted" style={{ fontSize: '0.80rem', margin: 0, lineHeight: 1.45 }}>
+                  Os times ainda não foram sorteados. Acesse para confirmar presença e sortear as equipes da pelada!
+                </p>
               </div>
             </div>
 
-            <Link to={`/matches/${nextScheduledMatch.id}`} className="btn" style={{ width: 'auto', padding: '12px 24px', fontSize: '0.9rem' }}>
-              Ver Escalação & Sorteio <ArrowRight size={16} />
-            </Link>
+            {/* Bottom Row: Botão Ver Escalação & Sorteio (Nunca corta no celular) */}
+            <div>
+              <Link 
+                to={`/matches/${nextScheduledMatch.id}`} 
+                className="btn" 
+                style={{ 
+                  width: '100%', 
+                  padding: '13px 20px', 
+                  fontSize: '0.90rem', 
+                  fontWeight: '800',
+                  borderRadius: '14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 0 20px rgba(0, 245, 155, 0.3)'
+                }}
+              >
+                Ver Escalação & Sorteio <ArrowRight size={17} />
+              </Link>
+            </div>
           </div>
         </div>
       ) : latestCompletedMatch && (
-        <div className="glass-card" style={{ padding: '20px 28px', background: 'rgba(16, 19, 28, 0.6)', marginBottom: '44px' }}>
-          <div className="flex justify-between items-center flex-wrap gap-4">
-            <div className="flex items-center gap-3">
-              <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(0, 245, 155, 0.12)', border: '1px solid rgba(0, 245, 155, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <ShieldCheck size={22} color="var(--primary)" />
+        <div 
+          className="glass-card" 
+          style={{ 
+            padding: '22px 20px', 
+            background: 'linear-gradient(135deg, rgba(16, 19, 28, 0.8) 0%, rgba(10, 12, 18, 0.95) 100%)', 
+            borderRadius: '24px',
+            marginBottom: '40px',
+            boxShadow: '0 10px 30px rgba(0,0,0,0.45)'
+          }}
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+              <div 
+                style={{ 
+                  width: '48px', 
+                  height: '48px', 
+                  minWidth: '48px', 
+                  flexShrink: 0, 
+                  borderRadius: '16px', 
+                  background: 'rgba(0, 245, 155, 0.12)', 
+                  border: '1.5px solid rgba(0, 245, 155, 0.35)', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center',
+                  boxShadow: '0 0 16px rgba(0, 245, 155, 0.15)'
+                }}
+              >
+                <ShieldCheck size={24} color="var(--primary)" />
               </div>
-              <div>
-                <div style={{ fontSize: '0.75rem', fontWeight: 'bold', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: '0.72rem', fontWeight: '800', color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
                   ÚLTIMA PARTIDA REALIZADA
                 </div>
-                <div className="font-bold text-main" style={{ fontSize: '0.95rem' }}>
+                <div className="font-bold text-main" style={{ fontSize: '1rem', textTransform: 'capitalize' }}>
                   Partida de {new Date(latestCompletedMatch.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'short' })}
                 </div>
               </div>
             </div>
 
-            <Link to={`/matches/${latestCompletedMatch.id}`} className="btn btn-secondary" style={{ width: 'auto', padding: '8px 18px', fontSize: '0.82rem' }}>
-              Ver Súmula & Notas <ArrowRight size={14} />
+            <Link 
+              to={`/matches/${latestCompletedMatch.id}`} 
+              className="btn btn-secondary" 
+              style={{ 
+                width: '100%', 
+                padding: '12px 18px', 
+                fontSize: '0.86rem', 
+                fontWeight: '700',
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                gap: '8px', 
+                borderRadius: '12px' 
+              }}
+            >
+              Ver Súmula & Notas <ArrowRight size={15} />
             </Link>
           </div>
         </div>

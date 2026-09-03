@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef, useContext } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck, Download, HardDriveDownload } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
@@ -1445,6 +1446,18 @@ export default function Players() {
       physical: player.physical || 50
     });
   };
+
+  const location = useLocation();
+
+  useEffect(() => {
+    if (location.state?.autoEdit && players.length > 0) {
+      const me = players.find(p => isMyPlayer(p));
+      if (me) {
+        startEditing(me);
+        window.history.replaceState({}, document.title);
+      }
+    }
+  }, [location.state, players]);
 
   const saveProfile = async (id) => {
     const targetPlayer = players.find(p => p.id === id);

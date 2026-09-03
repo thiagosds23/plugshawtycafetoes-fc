@@ -1,5 +1,5 @@
 import React, { useContext } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, NavLink } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom';
 import { AuthProvider, AuthContext } from './AuthContext';
 import { LogOut, Home, Trophy, Calendar, Users, Shield, Sparkles, UserCheck } from 'lucide-react';
 
@@ -22,12 +22,17 @@ const PublicRoute = ({ children }) => {
 
 const Navigation = () => {
   const { user, logout } = useContext(AuthContext);
+  const navigate = useNavigate();
   
   if (!user) return null;
 
   return (
     <header className="header">
-      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
+      <div 
+        onClick={() => navigate('/')} 
+        style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, cursor: 'pointer' }}
+        title="Ir para Início & Ranking"
+      >
         <div style={{ position: 'relative', flexShrink: 0 }}>
           <img 
             src="/logo.jpeg" 
@@ -55,9 +60,28 @@ const Navigation = () => {
       </div>
 
       <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-        {/* User Pill */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.04)', padding: '4px 10px 4px 5px', borderRadius: '30px', border: '1px solid var(--border)' }}>
-          <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#121520', overflow: 'hidden', border: '1px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        {/* User Pill: Clicar leva para /players e abre a edição da carta */}
+        <div 
+          onClick={() => navigate('/players', { state: { autoEdit: true } })}
+          role="button"
+          tabIndex={0}
+          style={{ 
+            display: 'flex', 
+            alignItems: 'center', 
+            gap: '8px', 
+            background: 'rgba(255,255,255,0.05)', 
+            padding: '4px 10px 4px 5px', 
+            borderRadius: '30px', 
+            border: '1px solid rgba(0, 245, 155, 0.35)', 
+            cursor: 'pointer',
+            transition: 'all 0.2s ease',
+            userSelect: 'none'
+          }} 
+          title="Clique para editar sua carta FUT e perfil"
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(0, 245, 155, 0.12)'; e.currentTarget.style.borderColor = 'var(--primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = 'rgba(255,255,255,0.05)'; e.currentTarget.style.borderColor = 'rgba(0, 245, 155, 0.35)'; }}
+        >
+          <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#121520', overflow: 'hidden', border: '1.5px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {user.photo ? (
               <img src={formatPhotoUrl(user.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
@@ -65,8 +89,12 @@ const Navigation = () => {
             )}
           </div>
           <div style={{ maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#fff', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{user.nickname ? user.nickname.split(',')[0].trim() : user.username}</div>
-            <div style={{ fontSize: '0.62rem', color: 'var(--primary)', fontWeight: '700' }}>{user.position || 'MEI'}</div>
+            <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#fff', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              {user.nickname ? user.nickname.split(',')[0].trim() : user.username}
+            </div>
+            <div style={{ fontSize: '0.62rem', color: 'var(--primary)', fontWeight: '700' }}>
+              {user.position || 'MEI'}
+            </div>
           </div>
         </div>
 
