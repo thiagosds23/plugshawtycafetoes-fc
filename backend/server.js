@@ -1054,9 +1054,9 @@ app.use((err, req, res, next) => {
   next();
 });
 
-// Wildcard fallback SPA: Qualquer rota GET não tratada pelas APIs envia o index.html
+// Fallback SPA para Express 5: Qualquer rota não tratada pelas APIs envia o index.html
 if (fs.existsSync(frontendDist)) {
-  app.get('*', (req, res) => {
+  app.use((req, res) => {
     res.sendFile(path.join(frontendDist, 'index.html'));
   });
 }
