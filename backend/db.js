@@ -31,6 +31,7 @@ const db = new sqlite3.Database(dbPath, (err) => {
     db.run("ALTER TABLE users ADD COLUMN phone TEXT", () => {});
     db.run("ALTER TABLE users ADD COLUMN email TEXT", () => {});
     db.run("ALTER TABLE users ADD COLUMN original_photo TEXT", () => {});
+    db.run("ALTER TABLE users ADD COLUMN pin TEXT", () => {});
     db.run("ALTER TABLE teams ADD COLUMN manual_score INTEGER", () => {});
 
     db.run(`CREATE TABLE IF NOT EXISTS matches (

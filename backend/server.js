@@ -133,7 +133,7 @@ app.post('/users', (req, res) => {
 });
 
 app.post('/login', (req, res) => {
-  const { username } = req.body; // Can be username, email, or phone number!
+  const { username, pin } = req.body; // Can be username, email, or phone number!
   if (!username) return res.status(400).json({ error: 'Informe seu usuário, e-mail ou telefone' });
 
   const queryTerm = username.trim();
@@ -147,13 +147,74 @@ app.post('/login', (req, res) => {
        OR (nickname IS NOT NULL AND INSTR(LOWER(nickname), LOWER(?)) > 0)
   `, [queryTerm, queryTerm, queryTerm, queryTerm, queryTerm], (err, row) => {
     if (err || !row) return res.status(401).json({ error: 'Usuário, e-mail, telefone ou apelido não encontrado' });
-    res.json(row);
+
+    // Se o usuário tem PIN cadastrado
+    const userHasPin = !!(row.pin && String(row.pin).trim() !== '');
+
+    if (userHasPin) {
+      // Se não enviou o PIN na requisição, pede o PIN
+      if (pin === undefined || pin === null || String(pin).trim() === '') {
+        return res.json({ 
+          requiresPin: true, 
+          id: row.id, 
+          username: row.username, 
+          nickname: row.nickname,
+          photo: row.photo 
+        });
+      }
+      // Se enviou o PIN, valida
+      if (String(row.pin).trim() !== String(pin).trim()) {
+        return res.status(401).json({ error: 'PIN incorreto. Tente novamente ou peça ao administrador para resetar.' });
+      }
+    }
+
+    const safeUser = { ...row };
+    delete safeUser.pin;
+    safeUser.has_pin = userHasPin;
+
+    // Se o usuário NÃO tem PIN cadastrado e fez o login normal, pergunta se quer definir
+    if (!userHasPin && (pin === undefined || pin === null)) {
+      return res.json({
+        askInitialPin: true,
+        user: safeUser
+      });
+    }
+
+    res.json(safeUser);
+  });
+});
+
+// Definir ou Alterar PIN do próprio usuário
+app.post('/users/:id/pin', (req, res) => {
+  if (!verifyUserOwnership(req, res, req.params.id)) return;
+  const { pin } = req.body; // string de dígitos ou null para remover
+  const cleanPin = pin && String(pin).trim() ? String(pin).trim() : null;
+
+  db.run('UPDATE users SET pin = ? WHERE id = ?', [cleanPin, req.params.id], function(err) {
+    if (err) return res.status(500).json({ error: 'Erro ao salvar PIN' });
+    res.json({ success: true, has_pin: !!cleanPin });
+  });
+});
+
+// Resetar PIN de um usuário (Apenas Administrador / Thiago)
+app.post('/users/:id/reset-pin', (req, res) => {
+  const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
+  db.get('SELECT * FROM users WHERE id = ?', [requesterId], (err, adminUser) => {
+    const isAdmin = adminUser && (adminUser.id === 1 || adminUser.username.toLowerCase().includes('thiago') || adminUser.username.toLowerCase().includes('fela'));
+    if (!isAdmin && String(requesterId) !== String(req.params.id)) {
+      return res.status(403).json({ error: 'Apenas administradores podem resetar o PIN de outros jogadores.' });
+    }
+
+    db.run('UPDATE users SET pin = NULL WHERE id = ?', [req.params.id], function(err2) {
+      if (err2) return res.status(500).json({ error: 'Erro ao resetar PIN' });
+      res.json({ success: true, message: 'PIN resetado com sucesso!' });
+    });
   });
 });
 
 // -- USERS --
 app.get('/users', (req, res) => {
-  db.all('SELECT * FROM users', [], (err, rows) => {
+  db.all('SELECT id, username, photo, original_photo, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email, (CASE WHEN pin IS NOT NULL AND pin != "" THEN 1 ELSE 0 END) as has_pin FROM users', [], (err, rows) => {
     res.json(rows);
   });
 });

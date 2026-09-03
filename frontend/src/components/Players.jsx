@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useContext } from 'react';
-import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet } from 'lucide-react';
+import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { removeBackground } from '@imgly/background-removal';
 import { AuthContext } from '../AuthContext';
@@ -379,6 +379,37 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
 
   const primaryName = currentNicknames[0] || editForm.username || player.username;
 
+  const [pinVal, setPinVal] = useState('');
+  const [isSavingPin, setIsSavingPin] = useState(false);
+  const [pinFeedback, setPinFeedback] = useState('');
+  const [hasPinState, setHasPinState] = useState(!!player.has_pin);
+
+  const handleSavePin = async (val) => {
+    setIsSavingPin(true);
+    setPinFeedback('');
+    try {
+      const res = await fetch(`${API_URL}/users/${player.id}/pin`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': String(player.id)
+        },
+        body: JSON.stringify({ pin: val })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro ao salvar PIN');
+      setHasPinState(data.has_pin);
+      player.has_pin = data.has_pin;
+      setPinFeedback(val ? '✅ PIN atualizado!' : '✅ PIN removido! Acesso livre.');
+      setPinVal('');
+      setTimeout(() => setPinFeedback(''), 3500);
+    } catch (err) {
+      setPinFeedback(`❌ ${err.message}`);
+    } finally {
+      setIsSavingPin(false);
+    }
+  };
+
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
       <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card" style={{ width: '580px', maxWidth: '96vw', maxHeight: '92dvh', display: 'flex', flexDirection: 'column', background: 'rgba(18, 20, 32, 0.98)', border: '1px solid var(--border)', borderRadius: '20px', boxShadow: '0 25px 60px rgba(0,0,0,0.9), 0 0 30px rgba(0,245,155,0.12)', overflow: 'hidden', padding: 0 }}>
@@ -617,6 +648,62 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
             </div>
           </div>
 
+          {/* Seção PIN / Senha de Segurança da Conta */}
+          <div style={{ padding: '14px 16px', borderRadius: '16px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px', flexWrap: 'wrap', gap: '6px' }}>
+              <h4 style={{ fontSize: '0.78rem', fontWeight: '800', color: 'var(--text-main)', margin: 0, display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <KeyRound size={14} color="var(--primary)" /> Senha / PIN de Segurança
+              </h4>
+              <span className={hasPinState ? 'badge badge-volt' : 'badge'} style={{ fontSize: '0.68rem', padding: '2px 8px' }}>
+                {hasPinState ? '🔒 Protegido com PIN' : '🔓 Sem Senha (Livre)'}
+              </span>
+            </div>
+
+            <p className="text-muted text-xs" style={{ margin: '0 0 10px', fontSize: '0.72rem', lineHeight: 1.35 }}>
+              {hasPinState 
+                ? 'Sua conta está protegida. Apenas quem tem seu PIN pode alterar sua foto e dados.' 
+                : 'Você pode definir um PIN de 4 números para proteger sua carta oficial contra alterações.'}
+            </p>
+
+            {pinFeedback && (
+              <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '8px', color: pinFeedback.startsWith('✅') ? 'var(--primary)' : '#ff3366' }}>
+                {pinFeedback}
+              </div>
+            )}
+
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <input 
+                type="password"
+                maxLength={6}
+                className="input"
+                placeholder={hasPinState ? "Novo PIN (4 dígitos)" : "Criar PIN (4 dígitos)"}
+                value={pinVal}
+                onChange={e => setPinVal(e.target.value)}
+                style={{ flex: '1 1 140px', padding: '7px 12px', fontSize: '0.82rem', height: '36px', marginBottom: 0, borderRadius: '8px' }}
+              />
+              <button 
+                type="button" 
+                className="btn" 
+                style={{ padding: '7px 14px', fontSize: '0.78rem', height: '36px', width: 'auto', borderRadius: '8px' }}
+                onClick={() => handleSavePin(pinVal)}
+                disabled={isSavingPin || !pinVal.trim()}
+              >
+                {isSavingPin ? 'Salvando...' : (hasPinState ? 'Alterar PIN' : 'Definir PIN')}
+              </button>
+              {hasPinState && (
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  style={{ padding: '7px 12px', fontSize: '0.75rem', height: '36px', width: 'auto', borderRadius: '8px', color: '#ff3366' }}
+                  onClick={() => { if (confirm('Deseja remover o PIN? Qualquer pessoa poderá acessar com seu nome.')) handleSavePin(null); }}
+                  disabled={isSavingPin}
+                >
+                  Remover PIN
+                </button>
+              )}
+            </div>
+          </div>
+
           {/* FUT Attributes Display (Estatísticas Oficiais do Clube - Somente Leitura) */}
           <div style={{ padding: '16px', borderRadius: '16px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
@@ -845,6 +932,29 @@ export default function Players() {
     loadPlayers();
   };
 
+  const isAdmin = user && (user.id === 1 || (user.username && user.username.toLowerCase().includes('thiago')) || (user.nickname && user.nickname.toLowerCase().includes('fela')));
+
+  const handleAdminResetPin = async (targetPlayer) => {
+    const targetName = targetPlayer.nickname ? targetPlayer.nickname.split(',')[0].trim() : targetPlayer.username;
+    if (!window.confirm(`Deseja resetar o PIN do atleta ${targetName}? Ele poderá entrar sem senha novamente e definir um novo PIN se quiser.`)) return;
+
+    try {
+      const res = await fetch(`${API_URL}/users/${targetPlayer.id}/reset-pin`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-user-id': String(user?.id)
+        }
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro ao resetar PIN');
+      alert(data.message || 'PIN resetado com sucesso!');
+      loadPlayers();
+    } catch (err) {
+      alert(err.message);
+    }
+  };
+
   const startEditing = (player) => {
     if (!isMyPlayer(player)) {
       alert('Você só tem permissão para editar o seu próprio jogador.');
@@ -1048,6 +1158,27 @@ export default function Players() {
             >
               <Edit2 size={16} /> Editar Meu Jogador
             </button>
+          )}
+
+          {/* Botão de Admin para Resetar PIN de outros jogadores */}
+          {!isCurrentUserCard && isAdmin && (
+            <div style={{ width: '310px' }}>
+              {player.has_pin ? (
+                <button 
+                  type="button" 
+                  className="btn btn-secondary" 
+                  style={{ width: '100%', padding: '8px 12px', fontSize: '0.74rem', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  onClick={() => handleAdminResetPin(player)}
+                  title="Resetar PIN deste atleta caso ele tenha esquecido"
+                >
+                  <KeyRound size={14} color="var(--primary)" /> Resetar PIN do Atleta
+                </button>
+              ) : (
+                <div style={{ textAlign: 'center', fontSize: '0.70rem', color: 'var(--text-muted)' }}>
+                  🔓 Sem PIN definido
+                </div>
+              )}
+            </div>
           )}
         </div>
       </motion.div>
