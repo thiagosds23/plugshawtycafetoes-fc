@@ -1033,7 +1033,7 @@ app.get('/stats', (req, res) => {
   db.all('SELECT * FROM users', [], (err, users) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    db.all('SELECT * FROM matches WHERE status = "completed"', [], (err, completedMatches) => {
+    db.all("SELECT * FROM matches WHERE status = 'completed'", [], (err, completedMatches) => {
       db.all('SELECT * FROM teams', [], (err, allTeams) => {
         db.all('SELECT * FROM team_players', [], (err, allTeamPlayers) => {
           db.all('SELECT * FROM goals', [], (err, allGoals) => {
@@ -1192,8 +1192,10 @@ if (fs.existsSync(frontendDist)) {
 }
 
 const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, () => {
-  console.log(`Backend running on http://localhost:${PORT}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n🚀 Servidor local rodando!`);
+  console.log(`💻 No seu PC: http://localhost:${PORT}`);
+  console.log(`📱 No seu Celular (mesmo Wi-Fi): http://192.168.100.3:${PORT}\n`);
 });
 
 server.on('error', (err) => {

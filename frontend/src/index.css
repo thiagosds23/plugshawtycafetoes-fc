@@ -79,6 +79,7 @@ body {
   min-height: 100vh;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  overflow-x: clip;
 }
 
 /* Wide Premium Container */
@@ -89,6 +90,7 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 }
 
 /* Glassmorphism Surface Cards */
@@ -115,9 +117,10 @@ body {
 
 /* Premium Header (Fixo/Sticky no Topo com Glassmorphism) */
 .header {
+  position: -webkit-sticky;
   position: sticky;
   top: 12px;
-  z-index: 100;
+  z-index: 800;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -386,18 +389,20 @@ body {
 
 @media (max-width: 768px) {
   html, body {
-    overflow-x: hidden;
+    overflow-x: clip;
     width: 100%;
   }
 
   .container {
     padding: 12px 12px calc(82px + env(safe-area-inset-bottom)) 12px;
+    overflow: visible;
   }
 
   .header {
+    position: -webkit-sticky;
     position: sticky;
-    top: 8px;
-    z-index: 100;
+    top: 6px;
+    z-index: 800;
     padding: 10px 12px;
     border-radius: 16px;
     margin-bottom: 16px;
@@ -405,7 +410,7 @@ body {
     background: rgba(10, 12, 18, 0.94);
     backdrop-filter: blur(24px);
     -webkit-backdrop-filter: blur(24px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.7);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.85);
   }
 
   .desktop-nav {
