@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useContext } from 'react';
-import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock } from 'lucide-react';
+import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { removeBackground } from '@imgly/background-removal';
 import { AuthContext } from '../AuthContext';
@@ -796,6 +796,27 @@ export default function Players() {
   const [rawFile, setRawFile] = useState(null);
   const [isImporting, setIsImporting] = useState(false);
 
+  // Evaluation modal state
+  const [showEvalModal, setShowEvalModal] = useState(false);
+  const [evalAnswered, setEvalAnswered] = useState(() => {
+    return localStorage.getItem('has_answered_eval_' + (user?.id || 'guest')) === 'true';
+  });
+  const [evalConfirmationView, setEvalConfirmationView] = useState(false);
+
+  const EVAL_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdBKBRFIXYLRsJwf0FwNqQJqhD8a5PvD0xLbB9zY1v3x26gQw/viewform';
+
+  const handleConfirmAlreadyAnswered = () => {
+    localStorage.setItem('has_answered_eval_' + (user?.id || 'guest'), 'true');
+    setEvalAnswered(true);
+    setEvalConfirmationView(true);
+  };
+
+  const handleGoToForm = () => {
+    window.open(EVAL_FORM_URL, '_blank', 'noopener,noreferrer');
+    setShowEvalModal(false);
+    setEvalConfirmationView(false);
+  };
+
   const normalize = str => (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
   // Verifica se o jogador corresponde ao usuário logado
@@ -1229,30 +1250,59 @@ export default function Players() {
             </div>
           </div>
 
-          {isAdmin && (
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              {/* Import Spreadsheet Button — Exclusivo para Desktop/PC */}
-              <label 
-                className="btn btn-secondary desktop-only" 
-                style={{ width: 'auto', padding: '10px 18px', cursor: 'pointer', margin: 0, alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
-                title="Importar notas da planilha Excel (.xlsx)"
-              >
-                <FileSpreadsheet size={16} color="var(--primary)" /> 
-                {isImporting ? 'Importando...' : '📥 Importar Planilha'}
-                <input 
-                  type="file" 
-                  accept=".xlsx,.xls,.csv" 
-                  style={{ display: 'none' }} 
-                  onChange={handleImportExcel}
-                  disabled={isImporting}
-                />
-              </label>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Botão de Avaliação do Elenco (Para todos os jogadores) */}
+            <button 
+              type="button" 
+              className="btn" 
+              style={{ 
+                width: 'auto', 
+                padding: '10px 16px', 
+                fontSize: '0.84rem', 
+                fontWeight: '800',
+                background: evalAnswered 
+                  ? 'rgba(0, 245, 155, 0.08)' 
+                  : 'linear-gradient(135deg, rgba(0, 245, 155, 0.22) 0%, rgba(0, 180, 216, 0.22) 100%)',
+                border: '1px solid var(--primary)',
+                color: 'var(--primary)',
+                boxShadow: evalAnswered ? 'none' : '0 0 16px rgba(0, 245, 155, 0.25)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'pointer'
+              }}
+              onClick={() => { setShowEvalModal(true); setEvalConfirmationView(evalAnswered); }}
+              title="Preencher ou consultar formulário de avaliação dos jogadores"
+            >
+              <ClipboardList size={16} color="var(--primary)" />
+              <span>Avaliação do Elenco {evalAnswered && '✅'}</span>
+            </button>
 
-              <button className="btn" style={{ width: 'auto', padding: '10px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
-                <Plus size={16} /> Novo Jogador
-              </button>
-            </div>
-          )}
+            {isAdmin && (
+              <>
+                {/* Import Spreadsheet Button — Exclusivo para Desktop/PC */}
+                <label 
+                  className="btn btn-secondary desktop-only" 
+                  style={{ width: 'auto', padding: '10px 18px', cursor: 'pointer', margin: 0, alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
+                  title="Importar notas da planilha Excel (.xlsx)"
+                >
+                  <FileSpreadsheet size={16} color="var(--primary)" /> 
+                  {isImporting ? 'Importando...' : '📥 Importar Planilha'}
+                  <input 
+                    type="file" 
+                    accept=".xlsx,.xls,.csv" 
+                    style={{ display: 'none' }} 
+                    onChange={handleImportExcel}
+                    disabled={isImporting}
+                  />
+                </label>
+
+                <button className="btn" style={{ width: 'auto', padding: '10px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
+                  <Plus size={16} /> Novo Jogador
+                </button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 
@@ -1425,6 +1475,138 @@ export default function Players() {
           onDeletePhoto={() => removePlayerPhoto(editingPlayer.id)}
           isAdmin={isAdmin}
         />
+      )}
+
+      {/* Evaluation Form Modal Popup */}
+      {showEvalModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <motion.div 
+            initial={{ scale: 0.92, opacity: 0, y: 15 }} 
+            animate={{ scale: 1, opacity: 1, y: 0 }} 
+            exit={{ scale: 0.92, opacity: 0, y: 15 }}
+            className="glass-card" 
+            style={{ 
+              width: '460px', 
+              maxWidth: '94vw', 
+              background: 'rgba(15, 18, 28, 0.98)', 
+              border: '1px solid rgba(0, 245, 155, 0.35)', 
+              borderRadius: '24px', 
+              boxShadow: '0 25px 60px rgba(0,0,0,0.9), 0 0 35px rgba(0,245,155,0.15)', 
+              padding: '26px 22px',
+              textAlign: 'center',
+              position: 'relative'
+            }}
+          >
+            <button 
+              onClick={() => { setShowEvalModal(false); setEvalConfirmationView(false); }} 
+              style={{ position: 'absolute', top: '16px', right: '16px', background: 'rgba(255,255,255,0.06)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            >
+              <X size={16} />
+            </button>
+
+            {!evalConfirmationView ? (
+              <>
+                {/* Header Icon */}
+                <div style={{ width: '56px', height: '56px', borderRadius: '18px', background: 'rgba(0,245,155,0.1)', border: '1.5px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', boxShadow: '0 0 20px rgba(0,245,155,0.25)' }}>
+                  <ClipboardList size={28} color="var(--primary)" />
+                </div>
+
+                <h3 className="text-xl font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
+                  Avaliação Oficial do Elenco
+                </h3>
+                <p className="text-muted text-xs" style={{ margin: '0 0 20px', lineHeight: 1.4 }}>
+                  plugshawtycafetoes FC • Temporada 2026
+                </p>
+
+                <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '16px', padding: '16px 14px', marginBottom: '22px', textAlign: 'left' }}>
+                  <div style={{ fontSize: '0.94rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>
+                    ❓ Você já respondeu ao formulário de avaliação dos jogadores?
+                  </div>
+                  <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                    As notas atribuídas pelos atletas são indispensáveis para calcular os atributos oficiais (PAC, SHO, PAS, DRI, DEF, PHY) e o OVR de cada carta FUT.
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  {/* Opção 1: Não respondeu -> Vai para o formulário */}
+                  <button 
+                    type="button" 
+                    className="btn" 
+                    style={{ 
+                      padding: '13px 18px', 
+                      fontSize: '0.90rem', 
+                      fontWeight: '800', 
+                      borderRadius: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px',
+                      background: 'linear-gradient(135deg, #00f59b 0%, #00d285 100%)',
+                      color: '#000',
+                      boxShadow: '0 0 20px rgba(0,245,155,0.3)'
+                    }}
+                    onClick={handleGoToForm}
+                  >
+                    <ExternalLink size={16} /> Não, responder agora
+                  </button>
+
+                  {/* Opção 2: Já respondeu -> Confirma e segue ok */}
+                  <button 
+                    type="button" 
+                    className="btn btn-secondary" 
+                    style={{ 
+                      padding: '12px 18px', 
+                      fontSize: '0.86rem', 
+                      fontWeight: '700', 
+                      borderRadius: '12px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: '8px'
+                    }}
+                    onClick={handleConfirmAlreadyAnswered}
+                  >
+                    <Check size={16} color="var(--primary)" /> Sim, já respondi
+                  </button>
+                </div>
+              </>
+            ) : (
+              /* Confirmação quando já respondeu */
+              <>
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: 'rgba(0,245,155,0.12)', border: '1.5px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px', boxShadow: '0 0 25px rgba(0,245,155,0.3)' }}>
+                  <Check size={28} color="var(--primary)" />
+                </div>
+
+                <h3 className="text-xl font-extrabold text-main" style={{ margin: '0 0 8px' }}>
+                  Tudo Certo! ✅
+                </h3>
+                <p className="text-muted text-sm" style={{ margin: '0 0 22px', lineHeight: 1.45 }}>
+                  Suas notas já foram enviadas e são levadas em conta no cálculo oficial do OVR do elenco. Segue o jogo! ⚽🔥
+                </p>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                  <button 
+                    type="button" 
+                    className="btn" 
+                    style={{ padding: '12px', fontSize: '0.90rem', fontWeight: '800', borderRadius: '12px' }}
+                    onClick={() => { setShowEvalModal(false); setEvalConfirmationView(false); }}
+                  >
+                    Ok, Continuar
+                  </button>
+
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    style={{ padding: '10px', fontSize: '0.78rem', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                    onClick={handleGoToForm}
+                  >
+                    <ExternalLink size={13} /> Abrir formulário novamente
+                  </button>
+                </div>
+              </>
+            )}
+          </motion.div>
+        </div>
       )}
 
     </motion.div>
