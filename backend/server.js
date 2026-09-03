@@ -19,14 +19,14 @@ app.use('/uploads', (req, res, next) => {
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir);
+  fs.mkdirSync(uploadDir, { recursive: true });
 }
 
 // Multer seguro para fotos de atletas
 const allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const upload = multer({
   storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'uploads/'),
+    destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase();
       const safeExt = allowedImageMimes.includes(file.mimetype) ? ext : '.png';
@@ -47,7 +47,7 @@ const upload = multer({
 const allowedDocExts = ['.xlsx', '.xls', '.csv'];
 const docUpload = multer({
   storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, 'uploads/'),
+    destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => {
       const ext = path.extname(file.originalname).toLowerCase();
       cb(null, `import-${Date.now()}-${Math.random().toString(36).substring(2, 9)}${ext}`);
