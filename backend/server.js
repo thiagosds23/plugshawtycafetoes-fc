@@ -515,36 +515,43 @@ app.post('/users/import-ratings-excel', docUpload.single('file'), (req, res) => 
       }
 
       const updated = [];
-      db.serialize(() => {
-        const stmt = db.prepare(`
-          UPDATE users 
-          SET pace = COALESCE(?, pace),
-              shooting = COALESCE(?, shooting),
-              passing = COALESCE(?, passing),
-              dribbling = COALESCE(?, dribbling),
-              defending = COALESCE(?, defending),
-              physical = COALESCE(?, physical)
-          WHERE id = ?
-        `);
+      const updatePromises = [];
 
-        for (const stat of parsedStats) {
-          const matchedUser = users.find(u => {
-            const uNorm = normalize(u.username);
-            const nNorms = (u.nickname || '').split(',').map(n => normalize(n));
-            return uNorm === stat.normName || nNorms.includes(stat.normName) ||
-                   stat.normName.includes(uNorm) || uNorm.includes(stat.normName);
-          });
-
-          if (matchedUser) {
-            stmt.run([stat.pac, stat.sho, stat.pas, stat.dri, stat.def, stat.phy, matchedUser.id]);
-            updated.push({ id: matchedUser.id, name: matchedUser.username, stat });
-          }
-        }
-
-        stmt.finalize(() => {
-          try { fs.unlinkSync(req.file.path); } catch (e) {}
-          res.json({ success: true, updatedCount: updated.length, updatedPlayers: updated });
+      for (const stat of parsedStats) {
+        const matchedUser = users.find(u => {
+          const uNorm = normalize(u.username);
+          const nNorms = (u.nickname || '').split(',').map(n => normalize(n));
+          return uNorm === stat.normName || nNorms.includes(stat.normName) ||
+                 stat.normName.includes(uNorm) || uNorm.includes(stat.normName);
         });
+
+        if (matchedUser) {
+          updatePromises.push(new Promise((resolve) => {
+            db.run(`
+              UPDATE users 
+              SET pace = COALESCE(?, pace),
+                  shooting = COALESCE(?, shooting),
+                  passing = COALESCE(?, passing),
+                  dribbling = COALESCE(?, dribbling),
+                  defending = COALESCE(?, defending),
+                  physical = COALESCE(?, physical)
+              WHERE id = ?
+            `, [stat.pac, stat.sho, stat.pas, stat.dri, stat.def, stat.phy, matchedUser.id], (err) => {
+              if (!err) {
+                updated.push({ id: matchedUser.id, name: matchedUser.username, stat });
+              }
+              resolve();
+            });
+          }));
+        }
+      }
+
+      Promise.all(updatePromises).then(() => {
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+        res.json({ success: true, updatedCount: updated.length, updatedPlayers: updated });
+      }).catch(err => {
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+        res.status(500).json({ error: 'Erro ao salvar notas no banco de dados: ' + err.message });
       });
     });
   } catch (err) {

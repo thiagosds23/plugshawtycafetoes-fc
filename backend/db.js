@@ -58,6 +58,34 @@ if (TURSO_URL && TURSO_TOKEN) {
     },
     serialize: function(fn) {
       if (fn) fn();
+    },
+    prepare: function(sql) {
+      const ops = [];
+      const stmt = {
+        run: function(...args) {
+          let runArgs = [];
+          if (Array.isArray(args[0])) {
+            runArgs = args[0];
+          } else {
+            runArgs = args.filter(a => typeof a !== 'function');
+          }
+          ops.push({ sql, args: runArgs });
+          return stmt;
+        },
+        finalize: function(cb) {
+          if (ops.length === 0) {
+            if (cb) cb();
+            return;
+          }
+          client.batch(ops, 'write')
+            .then(() => { if (cb) cb(); })
+            .catch(err => {
+              console.error('Turso batch error in stmt.finalize:', err);
+              if (cb) cb(err);
+            });
+        }
+      };
+      return stmt;
     }
   };
 } else {
