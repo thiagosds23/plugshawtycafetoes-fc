@@ -263,16 +263,36 @@ app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original
 
     if (!photoFile) return res.status(400).json({ error: 'Nenhuma foto enviada' });
 
-    const photoUrl = '/uploads/' + photoFile.filename;
-    if (origFile) {
-      const origUrl = '/uploads/' + origFile.filename;
-      db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
-        res.json({ photoUrl, origUrl });
-      });
-    } else {
-      db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
-        res.json({ photoUrl });
-      });
+    try {
+      const photoBuf = fs.readFileSync(photoFile.path);
+      const photoMime = photoFile.mimetype || 'image/png';
+      const photoUrl = `data:${photoMime};base64,${photoBuf.toString('base64')}`;
+
+      let origUrl = null;
+      if (origFile) {
+        const origBuf = fs.readFileSync(origFile.path);
+        const origMime = origFile.mimetype || 'image/jpeg';
+        origUrl = `data:${origMime};base64,${origBuf.toString('base64')}`;
+      }
+
+      // Limpar arquivos temporários do disco
+      try { fs.unlinkSync(photoFile.path); } catch (e) {}
+      if (origFile) { try { fs.unlinkSync(origFile.path); } catch (e) {} }
+
+      if (origUrl) {
+        db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ photoUrl, origUrl });
+        });
+      } else {
+        db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
+          if (err) return res.status(500).json({ error: err.message });
+          res.json({ photoUrl });
+        });
+      }
+    } catch (err) {
+      console.error('Erro ao processar imagem:', err);
+      res.status(500).json({ error: 'Erro ao processar imagem' });
     }
   });
 });

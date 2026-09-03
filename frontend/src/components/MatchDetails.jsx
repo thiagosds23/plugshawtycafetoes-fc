@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
 import { calcOVR } from '../utils/ovr';
-import { API_URL } from '../config';
+import { API_URL, formatPhotoUrl } from '../config';
 
 // Web Audio API Sound Synthesizer (Zero-latency native gaming sounds)
 function playDraftSound(pitch = 440) {
@@ -1109,7 +1109,7 @@ export default function MatchDetails() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, flex: 1 }}>
                                 <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'var(--secondary)', overflow: 'hidden', flexShrink: 0, border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                   {p.photo ? (
-                                    <img src={`${API_URL}${p.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                    <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                   ) : (
                                     <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text-muted)' }}>
                                       {p.username.charAt(0).toUpperCase()}
@@ -1303,7 +1303,7 @@ export default function MatchDetails() {
                             >
                               <div style={{ position: 'relative', width: '42px', height: '42px', borderRadius: '50%', background: '#0a0a0f', border: '2px solid #00f59b', overflow: 'hidden', boxShadow: '0 0 12px rgba(0, 245, 155, 0.4)' }}>
                                 {p.photo ? (
-                                  <img src={`${API_URL}${p.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                 ) : (
                                   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', color: '#00f59b' }}>
                                     {p.username.charAt(0).toUpperCase()}
@@ -1338,7 +1338,7 @@ export default function MatchDetails() {
                             >
                               <div style={{ position: 'relative', width: '42px', height: '42px', borderRadius: '50%', background: '#0a0a0f', border: '2px solid #ffffff', overflow: 'hidden', boxShadow: '0 0 12px rgba(255, 255, 255, 0.4)' }}>
                                 {p.photo ? (
-                                  <img src={`${API_URL}${p.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                                  <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                                 ) : (
                                   <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>
                                     {p.username.charAt(0).toUpperCase()}

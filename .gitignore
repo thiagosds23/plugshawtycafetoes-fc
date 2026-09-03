@@ -24,3 +24,8 @@ Thumbs.db
 .vscode/
 .idea/
 .agents/
+
+# Local databases and uploads (now permanently stored in Turso Cloud)
+backend/database.sqlite
+backend/uploads/
+

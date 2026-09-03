@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
 import { LogIn, UserPlus, Phone, Mail, User, KeyRound, Trophy, ArrowRight, ShieldCheck, ArrowLeft, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { API_URL } from '../config';
+import { API_URL, formatPhotoUrl } from '../config';
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -336,7 +336,7 @@ export default function Login() {
             <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.03)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border)' }}>
               <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: 'var(--secondary)', overflow: 'hidden', margin: '0 auto 8px', border: '2px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {matchedUser.photo ? (
-                  <img src={`${API_URL}${matchedUser.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={formatPhotoUrl(matchedUser.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   <span style={{ fontSize: '18px', fontWeight: 'bold', color: 'var(--primary)' }}>{matchedUser.username.charAt(0).toUpperCase()}</span>
                 )}

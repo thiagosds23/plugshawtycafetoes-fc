@@ -3,7 +3,7 @@ import { Trophy, Star, Goal, Award, ThumbsDown, Crown, Coffee, Calendar, Target,
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AuthContext } from '../AuthContext';
-import { API_URL } from '../config';
+import { API_URL, formatPhotoUrl } from '../config';
 
 function getPrimaryName(player) {
   if (!player) return '';
@@ -273,7 +273,7 @@ export default function Dashboard() {
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--gold)', boxShadow: 'var(--glow-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {mvp && mvp.photo ? (
-                <img src={`${API_URL}${mvp.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img src={formatPhotoUrl(mvp.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 <Crown size={26} color="var(--gold)" />
               )}
@@ -297,7 +297,7 @@ export default function Dashboard() {
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid #ff7700', boxShadow: '0 0 16px rgba(255, 107, 0, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {hotPlayer && hotPlayer.photo ? (
-                <img src={`${API_URL}${hotPlayer.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img src={formatPhotoUrl(hotPlayer.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 <Flame size={26} color="#ff7700" />
               )}
@@ -323,7 +323,7 @@ export default function Dashboard() {
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--primary)', boxShadow: 'var(--glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {topScorer && topScorer.photo ? (
-                <img src={`${API_URL}${topScorer.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img src={formatPhotoUrl(topScorer.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 <Goal size={26} color="var(--primary)" />
               )}
@@ -345,7 +345,7 @@ export default function Dashboard() {
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--cyan)', boxShadow: '0 0 16px var(--cyan-glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               {topPlaymaker && topPlaymaker.photo ? (
-                <img src={`${API_URL}${topPlaymaker.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                <img src={formatPhotoUrl(topPlaymaker.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
               ) : (
                 <Award size={26} color="var(--cyan)" />
               )}
@@ -451,7 +451,7 @@ export default function Dashboard() {
                     {/* Foto */}
                     <div style={{ width: '38px', height: '38px', borderRadius: '50%', overflow: 'hidden', border: isTop3 ? `2px solid ${posBadgeColors[idx]}` : '1px solid var(--border)', background: 'var(--secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {player.photo ? (
-                        <img src={`${API_URL}${player.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <img src={formatPhotoUrl(player.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
                         <span style={{ fontWeight: 800, color: 'var(--text-muted)', fontSize: '13px' }}>{player.username.charAt(0).toUpperCase()}</span>
                       )}
@@ -593,7 +593,7 @@ export default function Dashboard() {
 
                       <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--secondary)', overflow: 'hidden', border: isTop3 ? `2px solid ${posBadgeColors[idx]}` : '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {player.photo ? (
-                          <img src={`${API_URL}${player.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <img src={formatPhotoUrl(player.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : (
                           <div style={{ fontWeight: 'bold', color: 'var(--text-muted)', fontSize: '14px' }}>
                             {player.username.charAt(0).toUpperCase()}

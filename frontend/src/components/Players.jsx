@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { removeBackground } from '@imgly/background-removal';
 import { AuthContext } from '../AuthContext';
 import { calcOVR } from '../utils/ovr';
-import { API_URL } from '../config';
+import { API_URL, formatPhotoUrl } from '../config';
 import '../fut-card.css';
 
 // Flexible Height Formatter: Accepts 178, 1,78, or 1.78 and normalizes to "1.78"
@@ -466,7 +466,7 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
             <div style={{ display: 'flex', gap: '14px', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ width: '56px', height: '56px', borderRadius: '12px', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--primary)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 {player.photo ? (
-                  <img src={`${API_URL}${player.photo}`} alt="Thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <img src={formatPhotoUrl(player.photo)} alt="Thumbnail" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                 ) : (
                   <UserCircle size={40} color="rgba(255,255,255,0.3)" />
                 )}
@@ -1131,7 +1131,7 @@ export default function Players() {
               {/* Foto do Atleta */}
               <div className="fut-photo">
                 {player.photo ? (
-                  <img src={`${API_URL}${player.photo}`} alt="Player" />
+                  <img src={formatPhotoUrl(player.photo)} alt="Player" />
                 ) : (
                   <div style={{ width: '100%', height: '100%', background: 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                     <UserCircle size={110} color="rgba(0,0,0,0.3)" />

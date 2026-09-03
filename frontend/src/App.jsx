@@ -8,7 +8,7 @@ import Dashboard from './components/Dashboard';
 import Matches from './components/Matches';
 import Players from './components/Players';
 import MatchDetails from './components/MatchDetails';
-import { API_URL } from './config';
+import { API_URL, formatPhotoUrl } from './config';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useContext(AuthContext);
@@ -59,7 +59,7 @@ const Navigation = () => {
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: 'rgba(255,255,255,0.04)', padding: '4px 10px 4px 5px', borderRadius: '30px', border: '1px solid var(--border)' }}>
           <div style={{ width: '30px', height: '30px', borderRadius: '50%', background: '#121520', overflow: 'hidden', border: '1px solid var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             {user.photo ? (
-              <img src={`${API_URL}${user.photo}`} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={formatPhotoUrl(user.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
               <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--primary)' }}>{user.username.charAt(0).toUpperCase()}</span>
             )}
