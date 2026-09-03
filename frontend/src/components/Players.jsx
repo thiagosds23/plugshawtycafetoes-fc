@@ -19,9 +19,9 @@ function formatHeight(val) {
   return num.toFixed(2);
 }
 
-// Pre-downscale high-res photos to optimal model size (max 480px)
-// This prevents WASM memory exhaustion, eliminates browser freezing, and speeds up AI inference to ~0.8s!
-const downscaleForAI = async (blob, maxDim = 480) => {
+// Pre-downscale high-res photos to optimal model size (max 320px)
+// This prevents WASM memory exhaustion, eliminates browser freezing, and speeds up AI inference on mobile!
+const downscaleForAI = async (blob, maxDim = 320) => {
   return new Promise((resolve) => {
     const img = new Image();
     const url = URL.createObjectURL(blob);
@@ -42,7 +42,7 @@ const downscaleForAI = async (blob, maxDim = 480) => {
       canvas.height = height;
       const ctx = canvas.getContext('2d');
       ctx.drawImage(img, 0, 0, width, height);
-      canvas.toBlob((resizedBlob) => resolve(resizedBlob || blob), 'image/jpeg', 0.90);
+      canvas.toBlob((resizedBlob) => resolve(resizedBlob || blob), 'image/jpeg', 0.85);
     };
     img.onerror = () => {
       URL.revokeObjectURL(url);
@@ -302,72 +302,78 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
           </div>
         </div>
 
-        {/* AI Background Removal Action Button */}
+        {/* Ações de Recorte de Fundo: Remove.bg (Instantâneo) + IA no Aparelho */}
         <div className="mb-4 flex flex-col items-center justify-center gap-2">
-          <div className="flex justify-center gap-2">
+          <div className="flex justify-center gap-2 flex-wrap">
+            {/* Opção 1: Remove.bg - 100% à prova de falhas em qualquer celular */}
+            <a 
+              href="https://www.remove.bg/pt-br/upload" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="btn" 
+              style={{ 
+                background: 'linear-gradient(135deg, #00f59b 0%, #00d285 100%)', 
+                color: '#000', 
+                fontWeight: '800', 
+                fontSize: '0.84rem',
+                padding: '9px 15px',
+                borderRadius: '10px',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                textDecoration: 'none',
+                boxShadow: '0 0 16px rgba(0, 245, 155, 0.35)'
+              }}
+              title="Abre o Remove.bg em nova aba para recortar em 2 segundos"
+            >
+              <ExternalLink size={15} /> ⚡ Recortar no Remove.bg
+            </a>
+
             {!hasRemovedBg ? (
               <button 
-                className="btn flex items-center justify-center gap-2 py-2 text-sm" 
+                className="btn btn-secondary flex items-center justify-center gap-2 py-2 text-xs" 
                 onClick={handleRemoveBackground} 
                 disabled={isRemovingBg}
-                style={{ background: 'linear-gradient(90deg, #8b5cf6, #00f59b)', color: '#000', fontWeight: 'bold' }}
+                style={{ borderRadius: '10px', padding: '9px 13px', fontSize: '0.8rem' }}
+                title="Tenta recortar usando a memória do seu próprio navegador"
               >
-                {isRemovingBg ? <Loader2 size={16} className="animate-spin" /> : <Sparkles size={16} />}
-                {isRemovingBg ? `Recortando com IA (${bgProgress}%)...` : 'Remover Fundo (IA)'}
+                {isRemovingBg ? <Loader2 size={15} className="animate-spin" /> : <Sparkles size={15} />}
+                {isRemovingBg ? `IA (${bgProgress}%)...` : 'Tentar IA no Aparelho'}
               </button>
             ) : (
               <button 
-                className="btn btn-secondary flex items-center justify-center gap-2 py-2 text-sm" 
+                className="btn btn-secondary flex items-center justify-center gap-2 py-2 text-xs" 
                 onClick={handleRestoreOriginal}
                 disabled={isRemovingBg}
+                style={{ borderRadius: '10px', padding: '9px 13px', fontSize: '0.8rem' }}
               >
-                <RefreshCw size={16} /> Restaurar Fundo Original
+                <RefreshCw size={15} /> Fundo Original
               </button>
             )}
 
             {player.photo && (
               <button 
-                className="btn btn-secondary flex items-center justify-center gap-1.5 py-2 text-sm text-red-400" 
+                className="btn btn-secondary flex items-center justify-center gap-1.5 py-2 text-xs text-red-400" 
                 onClick={onDeletePhoto}
                 disabled={isRemovingBg}
-                style={{ borderColor: 'rgba(239, 68, 68, 0.4)' }}
+                style={{ borderColor: 'rgba(239, 68, 68, 0.4)', borderRadius: '10px', padding: '9px 12px' }}
               >
-                <Trash2 size={16} /> Remover Foto
+                <Trash2 size={15} /> Remover Foto
               </button>
             )}
           </div>
 
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center', margin: '4px 0 6px' }}>
+            💡 <strong>Recomendado no celular:</strong> O <em>Remove.bg</em> não trava nem esquenta o aparelho. Após baixar a foto recortada, clique em <strong>"Outra Foto"</strong> abaixo!
+          </div>
+
           {isRemovingBg && (
-            <div style={{ width: '100%', maxWidth: '280px', marginTop: '6px' }}>
+            <div style={{ width: '100%', maxWidth: '280px', marginTop: '4px' }}>
               <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
                 <div style={{ width: `${bgProgress}%`, height: '100%', background: 'linear-gradient(90deg, #8b5cf6, #00f59b)', transition: 'width 0.2s ease-out' }}></div>
               </div>
             </div>
           )}
-        </div>
-
-        {/* Helper Link: Ferramenta Externa 100% Garantida */}
-        <div style={{ margin: '0 0 16px', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(0, 245, 155, 0.35)', borderRadius: '12px', fontSize: '0.78rem', color: 'var(--text-muted)', textAlign: 'center' }}>
-          <div style={{ marginBottom: '4px', color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
-            <span>✂️ Dificuldade para recortar a foto?</span>
-          </div>
-          <p style={{ margin: '0 0 8px', lineHeight: 1.35, fontSize: '0.74rem' }}>
-            Use o <strong>remove.bg</strong> para recortar grátis em 2 segundos sem erro:
-          </p>
-          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
-            <a 
-              href="https://www.remove.bg/pt-br/upload" 
-              target="_blank" 
-              rel="noopener noreferrer" 
-              className="btn btn-secondary" 
-              style={{ padding: '6px 12px', fontSize: '0.74rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '5px', textDecoration: 'none', color: 'var(--primary)', borderColor: 'var(--primary)' }}
-            >
-              <ExternalLink size={13} /> Abrir Remove.bg (Grátis)
-            </a>
-          </div>
-          <div style={{ marginTop: '6px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
-            Baixou sem fundo? Clique em <strong>"Outra Foto"</strong> abaixo para usá-la!
-          </div>
         </div>
 
         {/* Controls */}

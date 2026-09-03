@@ -16,6 +16,28 @@ app.use('/uploads', (req, res, next) => {
   next();
 }, express.static(path.join(__dirname, 'uploads'), { dotfiles: 'ignore', index: false }));
 
+// Servir frontend compilado estaticamente (Modo Fullstack Unificado na Nuvem)
+const frontendDist = path.join(__dirname, '../frontend/dist');
+if (fs.existsSync(frontendDist)) {
+  app.use(express.static(frontendDist));
+
+  // Interceptador SPA: Toda navegação do browser (GET com accept: text/html)
+  // que não seja um arquivo físico e não seja /uploads serve sempre o index.html.
+  // Isso previne erros de "Cannot GET /login" ou exibição de JSON puro ao puxar para atualizar no celular!
+  app.use((req, res, next) => {
+    if (req.method === 'GET') {
+      const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
+      const hasExt = path.extname(req.path) !== '';
+      const isUpload = req.path.startsWith('/uploads');
+
+      if (acceptsHtml && !hasExt && !isUpload) {
+        return res.sendFile(path.join(frontendDist, 'index.html'));
+      }
+    }
+    next();
+  });
+}
+
 // Ensure uploads directory exists
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -1032,15 +1054,10 @@ app.use((err, req, res, next) => {
   next();
 });
 
-// Servir frontend compilado estaticamente quando disponível (Modo Fullstack Unificado na Nuvem)
-const frontendDist = path.join(__dirname, '../frontend/dist');
+// Wildcard fallback SPA: Qualquer rota GET não tratada pelas APIs envia o index.html
 if (fs.existsSync(frontendDist)) {
-  app.use(express.static(frontendDist));
-  app.use((req, res, next) => {
-    if (req.method === 'GET' && !req.path.startsWith('/uploads') && !req.path.startsWith('/users') && !req.path.startsWith('/matches') && !req.path.startsWith('/stats') && !req.path.startsWith('/ratings') && !req.path.startsWith('/login') && !req.path.startsWith('/register')) {
-      return res.sendFile(path.join(frontendDist, 'index.html'));
-    }
-    next();
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(frontendDist, 'index.html'));
   });
 }
 
