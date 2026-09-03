@@ -88,6 +88,70 @@ const docUpload = multer({
 
 const INVITE_CODE = 'JOGO2026';
 
+// Sistema de Auditoria em Tempo Real (Horário de Brasília)
+function logAudit(userId, username, action, details) {
+  try {
+    const brTime = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+    db.run(
+      'INSERT INTO audit_logs (user_id, username, action, details, created_at) VALUES (?, ?, ?, ?, ?)',
+      [userId || null, username || 'Desconhecido', action, details, brTime],
+      (err) => {
+        if (err) console.error('Erro ao gravar log de auditoria:', err.message);
+      }
+    );
+  } catch (e) {
+    console.error('Audit error:', e);
+  }
+}
+
+// Obter histórico de auditoria (Exclusivo para o Administrador)
+app.get('/audit-logs', (req, res) => {
+  const requesterId = req.headers['x-user-id'];
+  if (!requesterId) return res.status(403).json({ error: 'Acesso não autorizado.' });
+
+  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+    if (err || !user) return res.status(403).json({ error: 'Usuário não encontrado.' });
+    const isAdmin = user.id === 1 || (user.username && user.username.toLowerCase().includes('thiago')) || (user.nickname && user.nickname.toLowerCase().includes('fela'));
+    if (!isAdmin) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+
+    db.all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300', [], (err2, rows) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      res.json({ logs: rows || [] });
+    });
+  });
+});
+
+// Limpar logs de auditoria (Apenas Admin)
+app.delete('/audit-logs', (req, res) => {
+  const requesterId = req.headers['x-user-id'];
+  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+    const isAdmin = user && (user.id === 1 || user.username.toLowerCase().includes('thiago') || (user.nickname && user.nickname.toLowerCase().includes('fela')));
+    if (!isAdmin) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+
+    db.run('DELETE FROM audit_logs', [], (err2) => {
+      if (err2) return res.status(500).json({ error: err2.message });
+      logAudit(user.id, user.username, 'ADMIN', 'Limpou o histórico de auditoria');
+      res.json({ success: true, message: 'Histórico de auditoria limpo com sucesso!' });
+    });
+  });
+});
+
+// Registrar log de evento vindo do frontend (ex: avaliação de elenco preenchida)
+app.post('/audit-logs', (req, res) => {
+  const { action, details } = req.body;
+  const requesterId = req.headers['x-user-id'];
+  if (requesterId) {
+    db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+      const name = user ? (user.nickname ? `${user.username} (${user.nickname.split(',')[0].trim()})` : user.username) : 'Atleta';
+      logAudit(requesterId, name, action || 'GERAL', details || 'Ação registrada');
+      res.json({ success: true });
+    });
+  } else {
+    logAudit(null, 'Visitante', action || 'GERAL', details || 'Ação anônima');
+    res.json({ success: true });
+  }
+});
+
 // -- AUTH --
 app.post('/register', (req, res) => {
   const { username, email, phone, inviteCode } = req.body;
@@ -204,18 +268,20 @@ app.post('/login', (req, res) => {
       });
     }
 
+    logAudit(safeUser.id, safeUser.nickname ? `${safeUser.username} (${safeUser.nickname.split(',')[0].trim()})` : safeUser.username, 'LOGIN', 'Entrou no aplicativo');
     res.json(safeUser);
   });
 });
 
 // Definir ou Alterar PIN do próprio usuário
 app.post('/users/:id/pin', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, () => {
+  verifyUserOwnership(req, res, req.params.id, (user) => {
     const { pin } = req.body; // string de dígitos ou null para remover
     const cleanPin = pin && String(pin).trim() ? String(pin).trim() : null;
 
     db.run('UPDATE users SET pin = ?, pin_prompted = 1 WHERE id = ?', [cleanPin, req.params.id], function(err) {
       if (err) return res.status(500).json({ error: 'Erro ao salvar PIN' });
+      logAudit(user.id, user.username, 'PIN', cleanPin ? 'Definiu ou atualizou PIN de 4 dígitos' : 'Removeu o PIN');
       res.json({ success: true, has_pin: !!cleanPin });
     });
   });
@@ -225,6 +291,7 @@ app.post('/users/:id/pin', (req, res) => {
 app.post('/users/:id/skip-pin', (req, res) => {
   db.run('UPDATE users SET pin_prompted = 1 WHERE id = ?', [req.params.id], function(err) {
     if (err) return res.status(500).json({ error: 'Erro ao registrar preferência' });
+    logAudit(req.params.id, 'Atleta', 'PIN', 'Optou por entrar sem PIN');
     res.json({ success: true });
   });
 });
@@ -240,6 +307,7 @@ app.post('/users/:id/reset-pin', (req, res) => {
 
     db.run('UPDATE users SET pin = NULL, pin_prompted = 0 WHERE id = ?', [req.params.id], function(err2) {
       if (err2) return res.status(500).json({ error: 'Erro ao resetar PIN' });
+      logAudit(adminUser.id, adminUser.username, 'ADMIN', `Resetou o PIN do atleta ID ${req.params.id}`);
       res.json({ success: true, message: 'PIN resetado com sucesso!' });
     });
   });
@@ -279,7 +347,7 @@ function verifyUserOwnership(req, res, targetPlayerId, callback) {
 }
 
 app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original_photo' }]), (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, () => {
+  verifyUserOwnership(req, res, req.params.id, (user) => {
     const photoFile = req.files && req.files['photo'] && req.files['photo'][0];
     const origFile = req.files && req.files['original_photo'] && req.files['original_photo'][0];
 
@@ -304,11 +372,13 @@ app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original
       if (origUrl) {
         db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
           if (err) return res.status(500).json({ error: err.message });
+          logAudit(user.id, user.username, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
           res.json({ photoUrl, origUrl });
         });
       } else {
         db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
           if (err) return res.status(500).json({ error: err.message });
+          logAudit(user.id, user.username, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
           res.json({ photoUrl });
         });
       }
@@ -320,17 +390,19 @@ app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original
 });
 
 app.delete('/users/:id/photo', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, () => {
+  verifyUserOwnership(req, res, req.params.id, (user) => {
     db.run('UPDATE users SET photo = NULL, original_photo = NULL WHERE id = ?', [req.params.id], (err) => {
+      logAudit(user.id, user.username, 'FOTO', 'Removeu a foto da carta FUT');
       res.json({ success: true });
     });
   });
 });
 
 app.put('/users/:id/position', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, () => {
+  verifyUserOwnership(req, res, req.params.id, (user) => {
     const { position } = req.body;
     db.run('UPDATE users SET position = ? WHERE id = ?', [position, req.params.id], (err) => {
+      logAudit(user.id, user.username, 'POSIÇÃO', `Alterou a posição para ${position}`);
       res.json({ success: true });
     });
   });
@@ -348,16 +420,23 @@ function formatHeight(val) {
 }
 
 app.put('/users/:id/profile', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, () => {
+  verifyUserOwnership(req, res, req.params.id, (user) => {
     const { username, nickname, position, height, weight, phone, email } = req.body;
     const formattedHeight = formatHeight(height);
     
+    const detailsList = [];
+    if (position) detailsList.push(`Posição: ${position}`);
+    if (nickname) detailsList.push(`Apelido: ${nickname}`);
+    if (username) detailsList.push(`Nome: ${username}`);
+    const detailsStr = detailsList.join(', ') || 'dados cadastrais';
+
     if (username && username.trim()) {
       db.run(`UPDATE users SET username = ?, nickname = ?, position = ?, height = ?, weight = ?,
               phone = ?, email = ?
               WHERE id = ?`, 
         [username.trim(), nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
           if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
+          logAudit(user.id, user.username, 'PERFIL', `Atualizou perfil (${detailsStr})`);
           res.json({ success: true, height: formattedHeight });
       });
     } else {
@@ -366,6 +445,7 @@ app.put('/users/:id/profile', (req, res) => {
               WHERE id = ?`, 
         [nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
           if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
+          logAudit(user.id, user.username, 'PERFIL', `Atualizou perfil (${detailsStr})`);
           res.json({ success: true, height: formattedHeight });
       });
     }
@@ -609,6 +689,7 @@ app.delete('/users/:id', (req, res) => {
       db.run('DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', [id, id]);
       db.run('DELETE FROM users WHERE id = ?', [id], (err2) => {
         if (err2) return res.status(500).json({ error: err2.message });
+        logAudit(user.id, user.username, 'ADMIN', `Excluiu o atleta ID ${id}`);
         res.json({ success: true, message: 'Jogador excluído com sucesso!' });
       });
     });
