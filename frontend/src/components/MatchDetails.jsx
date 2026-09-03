@@ -871,21 +871,21 @@ export default function MatchDetails() {
 
       {/* WhatsApp Convocação Modal */}
       {showWhatsAppModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '540px', padding: '28px', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-            <div className="flex justify-between items-center mb-4">
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(10px)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
+          <div className="glass-card" style={{ width: '100%', maxWidth: '540px', padding: '20px 16px', maxHeight: '92dvh', display: 'flex', flexDirection: 'column' }}>
+            <div className="flex justify-between items-center mb-3">
               <h3 className="font-extrabold text-lg text-main flex items-center gap-2">
                 <Clipboard color="#25D366" size={20} /> Reconhecer Lista do WhatsApp
               </h3>
               <button onClick={() => { setShowWhatsAppModal(false); setParsedItems([]); setWhatsAppText(''); }} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
             </div>
 
-            <p className="text-muted text-xs mb-4">
-              Cole a mensagem da lista do futebol com os nomes. Atletas não encontrados no elenco serão criados automaticamente!
+            <p className="text-muted text-xs mb-3">
+              Cole a mensagem da lista do futebol. Atletas já cadastrados serão reconhecidos e novos atletas podem ser editados abaixo antes de convocar!
             </p>
 
             <textarea 
-              rows={6}
+              rows={5}
               className="input"
               placeholder={`futebol sabado 15h arena petropolis:
 1. thiago felino
@@ -894,36 +894,49 @@ export default function MatchDetails() {
 4. elias
 5. Hagen
 6. Wellington camisa 10
-77.CALEBE
+77. CALEBE
 8. Flávio Caça Rato
-9.  Wesley enormossauro
+9. Wesley enormossauro
 10. Ademilson 52 de panturrilha`}
               value={whatsAppText}
               onChange={e => setWhatsAppText(e.target.value)}
-              style={{ marginBottom: '14px', resize: 'vertical', fontSize: '0.85rem' }}
+              style={{ marginBottom: '12px', resize: 'vertical', fontSize: '0.85rem' }}
             />
 
-            <button className="btn mb-4" style={{ padding: '10px', fontSize: '0.88rem' }} onClick={handleParseWhatsApp} disabled={!whatsAppText.trim()}>
+            <button className="btn mb-3" style={{ padding: '10px', fontSize: '0.88rem' }} onClick={handleParseWhatsApp} disabled={!whatsAppText.trim()}>
               <Sparkles size={16} /> Identificar Jogadores na Lista
             </button>
 
-            {/* Results Preview */}
+            {/* Results Preview: Zero rolagem horizontal, 100% alinhado e nomes completos */}
             {parsedItems.length > 0 && (
-              <div style={{ flex: 1, overflowY: 'auto', marginBottom: '16px', maxHeight: '250px', border: '1px solid var(--border)', borderRadius: '12px', padding: '10px' }}>
-                <div className="flex justify-between items-center mb-2 flex-wrap gap-2">
+              <div style={{ flex: 1, overflowY: 'auto', marginBottom: '14px', maxHeight: '280px', border: '1px solid var(--border)', borderRadius: '12px', padding: '8px' }}>
+                <div className="flex justify-between items-center mb-2 flex-wrap gap-1 px-1">
                   <span className="text-xs font-bold text-muted">
-                    {parsedItems.filter(i => i.selected).length} de {parsedItems.length} selecionados para convocação:
+                    {parsedItems.filter(i => i.selected).length} de {parsedItems.length} selecionados:
                   </span>
                   {parsedItems.filter(i => i.selected && !i.matchedPlayer).length > 0 && (
                     <span style={{ fontSize: '11px', color: '#fbbf24', fontWeight: 'bold' }}>
-                      ({parsedItems.filter(i => i.selected && !i.matchedPlayer).length} novos atletas serão cadastrados)
+                      ({parsedItems.filter(i => i.selected && !i.matchedPlayer).length} novos serão criados)
                     </span>
                   )}
                 </div>
 
                 {parsedItems.map((item, idx) => (
-                  <div key={idx} className="flex justify-between items-center p-2.5 mb-1.5 flex-wrap gap-2" style={{ background: item.matchedPlayer ? 'rgba(0, 245, 155, 0.08)' : 'rgba(251, 191, 36, 0.08)', borderRadius: '10px', border: `1px solid ${item.matchedPlayer ? 'rgba(0, 245, 155, 0.25)' : 'rgba(251, 191, 36, 0.3)'}` }}>
-                    <div className="flex items-center gap-2.5" style={{ flex: '1 1 180px' }}>
+                  <div 
+                    key={idx} 
+                    style={{ 
+                      background: item.matchedPlayer ? 'rgba(0, 245, 155, 0.06)' : 'rgba(251, 191, 36, 0.06)', 
+                      borderRadius: '10px', 
+                      border: `1px solid ${item.matchedPlayer ? 'rgba(0, 245, 155, 0.25)' : 'rgba(251, 191, 36, 0.3)'}`,
+                      padding: '10px 12px',
+                      marginBottom: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px'
+                    }}
+                  >
+                    {/* Linha 1: Checkbox + Texto original do WhatsApp completo sem cortar */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
                       <input 
                         type="checkbox" 
                         checked={item.selected} 
@@ -932,21 +945,30 @@ export default function MatchDetails() {
                           updated[idx].selected = !updated[idx].selected;
                           setParsedItems(updated);
                         }} 
+                        style={{ width: '18px', height: '18px', cursor: 'pointer', flexShrink: 0 }}
                       />
-                      <span className="text-xs font-bold text-main" style={{ maxWidth: '170px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                        {item.originalLine}
-                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.84rem', fontWeight: '800', color: 'var(--text-main)', wordBreak: 'break-word', lineHeight: 1.25 }}>
+                          {item.originalLine}
+                        </div>
+                      </div>
                     </div>
 
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {/* Linha 2: Status do Jogador ou Campo de Edição fácil sem puxar pro lado */}
+                    <div style={{ paddingLeft: '28px' }}>
                       {item.matchedPlayer ? (
-                        <span className="badge badge-volt" style={{ fontSize: '0.72rem', padding: '3px 8px' }}>
-                          ✅ {getPrimaryName(item.matchedPlayer)} (OVR {calcOVR(item.matchedPlayer)})
-                        </span>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(0, 245, 155, 0.12)', border: '1px solid rgba(0, 245, 155, 0.3)', padding: '4px 10px', borderRadius: '8px' }}>
+                          <span style={{ fontSize: '0.75rem', fontWeight: '800', color: 'var(--primary)' }}>
+                            ✅ Atleta: {getPrimaryName(item.matchedPlayer)}
+                          </span>
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                            (OVR {calcOVR(item.matchedPlayer)})
+                          </span>
+                        </div>
                       ) : (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span className="badge badge-gold" style={{ fontSize: '0.68rem', padding: '3px 7px' }}>
-                            ✨ Criar no Elenco
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
+                          <span className="badge badge-gold" style={{ fontSize: '0.68rem', padding: '4px 8px', flexShrink: 0 }}>
+                            ✨ Novo
                           </span>
                           <input 
                             type="text" 
@@ -957,8 +979,16 @@ export default function MatchDetails() {
                               updated[idx].suggestedName = e.target.value;
                               setParsedItems(updated);
                             }}
-                            placeholder="Nome de Jogo"
-                            style={{ width: '130px', padding: '3px 8px', fontSize: '0.75rem', height: '28px', marginBottom: 0, borderRadius: '6px' }}
+                            placeholder="Nome para o cadastro e carta FUT"
+                            style={{ 
+                              flex: 1, 
+                              padding: '6px 10px', 
+                              fontSize: '0.82rem', 
+                              height: '32px', 
+                              marginBottom: 0, 
+                              borderRadius: '8px',
+                              border: '1px solid rgba(251, 191, 36, 0.4)'
+                            }}
                           />
                         </div>
                       )}
