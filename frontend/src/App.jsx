@@ -8,8 +8,7 @@ import Dashboard from './components/Dashboard';
 import Matches from './components/Matches';
 import Players from './components/Players';
 import MatchDetails from './components/MatchDetails';
-
-const API_URL = `http://${window.location.hostname}:3001`;
+import { API_URL } from './config';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useContext(AuthContext);
