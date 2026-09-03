@@ -57,6 +57,14 @@ export function getPrimaryName(player) {
   return player.username || '';
 }
 
+export function formatShortTeamName(name) {
+  if (!name) return '';
+  const upper = String(name).toUpperCase();
+  if (upper.includes('SEM')) return 'SEM';
+  if (upper.includes('COM')) return 'COM';
+  return name;
+}
+
 // Intelligent WhatsApp List Parser with Fuzzy Matching
 function parseWhatsAppList(text, playersList) {
   if (!text) return [];
@@ -452,33 +460,12 @@ export default function MatchDetails() {
     setIsExporting(true);
     try {
       const dataUrl = await toPng(cardRef.current, { cacheBust: true, quality: 0.95 });
-      
-      // Suporte a compartilhamento nativo direto no WhatsApp pelo celular
-      if (navigator.share && navigator.canShare) {
-        try {
-          const blob = await (await fetch(dataUrl)).blob();
-          const file = new File([blob], `escalacao-partida-${match.date}.png`, { type: 'image/png' });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              title: `Escalação plugshawtycafetoes FC — ${match.date}`,
-              text: `Confira a escalação oficial da pelada de ${new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')}! ⚽🔥`,
-              files: [file]
-            });
-            return;
-          }
-        } catch (shareErr) {
-          if (shareErr.name !== 'AbortError') {
-            console.warn('Share API falhou, acionando download:', shareErr);
-          } else {
-            return; // Usuário apenas cancelou a janela de compartilhamento
-          }
-        }
-      }
-
       const link = document.createElement('a');
       link.download = `escalacao-partida-${match.date}.png`;
       link.href = dataUrl;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
     } catch (err) {
       console.error('Erro ao exportar imagem:', err);
       alert('Não foi possível gerar a imagem da escalação.');
@@ -628,7 +615,7 @@ export default function MatchDetails() {
       {/* Header Match Score Banner (Symmetrical 3-Column Flex with generous padding) */}
       <div className="glass-card" style={{ padding: '24px 18px', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(20,22,34,0.92), rgba(10,32,18,0.9))', borderRadius: '22px', textAlign: 'center' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--primary)', fontWeight: '800', fontSize: '0.75rem', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '14px' }}>
-          PARTIDA DE {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })}
+          PARTIDA DE {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         </div>
 
         {teamsReady ? (
@@ -640,10 +627,11 @@ export default function MatchDetails() {
             maxWidth: '800px', 
             margin: '0 auto 12px' 
           }}>
-            {/* Left: COM COLETE */}
+            {/* Left: Time 1 */}
             <div style={{ flex: '1 1 0', textAlign: 'center', minWidth: 0 }}>
-              <div className="font-extrabold" style={{ color: '#00f59b', fontSize: 'clamp(0.95rem, 3.2vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {match.teams[0]?.name || 'COM COLETE'}
+              <div className="font-extrabold" style={{ color: '#00f59b', fontSize: 'clamp(1rem, 3.8vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap' }}>
+                <span className="desktop-only">{match.teams[0]?.name || 'SEM COLETE'}</span>
+                <span className="mobile-only">{formatShortTeamName(match.teams[0]?.name || 'SEM COLETE')}</span>
               </div>
               <div className="text-muted text-xs font-bold uppercase tracking-wider mt-1">
                 OVR {getTeamOVR(match.teams[0])}
@@ -658,7 +646,7 @@ export default function MatchDetails() {
                 value={match.teams[0]?.score ?? 0} 
                 onChange={e => handleUpdateTeamScore(match.teams[0].id, e.target.value)}
                 disabled={match.status === 'completed'}
-                title="Alterar placar COM COLETE"
+                title="Alterar placar time 1"
                 style={{ 
                   width: '54px', 
                   height: '52px', 
@@ -681,7 +669,7 @@ export default function MatchDetails() {
                 value={match.teams[1]?.score ?? 0} 
                 onChange={e => handleUpdateTeamScore(match.teams[1].id, e.target.value)}
                 disabled={match.status === 'completed'}
-                title="Alterar placar SEM COLETE"
+                title="Alterar placar time 2"
                 style={{ 
                   width: '54px', 
                   height: '52px', 
@@ -699,10 +687,11 @@ export default function MatchDetails() {
               />
             </div>
 
-            {/* Right: SEM COLETE */}
+            {/* Right: Time 2 */}
             <div style={{ flex: '1 1 0', textAlign: 'center', minWidth: 0 }}>
-              <div className="font-extrabold" style={{ color: '#ffffff', fontSize: 'clamp(0.95rem, 3.2vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {match.teams[1]?.name || 'SEM COLETE'}
+              <div className="font-extrabold" style={{ color: '#ffffff', fontSize: 'clamp(1rem, 3.8vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap' }}>
+                <span className="desktop-only">{match.teams[1]?.name || 'COM COLETE'}</span>
+                <span className="mobile-only">{formatShortTeamName(match.teams[1]?.name || 'COM COLETE')}</span>
               </div>
               <div className="text-muted text-xs font-bold uppercase tracking-wider mt-1">
                 OVR {getTeamOVR(match.teams[1])}
@@ -1049,8 +1038,9 @@ export default function MatchDetails() {
               <div 
                 style={{ 
                   display: 'flex', 
-                  background: 'rgba(14, 16, 23, 0.9)', 
-                  padding: '4px', 
+                  gap: '8px',
+                  background: 'rgba(14, 16, 23, 0.92)', 
+                  padding: '6px', 
                   borderRadius: '16px', 
                   border: '1px solid var(--border)',
                   width: '100%',
@@ -1061,14 +1051,14 @@ export default function MatchDetails() {
                 <button 
                   className={`btn ${viewMode === 'list' ? '' : 'btn-secondary'}`} 
                   style={{ 
-                    padding: '10px 16px', 
+                    padding: '11px 16px', 
                     fontSize: '0.84rem', 
                     flex: 1, 
                     borderRadius: '12px', 
                     display: 'inline-flex', 
                     alignItems: 'center', 
                     justifyContent: 'center', 
-                    gap: '6px',
+                    gap: '8px',
                     fontWeight: viewMode === 'list' ? '800' : '600'
                   }} 
                   onClick={() => setViewMode('list')}
@@ -1078,19 +1068,19 @@ export default function MatchDetails() {
                 <button 
                   className={`btn ${viewMode === 'pitch' ? '' : 'btn-secondary'}`} 
                   style={{ 
-                    padding: '10px 16px', 
+                    padding: '11px 16px', 
                     fontSize: '0.84rem', 
                     flex: 1, 
                     borderRadius: '12px', 
                     display: 'inline-flex', 
                     alignItems: 'center', 
                     justifyContent: 'center', 
-                    gap: '6px',
+                    gap: '8px',
                     fontWeight: viewMode === 'pitch' ? '800' : '600'
                   }} 
                   onClick={() => setViewMode('pitch')}
                 >
-                  <MapPin size={16} /> 🏟️ Campo Tático
+                  <MapPin size={16} /> Campo Tático
                 </button>
               </div>
             </div>
@@ -1118,7 +1108,7 @@ export default function MatchDetails() {
                 onClick={exportWhatsAppCard} 
                 disabled={isExporting}
               >
-                <Share2 size={18} /> {isExporting ? 'Gerando Imagem...' : '📸 Exportar Escalação (WhatsApp)'}
+                <Share2 size={18} /> {isExporting ? 'Baixando Imagem...' : 'Exportar Escalação (WhatsApp)'}
               </button>
             </div>
           </div>

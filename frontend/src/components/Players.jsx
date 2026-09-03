@@ -1224,33 +1224,13 @@ export default function Players() {
       const playerName = player.nickname ? player.nickname.split(',')[0].trim() : player.username;
       const fileName = `carta-fut-${playerName.toLowerCase().replace(/\s+/g, '-')}-ovr${calcOVR(player)}.png`;
 
-      // Suporte a compartilhamento nativo no celular (WhatsApp / Instagram Stories)
-      if (navigator.share && navigator.canShare) {
-        try {
-          const blob = await (await fetch(dataUrl)).blob();
-          const file = new File([blob], fileName, { type: 'image/png' });
-          if (navigator.canShare({ files: [file] })) {
-            await navigator.share({
-              title: `Carta FUT de ${playerName} (OVR ${calcOVR(player)})`,
-              text: `Confira minha Carta FUT oficial no plugshawtycafetoes FC! ⚽🔥`,
-              files: [file]
-            });
-            setDownloadingCardId(null);
-            return;
-          }
-        } catch (shareErr) {
-          if (shareErr.name === 'AbortError') {
-            setDownloadingCardId(null);
-            return;
-          }
-        }
-      }
-
-      // Download direto do arquivo PNG
+      // Download direto do arquivo PNG no dispositivo (PC e celular)
       const link = document.createElement('a');
       link.download = fileName;
       link.href = dataUrl;
+      document.body.appendChild(link);
       link.click();
+      document.body.removeChild(link);
     } catch (err) {
       console.error('Erro ao gerar imagem da carta:', err);
       alert('Não foi possível gerar a imagem da carta FUT. Tente novamente.');
@@ -1707,7 +1687,7 @@ export default function Players() {
                 {downloadingCardId === player.id ? (
                   <><Loader2 size={16} className="animate-spin" /> Gerando Imagem...</>
                 ) : (
-                  <><Download size={16} /> 📸 Baixar / Compartilhar Carta</>
+                  <><Download size={16} /> Baixar Carta FUT (HD)</>
                 )}
               </button>
 
