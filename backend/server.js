@@ -545,8 +545,9 @@ app.post('/users/import-ratings-excel', docUpload.single('file'), (req, res) => 
               if (normName.length < 2) continue;
 
               const toScore = val => {
-                const num = parseFloat(String(val || '').replace(',', '.'));
-                if (isNaN(num)) return null;
+                if (val === undefined || val === null || String(val).trim() === '') return null;
+                const num = parseFloat(String(val).replace(',', '.'));
+                if (isNaN(num) || num <= 0) return null;
                 const scaled = num <= 10 ? Math.round(num * 10) : Math.round(num);
                 return Math.max(15, Math.min(99, scaled));
               };
@@ -631,8 +632,10 @@ app.post('/users/import-ratings-excel', docUpload.single('file'), (req, res) => 
               if (!row) continue;
               colMap.forEach(({ cIdx, normName, rawName, statType }) => {
                 const val = row[cIdx];
-                const num = parseFloat(String(val || '').replace(',', '.'));
-                if (!isNaN(num)) {
+                if (val === undefined || val === null || String(val).trim() === '') return;
+                
+                const num = parseFloat(String(val).replace(',', '.'));
+                if (!isNaN(num) && num > 0) {
                   const scaled = num <= 10 ? Math.round(num * 10) : Math.round(num);
                   const score = Math.max(15, Math.min(99, scaled));
                   if (!playerMap.has(normName)) {
