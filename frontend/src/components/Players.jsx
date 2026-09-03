@@ -139,16 +139,31 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
       // Yield assíncrono para o navegador pintar a tela e esvaziar a fila de eventos do Chrome
       await new Promise(r => setTimeout(r, 60));
 
-      const transparentBlob = await removeBackground(optimizedBlob, {
-        model: 'isnet_quint8', // Modelo quantizado de 8 bits (3x mais rápido, usa fração de memória)
-        device: 'gpu', // Aceleração WebGPU se disponível
-        progress: (key, current, total) => {
-          if (total > 0) {
-            const pct = Math.round(40 + (current / total) * 55);
-            setBgProgress(Math.min(pct, 95));
+      let transparentBlob;
+      try {
+        transparentBlob = await removeBackground(optimizedBlob, {
+          model: 'isnet_quint8',
+          device: 'gpu',
+          progress: (key, current, total) => {
+            if (total > 0) {
+              const pct = Math.round(40 + (current / total) * 55);
+              setBgProgress(Math.min(pct, 95));
+            }
           }
-        }
-      });
+        });
+      } catch (gpuErr) {
+        console.warn('WebGPU falhou ou indisponível no dispositivo. Tentando via CPU...', gpuErr);
+        transparentBlob = await removeBackground(optimizedBlob, {
+          model: 'isnet_quint8',
+          device: 'cpu',
+          progress: (key, current, total) => {
+            if (total > 0) {
+              const pct = Math.round(40 + (current / total) * 55);
+              setBgProgress(Math.min(pct, 95));
+            }
+          }
+        });
+      }
       setBgProgress(100);
 
       const transparentUrl = URL.createObjectURL(transparentBlob);
@@ -156,7 +171,7 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
       setHasRemovedBg(true);
     } catch (err) {
       console.error('Erro ao remover fundo:', err);
-      alert('Não foi possível remover o fundo desta foto automaticamente. Tente outra foto.');
+      alert('Não foi possível remover o fundo automaticamente neste dispositivo (falta de memória/recursos do navegador). Recomendamos usar o remove.bg pelo link abaixo, que remove com qualidade perfeita em 2 segundos!');
     } finally {
       setIsRemovingBg(false);
       setBgProgress(0);
@@ -329,6 +344,30 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
               </div>
             </div>
           )}
+        </div>
+
+        {/* Helper Link: Ferramenta Externa 100% Garantida */}
+        <div style={{ margin: '0 0 16px', padding: '10px 14px', background: 'rgba(255,255,255,0.03)', border: '1px dashed rgba(0, 245, 155, 0.35)', borderRadius: '12px', fontSize: '0.78rem', color: 'var(--text-muted)', textAlign: 'center' }}>
+          <div style={{ marginBottom: '4px', color: '#fff', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+            <span>✂️ Dificuldade para recortar a foto?</span>
+          </div>
+          <p style={{ margin: '0 0 8px', lineHeight: 1.35, fontSize: '0.74rem' }}>
+            Use o <strong>remove.bg</strong> para recortar grátis em 2 segundos sem erro:
+          </p>
+          <div style={{ display: 'flex', gap: '8px', justifyContent: 'center', flexWrap: 'wrap' }}>
+            <a 
+              href="https://www.remove.bg/pt-br/upload" 
+              target="_blank" 
+              rel="noopener noreferrer" 
+              className="btn btn-secondary" 
+              style={{ padding: '6px 12px', fontSize: '0.74rem', borderRadius: '8px', display: 'inline-flex', alignItems: 'center', gap: '5px', textDecoration: 'none', color: 'var(--primary)', borderColor: 'var(--primary)' }}
+            >
+              <ExternalLink size={13} /> Abrir Remove.bg (Grátis)
+            </a>
+          </div>
+          <div style={{ marginTop: '6px', fontSize: '0.68rem', color: 'var(--text-muted)' }}>
+            Baixou sem fundo? Clique em <strong>"Outra Foto"</strong> abaixo para usá-la!
+          </div>
         </div>
 
         {/* Controls */}
@@ -778,7 +817,7 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
 }
 
 export default function Players() {
-  const { user } = useContext(AuthContext);
+  const { user, updateUser } = useContext(AuthContext);
 
   const [players, setPlayers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -949,6 +988,10 @@ export default function Players() {
     // Atualiza o estado imediatamente para renderizar a nova foto
     setPlayers(prev => prev.map(p => p.id === cropModalPlayer.id ? { ...p, photo: data.photoUrl, original_photo: data.origUrl || p.original_photo } : p));
     
+    if (isMyPlayer(cropModalPlayer) && updateUser) {
+      updateUser({ photo: data.photoUrl, original_photo: data.origUrl || data.photoUrl });
+    }
+
     setCropModalPlayer(null);
     setTempImageSrc(null);
     setRawFile(null);
@@ -1023,6 +1066,9 @@ export default function Players() {
       const errData = await res.json().catch(() => ({}));
       alert(errData.error || 'Erro ao salvar perfil.');
       return;
+    }
+    if (isMyPlayer(targetPlayer) && updateUser) {
+      updateUser(payload);
     }
     setEditingId(null);
     loadPlayers();
