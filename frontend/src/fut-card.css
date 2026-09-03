@@ -1,0 +1,169 @@
+/* Official EA FC 24 Gold FIFA Card Spec Layout */
+.fut-card-container {
+  display: flex;
+  justify-content: center;
+  perspective: 1000px;
+}
+
+.fut-card-bg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.fut-card {
+  position: relative;
+  width: 310px;
+  max-width: calc(100vw - 32px);
+  color: #1a1204;
+  font-family: 'Din Pro', 'Inter', system-ui, -apple-system, sans-serif;
+  text-transform: uppercase;
+  margin: 0 auto;
+  transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), filter 0.35s ease;
+  filter: drop-shadow(0 14px 28px rgba(0,0,0,0.7));
+  user-select: none;
+  transform-style: preserve-3d;
+}
+
+.fut-card:hover {
+  transform: translateY(-8px) scale(1.03) rotateX(2deg);
+  filter: drop-shadow(0 22px 35px rgba(0,0,0,0.85)) drop-shadow(0 0 25px rgba(251, 191, 36, 0.35));
+}
+
+.fut-card::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 60%;
+  height: 100%;
+  background: linear-gradient(
+    120deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0) 30%,
+    rgba(255, 255, 255, 0.22) 50%,
+    transparent 70%
+  );
+  transform: skewX(-25deg);
+  pointer-events: none;
+  z-index: 5;
+  transition: none;
+}
+
+.fut-card:hover::after {
+  left: 140%;
+  transition: left 0.85s ease-in-out;
+}
+
+.fut-card-inner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+}
+
+/* Overall (OVR) - Superior Esquerdo Interno (left: 29%) */
+.fut-rating {
+  position: absolute;
+  top: 21.5%;
+  left: 29%;
+  transform: translate(-50%, -50%);
+  font-size: 2.4rem;
+  font-weight: 900;
+  line-height: 0.85;
+  text-align: center;
+  letter-spacing: -1.5px;
+  color: #211503;
+  text-shadow: 0 1px 0 rgba(255,255,255,0.3);
+}
+
+/* Posição - Logo abaixo do OVR (left: 29%) */
+.fut-position {
+  position: absolute;
+  top: 30.5%;
+  left: 29%;
+  transform: translate(-50%, -50%);
+  font-size: 1rem;
+  font-weight: 900;
+  text-align: center;
+  color: #211503;
+  letter-spacing: 0.5px;
+}
+
+/* Foto do Jogador - Retângulo Superior Direito (100% dentro da borda X: 80%) */
+.fut-photo {
+  position: absolute;
+  top: 11%;
+  left: 59%;
+  transform: translateX(-50%);
+  width: 42%;
+  height: 44%;
+  z-index: 1;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.fut-photo img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center top;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 85%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 85%, rgba(0,0,0,0) 100%);
+}
+
+/* Nome do Jogador - Centralizado na faixa retangular dourada */
+.fut-name {
+  position: absolute;
+  top: 61.5%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.25rem;
+  font-weight: 900;
+  text-align: center;
+  width: 58%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  letter-spacing: -0.3px;
+  color: #1a1002;
+  text-shadow: 0 0.5px 0 rgba(255,255,255,0.4);
+}
+
+/* Stats em Linha Única Horizontal - Levemente mais para cima (top: 73.5%) */
+.fut-stats {
+  position: absolute;
+  top: 73.5%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 58%;
+}
+
+.fut-stat-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0px;
+}
+
+.fut-stat-label {
+  font-weight: 900;
+  font-size: 0.68rem;
+  color: #42300c;
+  letter-spacing: 0.3px;
+}
+
+.fut-stat-val {
+  font-weight: 900;
+  font-size: 0.95rem;
+  color: #1a1002;
+  line-height: 1;
+}
