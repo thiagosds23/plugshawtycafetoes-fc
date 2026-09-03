@@ -405,14 +405,15 @@ export default function Login() {
                 className="input" 
                 value={pinInput}
                 onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Ex: 1234 (ou deixe em branco)"
+                placeholder="Ex: 1234 (Opcional)"
                 style={{ 
                   textAlign: 'center', 
-                  fontSize: '1.3rem', 
-                  letterSpacing: '6px', 
-                  padding: '9px 14px', 
+                  fontSize: pinInput ? '1.4rem' : '0.92rem', 
+                  letterSpacing: pinInput ? '8px' : '0.5px', 
+                  padding: '11px 14px', 
                   marginBottom: 0, 
-                  borderRadius: '11px' 
+                  borderRadius: '12px',
+                  border: '1.5px solid var(--primary)'
                 }}
               />
             </div>

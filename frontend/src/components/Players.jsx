@@ -1161,7 +1161,7 @@ export default function Players() {
           )}
 
           {/* Botão de Admin para Resetar PIN de outros jogadores */}
-          {!isCurrentUserCard && isAdmin && (
+          {!isEditable && isAdmin && (
             <div style={{ width: '310px' }}>
               {player.has_pin ? (
                 <button 
