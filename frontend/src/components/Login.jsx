@@ -133,8 +133,19 @@ export default function Login() {
     }
   };
 
-  const handleEnterWithoutPin = () => {
+  const handleEnterWithoutPin = async () => {
     if (pendingUser) {
+      try {
+        await fetch(`${API_URL}/users/${pendingUser.id}/skip-pin`, {
+          method: 'POST',
+          headers: { 
+            'Content-Type': 'application/json',
+            'x-user-id': String(pendingUser.id)
+          }
+        });
+      } catch (e) {
+        console.error('Erro ao registrar skip pin:', e);
+      }
       login(pendingUser);
       navigate('/');
     }

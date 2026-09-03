@@ -172,8 +172,10 @@ app.post('/login', (req, res) => {
     delete safeUser.pin;
     safeUser.has_pin = userHasPin;
 
-    // Se o usuário NÃO tem PIN cadastrado e fez o login normal, pergunta se quer definir
-    if (!userHasPin && (pin === undefined || pin === null)) {
+    // Se o usuário NÃO tem PIN cadastrado e NUNCA foi perguntado antes (primeiro login):
+    const isFirstTimePrompt = !userHasPin && !row.pin_prompted && (pin === undefined || pin === null);
+
+    if (isFirstTimePrompt) {
       return res.json({
         askInitialPin: true,
         user: safeUser
@@ -186,13 +188,22 @@ app.post('/login', (req, res) => {
 
 // Definir ou Alterar PIN do próprio usuário
 app.post('/users/:id/pin', (req, res) => {
-  if (!verifyUserOwnership(req, res, req.params.id)) return;
-  const { pin } = req.body; // string de dígitos ou null para remover
-  const cleanPin = pin && String(pin).trim() ? String(pin).trim() : null;
+  verifyUserOwnership(req, res, req.params.id, () => {
+    const { pin } = req.body; // string de dígitos ou null para remover
+    const cleanPin = pin && String(pin).trim() ? String(pin).trim() : null;
 
-  db.run('UPDATE users SET pin = ? WHERE id = ?', [cleanPin, req.params.id], function(err) {
-    if (err) return res.status(500).json({ error: 'Erro ao salvar PIN' });
-    res.json({ success: true, has_pin: !!cleanPin });
+    db.run('UPDATE users SET pin = ?, pin_prompted = 1 WHERE id = ?', [cleanPin, req.params.id], function(err) {
+      if (err) return res.status(500).json({ error: 'Erro ao salvar PIN' });
+      res.json({ success: true, has_pin: !!cleanPin });
+    });
+  });
+});
+
+// Usuário optou por entrar sem PIN no primeiro login (não perguntar mais)
+app.post('/users/:id/skip-pin', (req, res) => {
+  db.run('UPDATE users SET pin_prompted = 1 WHERE id = ?', [req.params.id], function(err) {
+    if (err) return res.status(500).json({ error: 'Erro ao registrar preferência' });
+    res.json({ success: true });
   });
 });
 
@@ -205,7 +216,7 @@ app.post('/users/:id/reset-pin', (req, res) => {
       return res.status(403).json({ error: 'Apenas administradores podem resetar o PIN de outros jogadores.' });
     }
 
-    db.run('UPDATE users SET pin = NULL WHERE id = ?', [req.params.id], function(err2) {
+    db.run('UPDATE users SET pin = NULL, pin_prompted = 0 WHERE id = ?', [req.params.id], function(err2) {
       if (err2) return res.status(500).json({ error: 'Erro ao resetar PIN' });
       res.json({ success: true, message: 'PIN resetado com sucesso!' });
     });
