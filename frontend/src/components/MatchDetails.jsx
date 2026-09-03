@@ -1658,24 +1658,24 @@ export default function MatchDetails() {
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '140px', maxHeight: '240px', overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {draftAnim.teamA.map((p) => (
                         <motion.div
                           key={p.id}
                           initial={{ scale: 0.6, y: -10, opacity: 0 }}
                           animate={{ scale: 1, y: 0, opacity: 1 }}
                           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(0, 245, 155, 0.08)', borderRadius: '12px', border: '1px solid rgba(0, 245, 155, 0.2)' }}
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 12px', background: 'rgba(0, 245, 155, 0.08)', borderRadius: '10px', border: '1px solid rgba(0, 245, 155, 0.2)' }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 6px', borderRadius: '6px', background: 'rgba(0, 245, 155, 0.2)', color: '#00f59b' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.70rem', fontWeight: 800, padding: '2px 6px', borderRadius: '5px', background: 'rgba(0, 245, 155, 0.2)', color: '#00f59b' }}>
                               {p.position || 'MEI'}
                             </span>
-                            <span style={{ fontWeight: 800, fontSize: '0.88rem', color: '#fff' }}>
+                            <span style={{ fontWeight: 800, fontSize: '0.86rem', color: '#fff' }}>
                               {getPrimaryName(p)}
                             </span>
                           </div>
-                          <span style={{ fontWeight: 900, fontSize: '0.92rem', color: '#fbbf24' }}>
+                          <span style={{ fontWeight: 900, fontSize: '0.90rem', color: '#fbbf24' }}>
                             {calcOVR(p)}
                           </span>
                         </motion.div>
@@ -1694,24 +1694,24 @@ export default function MatchDetails() {
                       </span>
                     </div>
 
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', minHeight: '140px', maxHeight: '240px', overflowY: 'auto' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
                       {draftAnim.teamB.map((p) => (
                         <motion.div
                           key={p.id}
                           initial={{ scale: 0.6, y: -10, opacity: 0 }}
                           animate={{ scale: 1, y: 0, opacity: 1 }}
                           transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '12px', border: '1px solid rgba(255, 255, 255, 0.15)' }}
+                          style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 12px', background: 'rgba(255, 255, 255, 0.05)', borderRadius: '10px', border: '1px solid rgba(255, 255, 255, 0.15)' }}
                         >
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <span style={{ fontSize: '0.72rem', fontWeight: 800, padding: '2px 6px', borderRadius: '6px', background: 'rgba(255, 255, 255, 0.15)', color: '#fff' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <span style={{ fontSize: '0.70rem', fontWeight: 800, padding: '2px 6px', borderRadius: '5px', background: 'rgba(255, 255, 255, 0.15)', color: '#fff' }}>
                               {p.position || 'MEI'}
                             </span>
-                            <span style={{ fontWeight: 800, fontSize: '0.9rem', color: '#fff' }}>
+                            <span style={{ fontWeight: 800, fontSize: '0.86rem', color: '#fff' }}>
                               {getPrimaryName(p)}
                             </span>
                           </div>
-                          <span style={{ fontWeight: 900, fontSize: '0.95rem', color: '#fbbf24' }}>
+                          <span style={{ fontWeight: 900, fontSize: '0.90rem', color: '#fbbf24' }}>
                             {calcOVR(p)}
                           </span>
                         </motion.div>

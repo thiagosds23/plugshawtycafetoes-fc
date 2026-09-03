@@ -219,51 +219,67 @@ app.get('/users', (req, res) => {
   });
 });
 
-// Validação estrita de titularidade: cada usuário só pode alterar o seu próprio perfil/foto
-function verifyUserOwnership(req, res, targetPlayerId) {
+// Validação estrita de titularidade: Admin pode alterar qualquer jogador; demais atletas alteram apenas a si mesmos
+function verifyUserOwnership(req, res, targetPlayerId, callback) {
   const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
-  if (!requesterId || String(requesterId) !== String(targetPlayerId)) {
-    res.status(403).json({ error: 'Acesso negado: Você só tem permissão para editar o seu próprio jogador.' });
-    return false;
+  if (!requesterId) {
+    res.status(403).json({ error: 'Acesso negado: Usuário não identificado.' });
+    return;
   }
-  return true;
+
+  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+    if (err || !user) {
+      res.status(403).json({ error: 'Acesso negado: Usuário solicitante não encontrado.' });
+      return;
+    }
+
+    const isAdmin = user.id === 1 || 
+      (user.username && user.username.toLowerCase().includes('thiago')) || 
+      (user.nickname && user.nickname.toLowerCase().includes('fela'));
+
+    if (isAdmin || String(requesterId) === String(targetPlayerId)) {
+      return callback(user, isAdmin);
+    }
+
+    res.status(403).json({ error: 'Acesso negado: Apenas o Administrador pode editar outros jogadores.' });
+  });
 }
 
 app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original_photo' }]), (req, res) => {
-  if (!verifyUserOwnership(req, res, req.params.id)) return;
+  verifyUserOwnership(req, res, req.params.id, () => {
+    const photoFile = req.files && req.files['photo'] && req.files['photo'][0];
+    const origFile = req.files && req.files['original_photo'] && req.files['original_photo'][0];
 
-  const photoFile = req.files && req.files['photo'] && req.files['photo'][0];
-  const origFile = req.files && req.files['original_photo'] && req.files['original_photo'][0];
+    if (!photoFile) return res.status(400).json({ error: 'Nenhuma foto enviada' });
 
-  if (!photoFile) return res.status(400).json({ error: 'Nenhuma foto enviada' });
-
-  const photoUrl = '/uploads/' + photoFile.filename;
-  if (origFile) {
-    const origUrl = '/uploads/' + origFile.filename;
-    db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
-      res.json({ photoUrl, origUrl });
-    });
-  } else {
-    db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
-      res.json({ photoUrl });
-    });
-  }
+    const photoUrl = '/uploads/' + photoFile.filename;
+    if (origFile) {
+      const origUrl = '/uploads/' + origFile.filename;
+      db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
+        res.json({ photoUrl, origUrl });
+      });
+    } else {
+      db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
+        res.json({ photoUrl });
+      });
+    }
+  });
 });
 
 app.delete('/users/:id/photo', (req, res) => {
-  if (!verifyUserOwnership(req, res, req.params.id)) return;
-
-  db.run('UPDATE users SET photo = NULL, original_photo = NULL WHERE id = ?', [req.params.id], (err) => {
-    res.json({ success: true });
+  verifyUserOwnership(req, res, req.params.id, () => {
+    db.run('UPDATE users SET photo = NULL, original_photo = NULL WHERE id = ?', [req.params.id], (err) => {
+      res.json({ success: true });
+    });
   });
 });
 
 app.put('/users/:id/position', (req, res) => {
-  if (!verifyUserOwnership(req, res, req.params.id)) return;
-
-  const { position } = req.body;
-  db.run('UPDATE users SET position = ? WHERE id = ?', [position, req.params.id], (err) => {
-    res.json({ success: true });
+  verifyUserOwnership(req, res, req.params.id, () => {
+    const { position } = req.body;
+    db.run('UPDATE users SET position = ? WHERE id = ?', [position, req.params.id], (err) => {
+      res.json({ success: true });
+    });
   });
 });
 
@@ -279,28 +295,28 @@ function formatHeight(val) {
 }
 
 app.put('/users/:id/profile', (req, res) => {
-  if (!verifyUserOwnership(req, res, req.params.id)) return;
-
-  const { username, nickname, position, height, weight, phone, email } = req.body;
-  const formattedHeight = formatHeight(height);
-  
-  if (username && username.trim()) {
-    db.run(`UPDATE users SET username = ?, nickname = ?, position = ?, height = ?, weight = ?,
-            phone = ?, email = ?
-            WHERE id = ?`, 
-      [username.trim(), nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
-        res.json({ success: true, height: formattedHeight });
-    });
-  } else {
-    db.run(`UPDATE users SET nickname = ?, position = ?, height = ?, weight = ?,
-            phone = ?, email = ?
-            WHERE id = ?`, 
-      [nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
-        if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
-        res.json({ success: true, height: formattedHeight });
-    });
-  }
+  verifyUserOwnership(req, res, req.params.id, () => {
+    const { username, nickname, position, height, weight, phone, email } = req.body;
+    const formattedHeight = formatHeight(height);
+    
+    if (username && username.trim()) {
+      db.run(`UPDATE users SET username = ?, nickname = ?, position = ?, height = ?, weight = ?,
+              phone = ?, email = ?
+              WHERE id = ?`, 
+        [username.trim(), nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
+          if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
+          res.json({ success: true, height: formattedHeight });
+      });
+    } else {
+      db.run(`UPDATE users SET nickname = ?, position = ?, height = ?, weight = ?,
+              phone = ?, email = ?
+              WHERE id = ?`, 
+        [nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
+          if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
+          res.json({ success: true, height: formattedHeight });
+      });
+    }
+  });
 });
 
 // Import evaluations from Excel (.xlsx) spreadsheet
@@ -507,14 +523,34 @@ app.post('/users/import-ratings-excel', docUpload.single('file'), (req, res) => 
 });
 
 app.delete('/users/:id', (req, res) => {
-  const id = req.params.id;
-  db.serialize(() => {
-    db.run('DELETE FROM team_players WHERE user_id = ?', [id]);
-    db.run('DELETE FROM goals WHERE user_id = ?', [id]);
-    db.run('DELETE FROM assists WHERE user_id = ?', [id]);
-    db.run('DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', [id, id]);
-    db.run('DELETE FROM users WHERE id = ?', [id], (err) => {
-      res.json({ success: true });
+  const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
+  if (!requesterId) {
+    return res.status(403).json({ error: 'Acesso negado: Usuário não identificado.' });
+  }
+
+  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+    if (err || !user) {
+      return res.status(403).json({ error: 'Acesso negado: Usuário solicitante não encontrado.' });
+    }
+
+    const isAdmin = user.id === 1 || 
+      (user.username && user.username.toLowerCase().includes('thiago')) || 
+      (user.nickname && user.nickname.toLowerCase().includes('fela'));
+
+    if (!isAdmin) {
+      return res.status(403).json({ error: 'Acesso negado: Apenas o Administrador pode excluir jogadores do clube.' });
+    }
+
+    const id = req.params.id;
+    db.serialize(() => {
+      db.run('DELETE FROM team_players WHERE user_id = ?', [id]);
+      db.run('DELETE FROM goals WHERE user_id = ?', [id]);
+      db.run('DELETE FROM assists WHERE user_id = ?', [id]);
+      db.run('DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', [id, id]);
+      db.run('DELETE FROM users WHERE id = ?', [id], (err2) => {
+        if (err2) return res.status(500).json({ error: err2.message });
+        res.json({ success: true, message: 'Jogador excluído com sucesso!' });
+      });
     });
   });
 });

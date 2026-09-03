@@ -352,7 +352,7 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
 }
 
 // Subcomponent: Ultra Modern Luxury Edit Profile Modal
-function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDeletePlayer, onOpenAdjustPhoto, onSelectNewPhoto, onDeletePhoto }) {
+function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDeletePlayer, onOpenAdjustPhoto, onSelectNewPhoto, onDeletePhoto, isAdmin }) {
   const overall = calcOVR({ ...player, position: editForm.position });
   
   const [newNickInput, setNewNickInput] = useState('');
@@ -764,9 +764,11 @@ function EditPlayerModal({ player, editForm, setEditForm, onClose, onSave, onDel
             <button className="btn btn-secondary" onClick={onClose}>
               <X size={16} /> Cancelar
             </button>
-            <button type="button" onClick={onDeletePlayer} className="btn btn-secondary" style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)' }}>
-              <Trash2 size={16} /> Excluir Jogador
-            </button>
+            {isAdmin && (
+              <button type="button" onClick={onDeletePlayer} className="btn btn-secondary" style={{ color: '#ef4444', borderColor: 'rgba(239,68,68,0.4)', background: 'rgba(239,68,68,0.08)' }}>
+                <Trash2 size={16} /> Excluir Jogador
+              </button>
+            )}
           </div>
         </div>
 
@@ -956,7 +958,7 @@ export default function Players() {
   };
 
   const startEditing = (player) => {
-    if (!isMyPlayer(player)) {
+    if (!isMyPlayer(player) && !isAdmin) {
       alert('Você só tem permissão para editar o seu próprio jogador.');
       return;
     }
@@ -980,7 +982,7 @@ export default function Players() {
 
   const saveProfile = async (id) => {
     const targetPlayer = players.find(p => p.id === id);
-    if (!isMyPlayer(targetPlayer)) {
+    if (!isMyPlayer(targetPlayer) && !isAdmin) {
       alert('Você só tem permissão para editar o seu próprio jogador.');
       return;
     }
@@ -1019,8 +1021,20 @@ export default function Players() {
   };
 
   const deletePlayer = async (id) => {
+    if (!isAdmin) {
+      alert('Apenas o Administrador pode excluir jogadores.');
+      return;
+    }
     if (window.confirm('Tem certeza que deseja excluir este jogador? Esta ação não pode ser desfeita.')) {
-      await fetch(`${API_URL}/users/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/users/${id}`, { 
+        method: 'DELETE',
+        headers: { 'x-user-id': user?.id }
+      });
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.error || 'Erro ao excluir jogador.');
+        return;
+      }
       setEditingId(null);
       loadPlayers();
     }
@@ -1160,24 +1174,38 @@ export default function Players() {
             </button>
           )}
 
-          {/* Botão de Admin para Resetar PIN de outros jogadores */}
+          {/* Botão de Admin para Editar ou Resetar PIN de outros jogadores */}
           {!isEditable && isAdmin && (
-            <div style={{ width: '310px' }}>
+            <div style={{ width: '310px', display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <button 
+                className="btn" 
+                style={{ 
+                  width: '100%', 
+                  padding: '9px 14px', 
+                  fontSize: '0.82rem', 
+                  fontWeight: '800', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  gap: '6px',
+                  borderRadius: '10px'
+                }}
+                onClick={() => startEditing(player)}
+              >
+                <Edit2 size={15} /> Editar Jogador (Admin)
+              </button>
+
               {player.has_pin ? (
                 <button 
                   type="button" 
                   className="btn btn-secondary" 
-                  style={{ width: '100%', padding: '8px 12px', fontSize: '0.74rem', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
+                  style={{ width: '100%', padding: '7px 12px', fontSize: '0.74rem', borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}
                   onClick={() => handleAdminResetPin(player)}
                   title="Resetar PIN deste atleta caso ele tenha esquecido"
                 >
                   <KeyRound size={14} color="var(--primary)" /> Resetar PIN do Atleta
                 </button>
-              ) : (
-                <div style={{ textAlign: 'center', fontSize: '0.70rem', color: 'var(--text-muted)' }}>
-                  🔓 Sem PIN definido
-                </div>
-              )}
+              ) : null}
             </div>
           )}
         </div>
@@ -1201,28 +1229,30 @@ export default function Players() {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {/* Import Spreadsheet Button — Exclusivo para Desktop/PC */}
-            <label 
-              className="btn btn-secondary desktop-only" 
-              style={{ width: 'auto', padding: '10px 18px', cursor: 'pointer', margin: 0, alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
-              title="Importar notas da planilha Excel (.xlsx)"
-            >
-              <FileSpreadsheet size={16} color="var(--primary)" /> 
-              {isImporting ? 'Importando...' : '📥 Importar Planilha'}
-              <input 
-                type="file" 
-                accept=".xlsx,.xls,.csv" 
-                style={{ display: 'none' }} 
-                onChange={handleImportExcel}
-                disabled={isImporting}
-              />
-            </label>
+          {isAdmin && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              {/* Import Spreadsheet Button — Exclusivo para Desktop/PC */}
+              <label 
+                className="btn btn-secondary desktop-only" 
+                style={{ width: 'auto', padding: '10px 18px', cursor: 'pointer', margin: 0, alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
+                title="Importar notas da planilha Excel (.xlsx)"
+              >
+                <FileSpreadsheet size={16} color="var(--primary)" /> 
+                {isImporting ? 'Importando...' : '📥 Importar Planilha'}
+                <input 
+                  type="file" 
+                  accept=".xlsx,.xls,.csv" 
+                  style={{ display: 'none' }} 
+                  onChange={handleImportExcel}
+                  disabled={isImporting}
+                />
+              </label>
 
-            <button className="btn" style={{ width: 'auto', padding: '10px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
-              <Plus size={16} /> Novo Jogador
-            </button>
-          </div>
+              <button className="btn" style={{ width: 'auto', padding: '10px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
+                <Plus size={16} /> Novo Jogador
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1393,6 +1423,7 @@ export default function Players() {
           onOpenAdjustPhoto={() => openAdjustExistingPhoto(editingPlayer)}
           onSelectNewPhoto={(e) => handlePhotoSelect(editingPlayer, e)}
           onDeletePhoto={() => removePlayerPhoto(editingPlayer.id)}
+          isAdmin={isAdmin}
         />
       )}
 
