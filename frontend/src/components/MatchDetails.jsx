@@ -2030,34 +2030,36 @@ export default function MatchDetails() {
 
       {/* Vestiário (Avaliação da Partida) - Full Scrollable View for All Players */}
       {showRating && (
-        <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card mt-4" style={{ borderColor: '#fbbf24', padding: '28px' }}>
-          <h3 className="font-bold text-2xl mb-1 text-center text-yellow-400">Vestiário (Avaliação da Partida)</h3>
-          <p className="text-center text-muted text-sm mb-6">
-            Dê a nota para o desempenho de cada jogador na partida de hoje! ({Object.keys(ratings).length}/{allMatchPlayers.length} avaliados)
-          </p>
+        <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card mt-4" style={{ borderColor: '#fbbf24', padding: '16px' }}>
+          <div style={{ padding: '0 8px' }}>
+            <h3 className="font-bold text-xl md:text-2xl mb-1 text-center text-yellow-400">Vestiário (Avaliação da Partida)</h3>
+            <p className="text-center text-muted text-xs md:text-sm mb-6">
+              Dê a nota para o desempenho de cada jogador na partida de hoje! ({Object.keys(ratings).length}/{allMatchPlayers.length} avaliados)
+            </p>
+          </div>
           
           {/* Scrollable Player Evaluation Grid */}
-          <div style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: '6px', marginBottom: '24px' }}>
+          <div style={{ maxHeight: '65vh', overflowY: 'auto', paddingRight: '4px', marginBottom: '24px' }}>
             {match.teams.map((team, tIdx) => (
               <div key={team.id} className="mb-6">
                 <div style={{ fontWeight: 'bold', fontSize: '0.9rem', color: tIdx === 0 ? '#00f59b' : '#ffffff', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Shield size={16} /> {team.name}
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '14px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
                   {team.players.map(p => (
-                    <div key={p.id} className="flex justify-between items-center p-3.5" style={{ background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border)' }}>
-                      <div>
-                        <span className="font-bold text-base text-main">{getPrimaryName(p)}</span>
+                    <div key={p.id} className="flex justify-between items-center p-3" style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '12px', border: '1px solid var(--border)', flexWrap: 'wrap', gap: '8px' }}>
+                      <div style={{ flex: '1 1 auto', minWidth: '100px' }}>
+                        <span className="font-bold text-main" style={{ fontSize: '0.95rem' }}>{getPrimaryName(p)}</span>
                         {user && user.id === p.id && <span style={{ fontSize: '10px', color: 'var(--primary)', marginLeft: '6px' }}>(Você)</span>}
                       </div>
 
-                      <div className="flex gap-1">
+                      <div className="flex gap-1" style={{ flexShrink: 0 }}>
                         {[1, 2, 3, 4, 5].map(star => (
                           <Star 
                             key={star} 
-                            size={24} 
-                            color={ratings[p.id] >= star ? '#fbbf24' : 'var(--border)'} 
+                            size={22} 
+                            color={ratings[p.id] >= star ? '#fbbf24' : 'rgba(255,255,255,0.1)'} 
                             fill={ratings[p.id] >= star ? '#fbbf24' : 'none'}
                             cursor="pointer"
                             onClick={() => setRatings({ ...ratings, [p.id]: star })}
@@ -2073,11 +2075,11 @@ export default function MatchDetails() {
             ))}
           </div>
           
-          <div className="flex gap-4">
-            <button className="btn py-4 text-lg font-bold" onClick={submitRatings}>
-              <CheckCircle2 size={20} /> Confirmar Notas & Finalizar Partida
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+            <button className="btn py-3 text-sm md:text-lg font-bold" style={{ flex: '1 1 200px' }} onClick={submitRatings}>
+              <CheckCircle2 size={18} /> Confirmar & Finalizar Partida
             </button>
-            <button className="btn btn-secondary py-4 text-lg" onClick={() => setShowRating(false)}>Voltar</button>
+            <button className="btn btn-secondary py-3 text-sm md:text-lg" style={{ flex: '1 1 100px' }} onClick={() => setShowRating(false)}>Voltar</button>
           </div>
         </motion.div>
       )}

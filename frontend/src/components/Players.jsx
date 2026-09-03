@@ -1916,14 +1916,13 @@ export default function Players() {
 
             {isAdmin && (
               <>
-                {/* Import Spreadsheet Button — Exclusivo para Desktop/PC */}
                 <label 
                   className="btn btn-secondary desktop-only" 
-                  style={{ width: 'auto', padding: '10px 18px', cursor: 'pointer', margin: 0, alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
+                  style={{ width: 'auto', padding: '10px', cursor: 'pointer', margin: 0, alignItems: 'center', justifyContent: 'center', display: 'flex', gap: '8px' }}
                   title="Importar notas da planilha Excel (.xlsx)"
                 >
                   <FileSpreadsheet size={16} color="var(--primary)" /> 
-                  {isImporting ? 'Importando...' : '📥 Importar Planilha'}
+                  {isImporting && <Loader2 size={16} className="animate-spin" color="var(--primary)" />}
                   <input 
                     type="file" 
                     accept=".xlsx,.xls,.csv" 
