@@ -7,6 +7,7 @@ import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
 import { calcOVR } from '../utils/ovr';
 import { API_URL, formatPhotoUrl } from '../config';
+import { waitForImages } from '../utils/exportImage';
 
 // Web Audio API Sound Synthesizer (Zero-latency native gaming sounds)
 function playDraftSound(pitch = 440) {
@@ -580,8 +581,10 @@ export default function MatchDetails() {
       const width = node.offsetWidth;
       const height = node.offsetHeight;
 
+      await waitForImages(node);
+
       const dataUrl = await toPng(node, { 
-        cacheBust: true, 
+        cacheBust: false, 
         quality: 1,
         pixelRatio: 2, // Resolução Retina 2x ultra nítida para WhatsApp e celular
         backgroundColor: '#08090e',

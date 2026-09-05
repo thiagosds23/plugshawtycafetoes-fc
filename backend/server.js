@@ -28,9 +28,11 @@ if (fs.existsSync(frontendDist)) {
     if (req.method === 'GET') {
       const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
       const hasExt = path.extname(req.path) !== '';
-      const isUpload = req.path.startsWith('/uploads');
+      // Fotos de atleta nao tem extensao no caminho: sem esta excecao o
+      // interceptador devolveria o index.html no lugar da imagem
+      const isAsset = req.path.startsWith('/uploads') || (req.path.startsWith('/users/') && req.path.endsWith('/photo'));
 
-      if (acceptsHtml && !hasExt && !isUpload) {
+      if (acceptsHtml && !hasExt && !isAsset) {
         return res.sendFile(path.join(frontendDist, 'index.html'));
       }
     }
@@ -85,6 +87,50 @@ const docUpload = multer({
     }
   }
 });
+
+// Versoes em Promise do driver (que so expoe callbacks), para conseguir disparar
+// consultas independentes em paralelo em vez de uma dentro do callback da outra.
+const dbAll = (sql, args = []) => new Promise((resolve, reject) =>
+  db.all(sql, args, (err, rows) => err ? reject(err) : resolve(rows || [])));
+const dbGet = (sql, args = []) => new Promise((resolve, reject) =>
+  db.get(sql, args, (err, row) => err ? reject(err) : resolve(row)));
+
+// Colunas de um atleta que sempre podem trafegar sem custo.
+const USER_COLS = 'id, username, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email';
+
+// As fotos ficam guardadas como data URI Base64 (ate 400KB cada). Trazer isso em
+// toda listagem colocava ~7MB na memoria do servidor por request e era o que
+// estourava o limite do Render. Aqui o banco devolve apenas o cabecalho, o tamanho
+// e o final da string: o suficiente para montar uma URL versionada, sem carregar a
+// imagem. O navegador entao busca cada foto uma unica vez e cacheia.
+function photoCols(prefix) {
+  const t = prefix ? prefix + '.' : '';
+  return `SUBSTR(${t}photo, 1, 96) AS photo_head, LENGTH(${t}photo) AS photo_len, SUBSTR(${t}photo, -12) AS photo_tail, ` +
+         `SUBSTR(${t}original_photo, 1, 96) AS orig_head, LENGTH(${t}original_photo) AS orig_len, SUBSTR(${t}original_photo, -12) AS orig_tail`;
+}
+
+// Monta a URL curta da foto. A versao vem do proprio conteudo (tamanho + ultimos
+// caracteres), entao trocar a foto muda a URL e derruba o cache do navegador.
+function buildPhotoRef(userId, head, len, tail, isOriginal) {
+  if (!len || !head) return null;
+  const h = String(head);
+  // Fotos antigas foram gravadas como caminho (/uploads/arquivo.png) e cabem
+  // inteiras nos 96 primeiros caracteres: essas seguem sendo servidas direto.
+  if (!h.startsWith('data:')) return h;
+  const version = `${len}${String(tail || '').replace(/[^a-zA-Z0-9]/g, '')}`;
+  return `/users/${userId}/photo?v=${version}${isOriginal ? '&original=1' : ''}`;
+}
+
+// Troca os campos crus de foto da linha pelas URLs curtas
+function withPhotoUrls(row, userId) {
+  if (!row) return row;
+  const id = userId !== undefined ? userId : row.id;
+  const out = { ...row };
+  out.photo = buildPhotoRef(id, row.photo_head, row.photo_len, row.photo_tail, false);
+  out.original_photo = buildPhotoRef(id, row.orig_head, row.orig_len, row.orig_tail, true);
+  ['photo_head', 'photo_len', 'photo_tail', 'orig_head', 'orig_len', 'orig_tail'].forEach(k => delete out[k]);
+  return out;
+}
 
 const INVITE_CODE = 'JOGO2026';
 
@@ -252,9 +298,9 @@ app.post('/users', (req, res) => {
   if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
 
   // Check if athlete already exists by username or nickname
-  db.get('SELECT * FROM users WHERE LOWER(username) = LOWER(?) OR (nickname IS NOT NULL AND LOWER(nickname) = LOWER(?))', [name, nick], (err, existing) => {
+  db.get(`SELECT ${USER_COLS}, ${photoCols()} FROM users WHERE LOWER(username) = LOWER(?) OR (nickname IS NOT NULL AND LOWER(nickname) = LOWER(?))`, [name, nick], (err, existing) => {
     if (existing) {
-      return res.json(existing);
+      return res.json(withPhotoUrls(existing));
     }
     db.run(
       'INSERT INTO users (username, nickname, position, pace, shooting, passing, dribbling, defending, physical) VALUES (?, ?, ?, 50, 50, 50, 50, 50, 50)',
@@ -274,7 +320,7 @@ app.post('/login', (req, res) => {
   const queryTerm = username.trim();
 
   db.get(`
-    SELECT * FROM users 
+    SELECT ${USER_COLS}, pin, pin_prompted, ${photoCols()} FROM users 
     WHERE LOWER(username) = LOWER(?) 
        OR LOWER(email) = LOWER(?) 
        OR phone = ? 
@@ -285,6 +331,7 @@ app.post('/login', (req, res) => {
 
     // Se o usuário tem PIN cadastrado
     const userHasPin = !!(row.pin && String(row.pin).trim() !== '');
+    const photoRef = buildPhotoRef(row.id, row.photo_head, row.photo_len, row.photo_tail, false);
 
     if (userHasPin) {
       // Se não enviou o PIN na requisição, pede o PIN
@@ -294,7 +341,7 @@ app.post('/login', (req, res) => {
           id: row.id, 
           username: row.username, 
           nickname: row.nickname,
-          photo: row.photo 
+          photo: photoRef 
         });
       }
       // Se enviou o PIN, valida
@@ -303,8 +350,9 @@ app.post('/login', (req, res) => {
       }
     }
 
-    const safeUser = { ...row };
+    const safeUser = withPhotoUrls(row);
     delete safeUser.pin;
+    delete safeUser.pin_prompted;
     safeUser.has_pin = userHasPin;
 
     // Se o usuário NÃO tem PIN cadastrado e NUNCA foi perguntado antes (primeiro login):
@@ -348,7 +396,7 @@ app.post('/users/:id/skip-pin', (req, res) => {
 // Resetar PIN de um usuário (Apenas Administrador / Thiago)
 app.post('/users/:id/reset-pin', (req, res) => {
   const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
-  db.get('SELECT * FROM users WHERE id = ?', [requesterId], (err, adminUser) => {
+  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, adminUser) => {
     const isAdmin = adminUser && (adminUser.id === 1 || adminUser.username.toLowerCase().includes('thiago') || adminUser.username.toLowerCase().includes('fela'));
     if (!isAdmin && String(requesterId) !== String(req.params.id)) {
       return res.status(403).json({ error: 'Apenas administradores podem resetar o PIN de outros jogadores.' });
@@ -364,8 +412,47 @@ app.post('/users/:id/reset-pin', (req, res) => {
 
 // -- USERS --
 app.get('/users', (req, res) => {
-  db.all("SELECT id, username, photo, original_photo, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin FROM users", [], (err, rows) => {
-    res.json(rows || []);
+  db.all(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json((rows || []).map(r => withPhotoUrls(r)));
+  });
+});
+
+// Dados de um unico atleta. Usado pela sincronizacao do app na abertura, que antes
+// baixava a lista inteira (com todas as fotos) so para reler o proprio usuario.
+app.get('/users/:id', (req, res) => {
+  db.get(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users WHERE id = ?`, [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'Atleta não encontrado' });
+    res.json(withPhotoUrls(row));
+  });
+});
+
+// Serve a foto do atleta como imagem binaria. Como a URL carrega a versao do
+// conteudo, a resposta pode ser cacheada de forma agressiva pelo navegador.
+app.get('/users/:id/photo', (req, res) => {
+  const column = req.query.original === '1' ? 'original_photo' : 'photo';
+  db.get(`SELECT ${column} AS img FROM users WHERE id = ?`, [req.params.id], (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row || !row.img) return res.status(404).json({ error: 'Foto não encontrada' });
+
+    const img = String(row.img);
+    if (!img.startsWith('data:')) return res.redirect(302, img);
+
+    const comma = img.indexOf(',');
+    if (comma === -1) return res.status(404).json({ error: 'Foto inválida' });
+    const mime = img.slice(5, comma).split(';')[0] || 'image/png';
+    const buffer = Buffer.from(img.slice(comma + 1), 'base64');
+
+    res.set({
+      'Content-Type': mime,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+      'Access-Control-Allow-Origin': '*',
+      'ETag': `"${img.length}"`
+    });
+    // res.send (e nao res.end) deixa o Express responder 304 quando o navegador
+    // revalida a imagem com If-None-Match
+    res.send(buffer);
   });
 });
 
@@ -418,17 +505,22 @@ app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original
       try { fs.unlinkSync(photoFile.path); } catch (e) {}
       if (origFile) { try { fs.unlinkSync(origFile.path); } catch (e) {} }
 
+      // O cliente recebe a URL curta e versionada, nunca o data URI inteiro
+      const ref = (dataUri, isOriginal) => dataUri
+        ? buildPhotoRef(req.params.id, dataUri.slice(0, 96), dataUri.length, dataUri.slice(-12), isOriginal)
+        : null;
+
       if (origUrl) {
         db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
           if (err) return res.status(500).json({ error: err.message });
           logAudit(user.id, user.username, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
-          res.json({ photoUrl, origUrl });
+          res.json({ photoUrl: ref(photoUrl, false), origUrl: ref(origUrl, true) });
         });
       } else {
         db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
           if (err) return res.status(500).json({ error: err.message });
           logAudit(user.id, user.username, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
-          res.json({ photoUrl });
+          res.json({ photoUrl: ref(photoUrl, false) });
         });
       }
     } catch (err) {
@@ -822,87 +914,93 @@ app.get('/matches', (req, res) => {
   });
 });
 
-app.get('/matches/:id', (req, res) => {
+app.get('/matches/:id', async (req, res) => {
   const matchId = req.params.id;
-  db.get('SELECT * FROM matches WHERE id = ?', [matchId], (err, match) => {
-    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
-    
-    db.all(`
-      SELECT t.id as team_id, t.name as team_name, t.manual_score, u.id as user_id, u.username, u.nickname, u.photo, u.original_photo, u.position,
-             u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical
-      FROM teams t
-      LEFT JOIN team_players tp ON t.id = tp.team_id
-      LEFT JOIN users u ON tp.user_id = u.id
-      WHERE t.match_id = ?
-    `, [matchId], (err, teamRows) => {
-      
-      const teams = {};
-      (teamRows || []).forEach(row => {
-        if (!teams[row.team_id]) {
-          teams[row.team_id] = { id: row.team_id, name: row.team_name, manual_score: row.manual_score, players: [] };
-        }
-        if (row.user_id) {
-          teams[row.team_id].players.push({
-            id: row.user_id,
-            username: row.username,
-            nickname: row.nickname,
-            photo: row.photo,
-            original_photo: row.original_photo,
-            position: row.position,
-            pace: row.pace,
-            shooting: row.shooting,
-            passing: row.passing,
-            dribbling: row.dribbling,
-            defending: row.defending,
-            physical: row.physical
-          });
-        }
-      });
 
-      db.all(`
+  try {
+    const match = await dbGet('SELECT * FROM matches WHERE id = ?', [matchId]);
+    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
+
+    // As quatro consultas abaixo nao dependem umas das outras. Antes cada uma
+    // esperava o callback da anterior, somando quatro idas e voltas ate o banco
+    // na nuvem; em paralelo o custo passa a ser o da consulta mais lenta.
+    const [teamRows, goalRows, assistRows, ratingRows] = await Promise.all([
+      dbAll(`
+        SELECT t.id as team_id, t.name as team_name, t.manual_score, u.id as user_id, u.username, u.nickname, u.position,
+               u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical, ${photoCols('u')}
+        FROM teams t
+        LEFT JOIN team_players tp ON t.id = tp.team_id
+        LEFT JOIN users u ON tp.user_id = u.id
+        WHERE t.match_id = ?
+      `, [matchId]),
+
+      dbAll(`
         SELECT g.id, g.user_id, u.username, u.nickname, tp.team_id
         FROM goals g
         JOIN users u ON g.user_id = u.id
         LEFT JOIN team_players tp ON (tp.user_id = u.id AND tp.team_id IN (SELECT id FROM teams WHERE match_id = ?))
         WHERE g.match_id = ?
         ORDER BY g.id ASC
-      `, [matchId, matchId], (err, goalRows) => {
+      `, [matchId, matchId]),
 
-        db.all(`
-          SELECT a.id, a.user_id, u.username, u.nickname, tp.team_id
-          FROM assists a
-          JOIN users u ON a.user_id = u.id
-          LEFT JOIN team_players tp ON (tp.user_id = u.id AND tp.team_id IN (SELECT id FROM teams WHERE match_id = ?))
-          WHERE a.match_id = ?
-          ORDER BY a.id ASC
-        `, [matchId, matchId], (err, assistRows) => {
+      dbAll(`
+        SELECT a.id, a.user_id, u.username, u.nickname, tp.team_id
+        FROM assists a
+        JOIN users u ON a.user_id = u.id
+        LEFT JOIN team_players tp ON (tp.user_id = u.id AND tp.team_id IN (SELECT id FROM teams WHERE match_id = ?))
+        WHERE a.match_id = ?
+        ORDER BY a.id ASC
+      `, [matchId, matchId]),
 
-          db.all(`
-            SELECT r.rated_id, r.score, u.username, u.nickname
-            FROM ratings r
-            JOIN users u ON r.rated_id = u.id
-            WHERE r.match_id = ?
-          `, [matchId], (err, ratingRows) => {
+      dbAll(`
+        SELECT r.rated_id, r.score, u.username, u.nickname
+        FROM ratings r
+        JOIN users u ON r.rated_id = u.id
+        WHERE r.match_id = ?
+      `, [matchId])
+    ]);
 
-            match.teams = Object.values(teams);
-            match.goals = goalRows || [];
-            match.assists = assistRows || [];
-            match.ratings = ratingRows || [];
-
-            match.teams.forEach(t => {
-              if (t.manual_score !== null && t.manual_score !== undefined) {
-                t.score = t.manual_score;
-              } else {
-                t.score = (match.goals || []).filter(g => g.team_id === t.id).length;
-              }
-            });
-
-            res.json(match);
-          });
+    const teams = {};
+    teamRows.forEach(row => {
+      if (!teams[row.team_id]) {
+        teams[row.team_id] = { id: row.team_id, name: row.team_name, manual_score: row.manual_score, players: [] };
+      }
+      if (row.user_id) {
+        teams[row.team_id].players.push({
+          id: row.user_id,
+          username: row.username,
+          nickname: row.nickname,
+          photo: buildPhotoRef(row.user_id, row.photo_head, row.photo_len, row.photo_tail, false),
+          original_photo: buildPhotoRef(row.user_id, row.orig_head, row.orig_len, row.orig_tail, true),
+          position: row.position,
+          pace: row.pace,
+          shooting: row.shooting,
+          passing: row.passing,
+          dribbling: row.dribbling,
+          defending: row.defending,
+          physical: row.physical
         });
-      });
+      }
     });
-  });
+
+    match.teams = Object.values(teams);
+    match.goals = goalRows;
+    match.assists = assistRows;
+    match.ratings = ratingRows;
+
+    match.teams.forEach(t => {
+      if (t.manual_score !== null && t.manual_score !== undefined) {
+        t.score = t.manual_score;
+      } else {
+        t.score = match.goals.filter(g => g.team_id === t.id).length;
+      }
+    });
+
+    res.json(match);
+  } catch (err) {
+    console.error('Erro ao carregar partida:', err.message);
+    res.status(500).json({ error: 'Erro ao carregar a partida' });
+  }
 });
 
 app.post('/matches/:id/teams', (req, res) => {
@@ -1091,111 +1189,105 @@ app.put('/matches/:id/add-player', (req, res) => {
 });
 
 // -- LEADERBOARD & STATS (OPTIMIZED — SQL aggregation instead of loading all tables) --
-app.get('/stats', (req, res) => {
+app.get('/stats', async (req, res) => {
   const { month, year } = req.query;
 
-  // Build date filter clause for completed matches
+  // Filtro de periodo aplicado sobre as partidas encerradas
   let dateFilter = '';
   const dateArgs = [];
   if (year && month) {
-    dateFilter = " AND m.date LIKE ?";
-    dateArgs.push(`${year}-${month.padStart(2, '0')}%`);
+    dateFilter = ' AND m.date LIKE ?';
+    dateArgs.push(`${year}-${String(month).padStart(2, '0')}%`);
   } else if (year) {
-    dateFilter = " AND m.date LIKE ?";
+    dateFilter = ' AND m.date LIKE ?';
     dateArgs.push(`${year}-%`);
   }
 
-  db.all('SELECT * FROM users', [], (err, users) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    // Cinco consultas independentes: rodam juntas em vez de encadeadas.
+    // A lista de atletas nao traz mais as fotos em Base64, so a URL de cada uma.
+    const [users, goalsRows, assistsRows, ratingsRows, matchDetails] = await Promise.all([
+      dbAll(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`),
 
-    // 1. Goals per user
-    const goalsSQL = `SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id WHERE m.status = 'completed'${dateFilter} GROUP BY g.user_id`;
-    db.all(goalsSQL, [...dateArgs], (err, goalsRows) => {
-      const goalsMap = {};
-      (goalsRows || []).forEach(r => goalsMap[r.user_id] = r.cnt);
+      dbAll(`SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id
+             WHERE m.status = 'completed'${dateFilter} GROUP BY g.user_id`, dateArgs),
 
-      // 2. Assists per user
-      const assistsSQL = `SELECT a.user_id, COUNT(*) as cnt FROM assists a JOIN matches m ON a.match_id = m.id WHERE m.status = 'completed'${dateFilter} GROUP BY a.user_id`;
-      db.all(assistsSQL, [...dateArgs], (err, assistsRows) => {
-        const assistsMap = {};
-        (assistsRows || []).forEach(r => assistsMap[r.user_id] = r.cnt);
+      dbAll(`SELECT a.user_id, COUNT(*) as cnt FROM assists a JOIN matches m ON a.match_id = m.id
+             WHERE m.status = 'completed'${dateFilter} GROUP BY a.user_id`, dateArgs),
 
-        // 3. Avg rating per user
-        const ratingsSQL = `SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`;
-        db.all(ratingsSQL, [...dateArgs], (err, ratingsRows) => {
-          const ratingsMap = {};
-          (ratingsRows || []).forEach(r => ratingsMap[r.rated_id] = r.avg_score);
+      dbAll(`SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id
+             WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`, dateArgs),
 
-          // 4. Match results per user (we need per-match detail for win streak)
-          const matchDetailSQL = `
-            SELECT tp.user_id, m.id as match_id, m.date,
-              t_own.manual_score as own_score,
-              t_opp.manual_score as opp_score
-            FROM team_players tp
-            JOIN teams t_own ON tp.team_id = t_own.id
-            JOIN matches m ON t_own.match_id = m.id
-            LEFT JOIN teams t_opp ON t_opp.match_id = m.id AND t_opp.id != t_own.id
-            WHERE m.status = 'completed'${dateFilter}
-            ORDER BY m.date DESC, m.id DESC
-          `;
-          db.all(matchDetailSQL, [...dateArgs], (err, matchDetails) => {
-            // Group match results by user
-            const userMatchMap = {};
-            (matchDetails || []).forEach(row => {
-              if (!userMatchMap[row.user_id]) userMatchMap[row.user_id] = [];
-              userMatchMap[row.user_id].push(row);
-            });
+      // Detalhe por partida, necessario para calcular sequencia e forma recente
+      dbAll(`
+        SELECT tp.user_id, m.id as match_id, m.date,
+          t_own.manual_score as own_score,
+          t_opp.manual_score as opp_score
+        FROM team_players tp
+        JOIN teams t_own ON tp.team_id = t_own.id
+        JOIN matches m ON t_own.match_id = m.id
+        LEFT JOIN teams t_opp ON t_opp.match_id = m.id AND t_opp.id != t_own.id
+        WHERE m.status = 'completed'${dateFilter}
+        ORDER BY m.date DESC, m.id DESC
+      `, dateArgs)
+    ]);
 
-            const result = (users || []).map(user => {
-              const userMatches = userMatchMap[user.id] || [];
-              let wins = 0, draws = 0, losses = 0;
-              const formList = [];
+    const goalsMap = {};
+    goalsRows.forEach(r => { goalsMap[r.user_id] = r.cnt; });
+    const assistsMap = {};
+    assistsRows.forEach(r => { assistsMap[r.user_id] = r.cnt; });
+    const ratingsMap = {};
+    ratingsRows.forEach(r => { ratingsMap[r.rated_id] = r.avg_score; });
 
-              userMatches.forEach(um => {
-                const ownScore = um.own_score ?? 0;
-                const oppScore = um.opp_score ?? 0;
-                let r = 'E';
-                if (ownScore > oppScore) { wins++; r = 'V'; }
-                else if (ownScore < oppScore) { losses++; r = 'D'; }
-                else { draws++; }
-                formList.push(r);
-              });
-
-              let winStreak = 0;
-              for (const r of formList) {
-                if (r === 'V') winStreak++;
-                else break;
-              }
-
-              const matchesCount = userMatches.length;
-              const winRate = matchesCount > 0 ? Math.round((wins / matchesCount) * 100) : 0;
-
-              const userHasPin = !!(user.pin && String(user.pin).trim() !== '');
-              const safeUser = { ...user };
-              delete safeUser.pin;
-
-              return {
-                ...safeUser,
-                has_pin: userHasPin,
-                goals: goalsMap[user.id] || 0,
-                assists: assistsMap[user.id] || 0,
-                avg_rating: ratingsMap[user.id] || 0,
-                matches_count: matchesCount,
-                wins,
-                draws,
-                losses,
-                win_rate: winRate,
-                recent_form: formList.slice(0, 5),
-                win_streak: winStreak
-              };
-            });
-
-            res.json(result);
-          });
-        });
-      });
+    const userMatchMap = {};
+    matchDetails.forEach(row => {
+      if (!userMatchMap[row.user_id]) userMatchMap[row.user_id] = [];
+      userMatchMap[row.user_id].push(row);
     });
-  });
+
+    const result = users.map(user => {
+      const userMatches = userMatchMap[user.id] || [];
+      let wins = 0, draws = 0, losses = 0;
+      const formList = [];
+
+      userMatches.forEach(um => {
+        const ownScore = um.own_score ?? 0;
+        const oppScore = um.opp_score ?? 0;
+        let r = 'E';
+        if (ownScore > oppScore) { wins++; r = 'V'; }
+        else if (ownScore < oppScore) { losses++; r = 'D'; }
+        else { draws++; }
+        formList.push(r);
+      });
+
+      let winStreak = 0;
+      for (const r of formList) {
+        if (r === 'V') winStreak++;
+        else break;
+      }
+
+      const matchesCount = userMatches.length;
+
+      return {
+        ...withPhotoUrls(user),
+        goals: goalsMap[user.id] || 0,
+        assists: assistsMap[user.id] || 0,
+        avg_rating: ratingsMap[user.id] || 0,
+        matches_count: matchesCount,
+        wins,
+        draws,
+        losses,
+        win_rate: matchesCount > 0 ? Math.round((wins / matchesCount) * 100) : 0,
+        recent_form: formList.slice(0, 5),
+        win_streak: winStreak
+      };
+    });
+
+    res.json(result);
+  } catch (err) {
+    console.error('Erro ao calcular estatísticas:', err.message);
+    res.status(500).json({ error: 'Erro ao calcular estatísticas' });
+  }
 });
 
 // Middleware global de tratamento de erros de upload e requisição

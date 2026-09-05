@@ -14,21 +14,20 @@ export const AuthProvider = ({ children }) => {
     }
   });
 
-  // Sincroniza sempre os dados mais recentes do atleta (foto Base64, notas, apelido) a partir do banco na nuvem
+  // Sincroniza os dados mais recentes do atleta (foto, notas, apelido) a partir do
+  // banco na nuvem. Antes isso baixava a lista completa de jogadores só para achar
+  // uma linha; agora busca apenas o próprio usuário.
   useEffect(() => {
     if (!user || !user.id) return;
-    fetch(`${API_URL}/users`)
-      .then(res => res.json())
-      .then(players => {
-        if (Array.isArray(players)) {
-          const freshUser = players.find(p => p.id === user.id);
-          if (freshUser) {
-            setUser(prev => {
-              const updated = { ...prev, ...freshUser };
-              localStorage.setItem('pelada_user', JSON.stringify(updated));
-              return updated;
-            });
-          }
+    fetch(`${API_URL}/users/${user.id}`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(freshUser => {
+        if (freshUser && freshUser.id) {
+          setUser(prev => {
+            const updated = { ...prev, ...freshUser };
+            localStorage.setItem('pelada_user', JSON.stringify(updated));
+            return updated;
+          });
         }
       })
       .catch(err => console.error('Erro ao sincronizar dados do usuário:', err));

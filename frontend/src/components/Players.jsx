@@ -6,6 +6,7 @@ import { toPng } from 'html-to-image';
 import { AuthContext } from '../AuthContext';
 import { calcOVR } from '../utils/ovr';
 import { API_URL, formatPhotoUrl } from '../config';
+import { waitForImages } from '../utils/exportImage';
 import '../fut-card.css';
 
 // Flexible Height Formatter: Accepts 178, 1,78, or 1.78 and normalizes to "1.78"
@@ -57,7 +58,7 @@ const downscaleForAI = async (blob, maxDim = 320) => {
 function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDeletePhoto }) {
   const previewImgRef = useRef(null);
   const [src, setSrc] = useState(initialSrc);
-  const [originalSrc, setOriginalSrc] = useState(player && player.original_photo ? `${API_URL}${player.original_photo}` : initialSrc);
+  const [originalSrc, setOriginalSrc] = useState(player && player.original_photo ? formatPhotoUrl(player.original_photo) : initialSrc);
   const [zoom, setZoom] = useState(1);
   const [offsetX, setOffsetX] = useState(0);
   const [offsetY, setOffsetY] = useState(0);
@@ -229,7 +230,10 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
         } else {
           alert('Erro ao converter imagem ajustada.');
         }
-      }, 'image/png');
+      // WebP preserva a transparência do recorte e sai bem menor que PNG, o que
+      // reduz o peso da foto guardada e o tempo de carregamento das cartas.
+      // Navegador sem suporte a WebP cai automaticamente para PNG.
+      }, 'image/webp', 0.92);
     } catch (err) {
       console.error('Erro ao salvar ajuste da imagem:', err);
       if (rawFile) {
@@ -1313,8 +1317,9 @@ export default function Players() {
 
     setDownloadingCardId(player.id);
     try {
+      await waitForImages(cardEl);
       const dataUrl = await toPng(cardEl, { 
-        cacheBust: true, 
+        cacheBust: false, 
         pixelRatio: 2.5,
         filter: (node) => !node.classList?.contains('fut-card-btn-action') && !node.classList?.contains('fut-card-shine'),
         style: {
@@ -1419,7 +1424,7 @@ export default function Players() {
     if (!photoToLoad) return;
     setRawFile(null);
     setCropModalPlayer(player);
-    setTempImageSrc(`${API_URL}${photoToLoad}`);
+    setTempImageSrc(formatPhotoUrl(photoToLoad));
   };
 
   const removePlayerPhoto = async (playerId) => {
@@ -1454,9 +1459,13 @@ export default function Players() {
       return;
     }
     const formData = new FormData();
-    formData.append('photo', croppedBlob, 'cropped_player.png');
+    const croppedExt = croppedBlob.type && croppedBlob.type.includes('webp') ? 'webp' : 'png';
+    formData.append('photo', croppedBlob, `cropped_player.${croppedExt}`);
     if (originalFile) {
-      formData.append('original_photo', originalFile);
+      // A original só existe para permitir reenquadrar a foto depois. Enviar o
+      // arquivo cru da câmera (vários MB) inchava o banco sem nenhum ganho visível.
+      const compactOriginal = await downscaleForAI(originalFile, 1000);
+      formData.append('original_photo', compactOriginal, 'original_player.jpg');
     }
     const res = await fetch(`${API_URL}/users/${cropModalPlayer.id}/photo`, { 
       method: 'POST', 

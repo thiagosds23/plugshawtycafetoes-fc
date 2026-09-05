@@ -46,6 +46,33 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 
 ---
 
+## ⚡ Contrato de Fotos e Performance (LEIA ANTES DE MEXER NAS LISTAGENS)
+
+As fotos dos atletas são guardadas no banco como data URI Base64 (até ~400KB cada).
+Trazer esse conteúdo nas listagens colocava **~7MB na memória do servidor por request**,
+o que estourava o limite de 512MB do plano gratuito do Render e deixava o app lento no celular.
+
+**Regra:** nenhuma listagem pode selecionar as colunas `photo`/`original_photo` diretamente.
+
+- O backend usa `photoCols(prefixo)` no SELECT, que traz apenas cabeçalho, tamanho e final
+  da string, e `withPhotoUrls(row)` / `buildPhotoRef(...)` para montar a URL curta.
+- As APIs devolvem `photo: "/users/:id/photo?v=<versão>"` em vez do Base64.
+- `GET /users/:id/photo` serve a imagem binária com `Cache-Control: immutable` e ETag.
+  A versão na URL vem do conteúdo, então trocar a foto invalida o cache sozinha.
+- No frontend, **sempre** renderize com `formatPhotoUrl(player.photo)` — nunca concatene
+  `API_URL` na mão.
+- Antes de exportar arte em PNG (`toPng`), chame `waitForImages(node)`
+  (`frontend/src/utils/exportImage.js`): as fotos agora carregam por rede e sairiam em
+  branco se a exportação não esperasse.
+
+Resultado medido: `/users` 6.7MB → 5.7KB, `/stats` 6.7MB → 8.1KB, `/matches/:id` 6.2MB → 3.6KB.
+
+**Hooks do React:** todo `useState`/`useEffect`/`useRef` precisa ficar acima do
+`if (!match) return <Carregando/>` em `MatchDetails.jsx`. Um hook declarado depois do
+return antecipado quebra a tela com o erro React #310.
+
+---
+
 ## 🚀 Como Executar o Projeto
 1. **Backend:** No diretório `backend/`, execute `node server.js` (Porta 3001).
 2. **Frontend:** No diretório `frontend/`, execute `npm run dev` (Porta 5173).
