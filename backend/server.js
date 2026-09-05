@@ -1090,149 +1090,107 @@ app.put('/matches/:id/add-player', (req, res) => {
   });
 });
 
-// -- LEADERBOARD & STATS --
+// -- LEADERBOARD & STATS (OPTIMIZED — SQL aggregation instead of loading all tables) --
 app.get('/stats', (req, res) => {
   const { month, year } = req.query;
+
+  // Build date filter clause for completed matches
+  let dateFilter = '';
+  const dateArgs = [];
+  if (year && month) {
+    dateFilter = " AND m.date LIKE ?";
+    dateArgs.push(`${year}-${month.padStart(2, '0')}%`);
+  } else if (year) {
+    dateFilter = " AND m.date LIKE ?";
+    dateArgs.push(`${year}-%`);
+  }
 
   db.all('SELECT * FROM users', [], (err, users) => {
     if (err) return res.status(500).json({ error: err.message });
 
-    db.all("SELECT * FROM matches WHERE status = 'completed'", [], (err, completedMatches) => {
-      db.all('SELECT * FROM teams', [], (err, allTeams) => {
-        db.all('SELECT * FROM team_players', [], (err, allTeamPlayers) => {
-          db.all('SELECT * FROM goals', [], (err, allGoals) => {
-            db.all('SELECT * FROM assists', [], (err, allAssists) => {
-              db.all('SELECT * FROM ratings', [], (err, allRatings) => {
+    // 1. Goals per user
+    const goalsSQL = `SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id WHERE m.status = 'completed'${dateFilter} GROUP BY g.user_id`;
+    db.all(goalsSQL, [...dateArgs], (err, goalsRows) => {
+      const goalsMap = {};
+      (goalsRows || []).forEach(r => goalsMap[r.user_id] = r.cnt);
 
-                const matchesList = completedMatches || [];
+      // 2. Assists per user
+      const assistsSQL = `SELECT a.user_id, COUNT(*) as cnt FROM assists a JOIN matches m ON a.match_id = m.id WHERE m.status = 'completed'${dateFilter} GROUP BY a.user_id`;
+      db.all(assistsSQL, [...dateArgs], (err, assistsRows) => {
+        const assistsMap = {};
+        (assistsRows || []).forEach(r => assistsMap[r.user_id] = r.cnt);
 
-                const result = (users || []).map(user => {
-                  let userGoals = 0;
-                  let userAssists = 0;
-                  let userRatings = [];
-                  let wins = 0;
-                  let draws = 0;
-                  let losses = 0;
-                  let matchesCount = 0;
+        // 3. Avg rating per user
+        const ratingsSQL = `SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`;
+        db.all(ratingsSQL, [...dateArgs], (err, ratingsRows) => {
+          const ratingsMap = {};
+          (ratingsRows || []).forEach(r => ratingsMap[r.rated_id] = r.avg_score);
 
-                  const targetMatches = matchesList.filter(m => {
-                    if (year && month) return m.date && m.date.startsWith(`${year}-${month.padStart(2, '0')}`);
-                    if (year) return m.date && m.date.startsWith(`${year}-`);
-                    return true;
-                  });
-
-                  // Sort matches descending by date to track recent form (newest first)
-                  targetMatches.sort((a, b) => new Date(b.date + 'T12:00:00') - new Date(a.date + 'T12:00:00') || b.id - a.id);
-
-                  const userMatchesList = [];
-
-                  targetMatches.forEach(m => {
-                    const matchTeams = (allTeams || []).filter(t => t.match_id === m.id);
-                    const userTeam = matchTeams.find(t => {
-                      return (allTeamPlayers || []).some(tp => tp.team_id === t.id && tp.user_id === user.id);
-                    });
-
-                    if (userTeam) {
-                      matchesCount++;
-
-                      const teamAGoals = (allGoals || []).filter(g => {
-                        return g.match_id === m.id && (allTeamPlayers || []).some(tp => tp.team_id === matchTeams[0]?.id && tp.user_id === g.user_id);
-                      }).length;
-
-                      const teamBGoals = (allGoals || []).filter(g => {
-                        return g.match_id === m.id && matchTeams[1] && (allTeamPlayers || []).some(tp => tp.team_id === matchTeams[1]?.id && tp.user_id === g.user_id);
-                      }).length;
-
-                      if (matchTeams.length >= 2) {
-                        const teamAScore = (matchTeams[0].manual_score !== null && matchTeams[0].manual_score !== undefined) 
-                          ? matchTeams[0].manual_score 
-                          : teamAGoals;
-                        const teamBScore = (matchTeams[1].manual_score !== null && matchTeams[1].manual_score !== undefined) 
-                          ? matchTeams[1].manual_score 
-                          : teamBGoals;
-
-                        const isTeamA = userTeam.id === matchTeams[0].id;
-                        const myGoals = isTeamA ? teamAScore : teamBScore;
-                        const oppGoals = isTeamA ? teamBScore : teamAScore;
-
-                        let matchRes = 'E';
-                        if (myGoals > oppGoals) { wins++; matchRes = 'V'; }
-                        else if (myGoals === oppGoals) { draws++; matchRes = 'E'; }
-                        else { losses++; matchRes = 'D'; }
-
-                        userMatchesList.push(matchRes);
-                      }
-                    }
-                  });
-
-                  let winStreak = 0;
-                  for (const r of userMatchesList) {
-                    if (r === 'V') winStreak++;
-                    else break;
-                  }
-
-                  (allGoals || []).forEach(g => {
-                    if (g.user_id === user.id) {
-                      const match = matchesList.find(m => m.id === g.match_id);
-                      if (match) {
-                        if (year && month && !match.date.startsWith(`${year}-${month.padStart(2, '0')}`)) return;
-                        if (year && !month && !match.date.startsWith(`${year}-`)) return;
-                        userGoals++;
-                      }
-                    }
-                  });
-
-                  (allAssists || []).forEach(a => {
-                    if (a.user_id === user.id) {
-                      const match = matchesList.find(m => m.id === a.match_id);
-                      if (match) {
-                        if (year && month && !match.date.startsWith(`${year}-${month.padStart(2, '0')}`)) return;
-                        if (year && !month && !match.date.startsWith(`${year}-`)) return;
-                        userAssists++;
-                      }
-                    }
-                  });
-
-                  (allRatings || []).forEach(r => {
-                    if (r.rated_id === user.id) {
-                      const match = matchesList.find(m => m.id === r.match_id);
-                      if (match) {
-                        if (year && month && !match.date.startsWith(`${year}-${month.padStart(2, '0')}`)) return;
-                        if (year && !month && !match.date.startsWith(`${year}-`)) return;
-                        userRatings.push(r.score);
-                      }
-                    }
-                  });
-
-                  const avgRating = userRatings.length > 0
-                    ? (userRatings.reduce((a, b) => a + b, 0) / userRatings.length)
-                    : 0;
-
-                  const winRate = matchesCount > 0 ? Math.round((wins / matchesCount) * 100) : 0;
-
-                  const userHasPin = !!(user.pin && String(user.pin).trim() !== '');
-                  const safeUser = { ...user };
-                  delete safeUser.pin;
-
-                  return {
-                    ...safeUser,
-                    has_pin: userHasPin,
-                    goals: userGoals,
-                    assists: userAssists,
-                    avg_rating: avgRating,
-                    matches_count: matchesCount,
-                    wins,
-                    draws,
-                    losses,
-                    win_rate: winRate,
-                    recent_form: userMatchesList.slice(0, 5),
-                    win_streak: winStreak
-                  };
-                });
-
-                res.json(result);
-              });
+          // 4. Match results per user (we need per-match detail for win streak)
+          const matchDetailSQL = `
+            SELECT tp.user_id, m.id as match_id, m.date,
+              t_own.manual_score as own_score,
+              t_opp.manual_score as opp_score
+            FROM team_players tp
+            JOIN teams t_own ON tp.team_id = t_own.id
+            JOIN matches m ON t_own.match_id = m.id
+            LEFT JOIN teams t_opp ON t_opp.match_id = m.id AND t_opp.id != t_own.id
+            WHERE m.status = 'completed'${dateFilter}
+            ORDER BY m.date DESC, m.id DESC
+          `;
+          db.all(matchDetailSQL, [...dateArgs], (err, matchDetails) => {
+            // Group match results by user
+            const userMatchMap = {};
+            (matchDetails || []).forEach(row => {
+              if (!userMatchMap[row.user_id]) userMatchMap[row.user_id] = [];
+              userMatchMap[row.user_id].push(row);
             });
+
+            const result = (users || []).map(user => {
+              const userMatches = userMatchMap[user.id] || [];
+              let wins = 0, draws = 0, losses = 0;
+              const formList = [];
+
+              userMatches.forEach(um => {
+                const ownScore = um.own_score ?? 0;
+                const oppScore = um.opp_score ?? 0;
+                let r = 'E';
+                if (ownScore > oppScore) { wins++; r = 'V'; }
+                else if (ownScore < oppScore) { losses++; r = 'D'; }
+                else { draws++; }
+                formList.push(r);
+              });
+
+              let winStreak = 0;
+              for (const r of formList) {
+                if (r === 'V') winStreak++;
+                else break;
+              }
+
+              const matchesCount = userMatches.length;
+              const winRate = matchesCount > 0 ? Math.round((wins / matchesCount) * 100) : 0;
+
+              const userHasPin = !!(user.pin && String(user.pin).trim() !== '');
+              const safeUser = { ...user };
+              delete safeUser.pin;
+
+              return {
+                ...safeUser,
+                has_pin: userHasPin,
+                goals: goalsMap[user.id] || 0,
+                assists: assistsMap[user.id] || 0,
+                avg_rating: ratingsMap[user.id] || 0,
+                matches_count: matchesCount,
+                wins,
+                draws,
+                losses,
+                win_rate: winRate,
+                recent_form: formList.slice(0, 5),
+                win_streak: winStreak
+              };
+            });
+
+            res.json(result);
           });
         });
       });

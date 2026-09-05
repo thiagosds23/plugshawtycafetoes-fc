@@ -406,17 +406,40 @@ export default function MatchDetails() {
     });
   };
 
-  // Direct number of goals / assists update for a player
-  const handleSetPlayerEventCount = async (playerId, type, val) => {
+  // Direct number of goals / assists update for a player (DEBOUNCED)
+  const eventDebounceRef = useRef({});
+  const handleSetPlayerEventCount = (playerId, type, val) => {
     const num = parseInt(val, 10);
     const countVal = isNaN(num) ? 0 : Math.max(0, num);
 
-    await fetch(`${API_URL}/matches/${id}/player-events`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ user_id: playerId, type, count: countVal })
+    // Optimistic local update — update match state immediately without API call
+    setMatch(prev => {
+      if (!prev) return prev;
+      const eventKey = type === 'goal' ? 'goals' : 'assists';
+      // Remove old events for this player
+      const filtered = (prev[eventKey] || []).filter(e => e.user_id !== playerId);
+      // Add new events
+      for (let i = 0; i < countVal; i++) {
+        filtered.push({ match_id: prev.id, user_id: playerId, id: -(Date.now() + i) });
+      }
+      return { ...prev, [eventKey]: filtered };
     });
-    loadMatch();
+
+    // Debounce the actual API call (wait 600ms after last keystroke)
+    const debounceKey = `${playerId}-${type}`;
+    if (eventDebounceRef.current[debounceKey]) {
+      clearTimeout(eventDebounceRef.current[debounceKey]);
+    }
+    eventDebounceRef.current[debounceKey] = setTimeout(async () => {
+      await fetch(`${API_URL}/matches/${id}/player-events`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: playerId, type, count: countVal })
+      });
+      // Sync with server after save
+      loadMatch();
+      delete eventDebounceRef.current[debounceKey];
+    }, 600);
   };
 
   const removeEvent = async (type, eventId) => {
