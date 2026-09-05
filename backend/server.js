@@ -1070,6 +1070,26 @@ app.put('/matches/:id/replace-player', (req, res) => {
   });
 });
 
+// Add a new player to a team in an ongoing match
+app.put('/matches/:id/add-player', (req, res) => {
+  const matchId = req.params.id;
+  const { user_id, team_id } = req.body;
+  
+  if (!user_id || !team_id) return res.status(400).json({ error: 'Usuário e Time são obrigatórios' });
+
+  // Verificar se o jogador já não está na partida
+  db.all('SELECT tp.user_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ? AND tp.user_id = ?', 
+    [matchId, user_id], (err, existing) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (existing && existing.length > 0) return res.status(400).json({ error: 'O jogador já está nesta partida' });
+      
+      db.run('INSERT INTO team_players (team_id, user_id) VALUES (?, ?)', [team_id, user_id], function(err) {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ success: true, team_id, user_id });
+      });
+  });
+});
+
 // -- LEADERBOARD & STATS --
 app.get('/stats', (req, res) => {
   const { month, year } = req.query;

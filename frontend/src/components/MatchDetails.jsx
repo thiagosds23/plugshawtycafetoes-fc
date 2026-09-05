@@ -211,6 +211,11 @@ export default function MatchDetails() {
   // Cinematic Team Draft Animation state
   const [draftAnim, setDraftAnim] = useState(null);
 
+  // Match Edit & Add Player
+  const [editMatchModal, setEditMatchModal] = useState(false);
+  const [matchEditForm, setMatchEditForm] = useState({ date: '', time: '', location: '' });
+  const [showAddPlayerModal, setShowAddPlayerModal] = useState(null); // holds teamId
+
   // Tactical Pitch Tab: 'both' | 0 | 1
   const [pitchTab, setPitchTab] = useState('both');
 
@@ -444,6 +449,27 @@ export default function MatchDetails() {
     });
     setSubstituteTarget(null);
     setFieldActionPlayer(null);
+    loadMatch();
+  };
+
+  const handleUpdateMatchInfo = async (e) => {
+    e.preventDefault();
+    await fetch(`${API_URL}/matches/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(matchEditForm)
+    });
+    setEditMatchModal(false);
+    loadMatch();
+  };
+
+  const handleAddPlayerToTeam = async (userId) => {
+    await fetch(`${API_URL}/matches/${id}/add-player`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user_id: userId, team_id: showAddPlayerModal })
+    });
+    setShowAddPlayerModal(null);
     loadMatch();
   };
 
@@ -1320,8 +1346,18 @@ export default function MatchDetails() {
               <h4 style={{ color: 'var(--primary)', fontWeight: '900', fontSize: '1.35rem', margin: 0, letterSpacing: '-0.3px', textTransform: 'uppercase' }}>
                 Escalação Oficial da Partida
               </h4>
-              <div style={{ color: '#ffffff', fontSize: '0.88rem', marginTop: '6px', fontWeight: '700' }}>
+              <div style={{ color: '#ffffff', fontSize: '0.88rem', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')} — {match.time || '15h'} — {match.location || 'Arena Petrópolis'}
+                <button 
+                  onClick={() => {
+                    setMatchEditForm({ date: match.date || '', time: match.time || '', location: match.location || '' });
+                    setEditMatchModal(true);
+                  }}
+                  style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}
+                  title="Editar Partida"
+                >
+                  <Edit2 size={16} />
+                </button>
               </div>
             </div>
 
@@ -1355,9 +1391,19 @@ export default function MatchDetails() {
                       <h3 className="font-extrabold text-lg" style={{ color: idx === 0 ? '#00f59b' : '#ffffff', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                         <Shield size={20} /> {team.name}
                       </h3>
-                      <span className="badge" style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border)', fontSize: '0.78rem', padding: '4px 10px' }}>
-                        OVR Médio: {getTeamOVR(team)}
-                      </span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <button 
+                          onClick={() => setShowAddPlayerModal(team.id)} 
+                          className="btn btn-secondary" 
+                          style={{ padding: '4px 8px', fontSize: '0.70rem', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '6px', minWidth: 'auto', width: 'auto' }}
+                          title="Adicionar jogador a este time"
+                        >
+                          <Plus size={14} /> JOGADOR
+                        </button>
+                        <span className="badge" style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid var(--border)', fontSize: '0.78rem', padding: '4px 10px', margin: 0 }}>
+                          OVR Médio: {getTeamOVR(team)}
+                        </span>
+                      </div>
                     </div>
                     
                     {/* Player rows with 100% visible name and clean touch controls */}
@@ -1989,6 +2035,67 @@ export default function MatchDetails() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* Edit Match Modal */}
+      {editMatchModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card w-full max-w-sm p-6" style={{ background: '#0a0a0f' }}>
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="font-extrabold text-lg text-main" style={{ margin: 0 }}>Editar Partida</h4>
+              <button onClick={() => setEditMatchModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+            
+            <form onSubmit={handleUpdateMatchInfo}>
+              <div className="mb-4">
+                <label className="block text-sm font-bold text-muted mb-2">Data da Partida</label>
+                <input type="date" className="input" required value={matchEditForm.date} onChange={e => setMatchEditForm({...matchEditForm, date: e.target.value})} />
+              </div>
+              <div className="mb-4">
+                <label className="block text-sm font-bold text-muted mb-2">Horário</label>
+                <input type="text" className="input" placeholder="ex: 15h, 19:30" required value={matchEditForm.time} onChange={e => setMatchEditForm({...matchEditForm, time: e.target.value})} />
+              </div>
+              <div className="mb-6">
+                <label className="block text-sm font-bold text-muted mb-2">Local / Arena</label>
+                <input type="text" className="input" placeholder="ex: Arena Petrópolis" required value={matchEditForm.location} onChange={e => setMatchEditForm({...matchEditForm, location: e.target.value})} />
+              </div>
+              <button type="submit" className="btn w-full">Salvar Alterações</button>
+            </form>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Add Player to Team Modal */}
+      {showAddPlayerModal && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card w-full max-w-sm p-6" style={{ background: '#0a0a0f', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div className="flex justify-between items-center mb-4">
+              <h4 className="font-extrabold text-lg text-main" style={{ margin: 0 }}>Adicionar Jogador</h4>
+              <button onClick={() => setShowAddPlayerModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
+            </div>
+            <p className="text-muted text-xs mb-4">Selecione um jogador para entrar neste time:</p>
+
+            <div style={{ overflowY: 'auto', flex: 1, paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {allPlayers.filter(p => !allMatchPlayers.some(mp => mp.id === p.id)).length > 0 ? (
+                allPlayers.filter(p => !allMatchPlayers.some(mp => mp.id === p.id)).map(p => (
+                  <div 
+                    key={p.id} 
+                    onClick={() => handleAddPlayerToTeam(p.id)}
+                    style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+                    className="hover:border-primary"
+                  >
+                    <span className="font-bold text-sm">{getPrimaryName(p)}</span>
+                    <span className="text-xs font-bold text-muted bg-white/5 px-2 py-1 rounded">OVR {calcOVR(p)}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="text-center text-muted text-sm py-4">Todos os jogadores já estão na partida.</div>
+              )}
+            </div>
+            
+            <button className="btn btn-secondary w-full mt-4" onClick={() => setShowAddPlayerModal(null)}>Cancelar</button>
+          </motion.div>
         </div>
       )}
 
