@@ -422,9 +422,16 @@ export default function MatchDetails() {
   };
 
   // Direct number of goals / assists update for a player (DEBOUNCED)
-  const handleSetPlayerEventCount = (playerId, type, val) => {
+  const handleSetPlayerEventCount = (playerId, type, val, inputEl) => {
     const num = parseInt(val, 10);
     const countVal = isNaN(num) ? 0 : Math.max(0, num);
+
+    // Digitar 1 em cima de um campo que ja mostrava 0 deixaria "01" na tela: o React
+    // compara o valor do input com o novo de forma fraca e "01" == 1, entao ele nao
+    // reescreve o campo sozinho. Aqui corrigimos o texto na hora.
+    if (inputEl && inputEl.value !== String(countVal)) {
+      inputEl.value = String(countVal);
+    }
 
     // Optimistic local update — update match state immediately without API call
     setMatch(prev => {
@@ -585,6 +592,8 @@ export default function MatchDetails() {
 
       const dataUrl = await toPng(node, { 
         cacheBust: false, 
+        // Botoes de edicao existem so na tela: nao entram na arte compartilhada
+        filter: (n) => !n.classList?.contains('no-export'),
         quality: 1,
         pixelRatio: 2, // Resolução Retina 2x ultra nítida para WhatsApp e celular
         backgroundColor: '#08090e',
@@ -1393,6 +1402,7 @@ export default function MatchDetails() {
                     setMatchEditForm({ date: match.date || '', time: match.time || '', location: match.location || '' });
                     setEditMatchModal(true);
                   }}
+                  className="no-export"
                   style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}
                   title="Editar Partida"
                 >
@@ -1546,7 +1556,8 @@ export default function MatchDetails() {
                                   min="0" 
                                   max="30"
                                   value={gCount}
-                                  onChange={e => handleSetPlayerEventCount(p.id, 'goal', e.target.value)}
+                                  onFocus={e => e.target.select()}
+                                  onChange={e => handleSetPlayerEventCount(p.id, 'goal', e.target.value, e.target)}
                                   disabled={match.status === 'completed'}
                                   style={{ 
                                     width: '32px', 
@@ -1592,7 +1603,8 @@ export default function MatchDetails() {
                                   min="0" 
                                   max="30"
                                   value={aCount}
-                                  onChange={e => handleSetPlayerEventCount(p.id, 'assist', e.target.value)}
+                                  onFocus={e => e.target.select()}
+                                  onChange={e => handleSetPlayerEventCount(p.id, 'assist', e.target.value, e.target)}
                                   disabled={match.status === 'completed'}
                                   style={{ 
                                     width: '32px', 
@@ -2045,7 +2057,8 @@ export default function MatchDetails() {
                   min="0" 
                   max="30"
                   value={getPlayerEventCount(fieldActionPlayer.player.id, 'goals')}
-                  onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'goal', e.target.value)}
+                  onFocus={e => e.target.select()}
+                  onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'goal', e.target.value, e.target)}
                   style={{ width: '48px', height: '34px', textAlign: 'center', fontSize: '0.9rem', fontWeight: '800', background: 'rgba(0, 245, 155, 0.12)', border: '1px solid rgba(0, 245, 155, 0.4)', borderRadius: '8px', color: 'var(--primary)', padding: 0, margin: 0 }}
                 />
               </div>
@@ -2057,7 +2070,8 @@ export default function MatchDetails() {
                   min="0" 
                   max="30"
                   value={getPlayerEventCount(fieldActionPlayer.player.id, 'assists')}
-                  onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'assist', e.target.value)}
+                  onFocus={e => e.target.select()}
+                  onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'assist', e.target.value, e.target)}
                   style={{ width: '48px', height: '34px', textAlign: 'center', fontSize: '0.9rem', fontWeight: '800', background: 'rgba(251, 191, 36, 0.12)', border: '1px solid rgba(251, 191, 36, 0.4)', borderRadius: '8px', color: '#fbbf24', padding: 0, margin: 0 }}
                 />
               </div>
