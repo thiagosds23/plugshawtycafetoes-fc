@@ -1,9 +1,8 @@
 import React, { useEffect, useState, useRef, useContext } from 'react';
 import { useLocation } from 'react-router-dom';
-import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck, Download, HardDriveDownload, User, Tag, Info, Phone, Mail, ShieldAlert, Zap } from 'lucide-react';
+import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as ImageIcon, Sparkles, RefreshCw, Loader2, Save, UserCheck, Users, Shield, Search, ArrowUpDown, Filter, FileSpreadsheet, KeyRound, Lock, ClipboardList, ExternalLink, ShieldCheck, Download, HardDriveDownload, User, Tag, Info, Phone, Mail, ShieldAlert, Zap, Goal, Footprints, Star } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
-import { removeBackground } from '@imgly/background-removal';
 import { AuthContext } from '../AuthContext';
 import { calcOVR } from '../utils/ovr';
 import { API_URL, formatPhotoUrl } from '../config';
@@ -140,6 +139,10 @@ function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDele
 
       // Yield assíncrono para o navegador pintar a tela e esvaziar a fila de eventos do Chrome
       await new Promise(r => setTimeout(r, 60));
+
+      // Carrega a engine de IA (onnxruntime, ~400KB) so na hora de recortar a foto.
+      // Import estatico colocava tudo no bundle inicial e deixava o app lento para abrir.
+      const { removeBackground } = await import('@imgly/background-removal');
 
       let transparentBlob;
       try {

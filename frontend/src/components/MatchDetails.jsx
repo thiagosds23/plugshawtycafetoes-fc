@@ -263,6 +263,20 @@ export default function MatchDetails() {
 
   const cardRef = useRef(null);
 
+  // Timers de debounce dos inputs de gols/assistencias.
+  // IMPORTANTE: precisa ficar aqui em cima, junto dos outros hooks. Se for declarado
+  // depois do "if (!match) return ..." abaixo, o React roda uma quantidade diferente
+  // de hooks entre o estado de carregamento e o carregado (erro #310).
+  const eventDebounceRef = useRef({});
+
+  // Limpa os timers pendentes ao sair da tela, evitando fetch e setState orfaos
+  useEffect(() => {
+    const timers = eventDebounceRef.current;
+    return () => {
+      Object.values(timers).forEach(t => clearTimeout(t));
+    };
+  }, []);
+
   const loadMatch = () => {
     fetch(`${API_URL}/matches/${id}`)
       .then(res => res.json())
@@ -407,7 +421,6 @@ export default function MatchDetails() {
   };
 
   // Direct number of goals / assists update for a player (DEBOUNCED)
-  const eventDebounceRef = useRef({});
   const handleSetPlayerEventCount = (playerId, type, val) => {
     const num = parseInt(val, 10);
     const countVal = isNaN(num) ? 0 : Math.max(0, num);
@@ -436,9 +449,10 @@ export default function MatchDetails() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: playerId, type, count: countVal })
       });
-      // Sync with server after save
-      loadMatch();
       delete eventDebounceRef.current[debounceKey];
+      // So recarrega do servidor quando nao ha mais nenhum input pendente, senao o
+      // refetch sobrescreve o numero que o usuario ainda esta digitando em outro campo
+      if (Object.keys(eventDebounceRef.current).length === 0) loadMatch();
     }, 600);
   };
 
