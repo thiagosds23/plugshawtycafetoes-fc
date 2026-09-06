@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import { AuthContext } from '../AuthContext';
 import { calcOVR } from '../utils/ovr';
-import { API_URL, formatPhotoUrl } from '../config';
+import { API_URL, formatPhotoUrl, isAdminUser } from '../config';
 import { waitForImages } from '../utils/exportImage';
 import '../fut-card.css';
 
@@ -1492,7 +1492,8 @@ export default function Players() {
     loadPlayers();
   };
 
-  const isAdmin = user && (user.id === 1 || (user.username && user.username.toLowerCase().includes('thiago')) || (user.nickname && user.nickname.toLowerCase().includes('fela')));
+  // Administrador vem da coluna is_admin do banco, não de comparação por nome
+  const isAdmin = isAdminUser(user);
 
   const handleAdminResetPin = async (targetPlayer) => {
     const targetName = targetPlayer.nickname ? targetPlayer.nickname.split(',')[0].trim() : targetPlayer.username;

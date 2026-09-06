@@ -1,10 +1,15 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Calendar, Plus, ChevronRight, Activity, Clock, CheckCircle2, Trash2, MapPin } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { API_URL } from '../config';
+import { API_URL, authHeaders, isAdminUser } from '../config';
+import { AuthContext } from '../AuthContext';
 
 export default function Matches() {
+  const { user } = useContext(AuthContext);
+  // Criar e excluir partidas são ações do administrador
+  const isAdmin = isAdminUser(user);
+
   const [matches, setMatches] = useState([]);
   const [isCreating, setIsCreating] = useState(false);
   const getTodayDate = () => {
@@ -36,7 +41,7 @@ export default function Matches() {
     const locToSend = newLocation.trim() || 'Arena Petrópolis';
     const res = await fetch(`${API_URL}/matches`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ 
         date: newDate,
         time: timeToSend,
@@ -44,6 +49,10 @@ export default function Matches() {
       })
     });
     const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Não foi possível criar a partida.');
+      return;
+    }
     navigate(`/matches/${data.id}`);
   };
 
@@ -51,7 +60,12 @@ export default function Matches() {
     e.preventDefault();
     e.stopPropagation();
     if (window.confirm('Tem certeza que deseja excluir esta partida do histórico?')) {
-      await fetch(`${API_URL}/matches/${id}`, { method: 'DELETE' });
+      const res = await fetch(`${API_URL}/matches/${id}`, { method: 'DELETE', headers: authHeaders(user) });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Não foi possível excluir a partida.');
+        return;
+      }
       loadMatches();
     }
   };
@@ -81,9 +95,11 @@ export default function Matches() {
           </div>
           Agenda & Histórico
         </h2>
-        <button className="btn" style={{ width: 'auto', padding: '9px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
-          <Plus size={18} /> Nova Partida
-        </button>
+        {isAdmin && (
+          <button className="btn" style={{ width: 'auto', padding: '9px 18px', fontSize: '0.85rem' }} onClick={() => setIsCreating(!isCreating)}>
+            <Plus size={18} /> Nova Partida
+          </button>
+        )}
       </div>
 
       {isCreating && (
@@ -219,6 +235,7 @@ export default function Matches() {
 
                         <button 
                           type="button" 
+                          hidden={!isAdmin}
                           onClick={(e) => handleDeleteMatch(match.id, e)} 
                           title="Excluir partida do histórico"
                           style={{ 

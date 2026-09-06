@@ -46,6 +46,41 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 
 ---
 
+## 🔐 Permissões e Avaliação da Partida
+
+**Administrador** vem da coluna `users.is_admin` (migrada uma vez a partir da regra
+antiga por nome). Nunca voltar a deduzir admin comparando username/nickname.
+
+Exclusivo do administrador, sempre:
+- Criar, editar (data/hora/local), encerrar, reabrir e excluir partidas
+- Placar dos times
+- Número de gols e assistências de cada atleta
+
+Livre para o grupo **até o encerramento**, depois só administrador:
+- Sortear times, trocar de time, adicionar e substituir jogador
+
+**Fluxo de avaliação:**
+1. O administrador clica em *Encerrar Partida*. Isso grava `matches.finished_at`.
+2. A partir daí, **quem entrou em campo** (está em `team_players`) tem **12 horas**
+   para dar nota a todos os jogadores da partida, inclusive a si mesmo.
+3. Dentro do prazo dá para reenviar e corrigir: o `POST /ratings` apaga as notas
+   anteriores daquele avaliador e grava as novas (índice único
+   `ux_ratings_unicas` impede duplicata).
+4. Passadas as 12 horas ninguém mais avalia. `GET /matches/:id` devolve
+   `rating_open`, `rating_ends_at`, `server_now` (para o contador não depender do
+   relógio do celular), `raters` (quem já avaliou) e `my_ratings` (as notas de quem pediu).
+
+A autorização usa o cabeçalho `x-user-id` (mesmo mecanismo do backup e da auditoria).
+Isso protege o uso normal, mas **não é autenticação de verdade** — quem souber forjar
+a requisição consegue se passar por admin. Corrigir isso exige sessão/token assinado.
+
+**Armadilha do driver:** `db.serialize()` no wrapper do Turso NÃO serializa nada —
+ele só executa a função. Comandos que dependem de ordem (apagar filhos antes do pai,
+limpar antes de inserir) precisam de `await dbRun(...)` em sequência. Ignorar isso
+fazia o `DELETE` de partida falhar por FOREIGN KEY enquanto a API respondia sucesso.
+
+---
+
 ## ⚡ Contrato de Fotos e Performance (LEIA ANTES DE MEXER NAS LISTAGENS)
 
 As fotos dos atletas são guardadas no banco como data URI Base64 (até ~400KB cada).

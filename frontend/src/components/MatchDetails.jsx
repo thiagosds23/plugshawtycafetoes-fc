@@ -6,7 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
 import { calcOVR } from '../utils/ovr';
-import { API_URL, formatPhotoUrl } from '../config';
+import { API_URL, formatPhotoUrl, authHeaders, isAdminUser } from '../config';
 import { waitForImages } from '../utils/exportImage';
 
 // Web Audio API Sound Synthesizer (Zero-latency native gaming sounds)
@@ -175,6 +175,40 @@ function parseWhatsAppList(text, playersList) {
   return recognized;
 }
 
+/**
+ * Contador regressivo do prazo de avaliação.
+ *
+ * Fica em um componente separado de propósito: assim o tique de cada segundo
+ * re-renderiza só este trecho, e não a tela inteira da partida.
+ */
+function ContadorPrazo({ terminaEm, agoraServidor }) {
+  // O relógio do celular pode estar adiantado ou atrasado. Guardamos a diferença
+  // para o horário do servidor e contamos a partir dela.
+  const desvio = agoraServidor ? Date.now() - new Date(agoraServidor).getTime() : 0;
+  const restanteAgora = () => new Date(terminaEm).getTime() - (Date.now() - desvio);
+
+  const [restante, setRestante] = useState(restanteAgora);
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setRestante(new Date(terminaEm).getTime() - (Date.now() - desvio));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [terminaEm, desvio]);
+
+  if (!terminaEm || restante <= 0) return <span>prazo encerrado</span>;
+
+  const horas = Math.floor(restante / 3600000);
+  const minutos = Math.floor((restante % 3600000) / 60000);
+  const segundos = Math.floor((restante % 60000) / 1000);
+
+  return (
+    <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+      {horas}h {String(minutos).padStart(2, '0')}m {String(segundos).padStart(2, '0')}s
+    </span>
+  );
+}
+
 export default function MatchDetails() {
   const { id } = useParams();
   const { user } = useContext(AuthContext);
@@ -264,6 +298,13 @@ export default function MatchDetails() {
 
   const cardRef = useRef(null);
 
+  // Recarrega as notas que este usuário já enviou, para ele conseguir corrigir
+  // dentro do prazo em vez de começar do zero.
+  const minhasNotasSalvas = match && match.my_ratings ? JSON.stringify(match.my_ratings) : '';
+  useEffect(() => {
+    if (minhasNotasSalvas) setRatings(JSON.parse(minhasNotasSalvas));
+  }, [minhasNotasSalvas]);
+
   // Timers de debounce dos inputs de gols/assistencias.
   // IMPORTANTE: precisa ficar aqui em cima, junto dos outros hooks. Se for declarado
   // depois do "if (!match) return ..." abaixo, o React roda uma quantidade diferente
@@ -279,7 +320,8 @@ export default function MatchDetails() {
   }, []);
 
   const loadMatch = () => {
-    fetch(`${API_URL}/matches/${id}`)
+    // O id vai no cabeçalho para o backend devolver as notas que EU já dei
+    fetch(`${API_URL}/matches/${id}`, { headers: authHeaders(user) })
       .then(res => res.json())
       .then(data => {
         setMatch(data);
@@ -339,7 +381,7 @@ export default function MatchDetails() {
     // Save to backend in background
     const savePromise = fetch(`${API_URL}/matches/${id}/teams`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({
         teams: [
           { name: 'COM COLETE', playerIds: teamAIds },
@@ -401,9 +443,14 @@ export default function MatchDetails() {
   };
 
   // Direct score update for a team (without needing to assign goals to players)
-  const handleUpdateTeamScore = async (teamId, val) => {
+  const handleUpdateTeamScore = async (teamId, val, inputEl) => {
     const num = parseInt(val, 10);
     const scoreVal = isNaN(num) ? 0 : Math.max(0, num);
+
+    // Mesma correção dos campos de gol: evita o campo ficar mostrando "01"
+    if (inputEl && inputEl.value !== String(scoreVal)) {
+      inputEl.value = String(scoreVal);
+    }
 
     // Optimistic local update
     setMatch(prev => {
@@ -416,7 +463,7 @@ export default function MatchDetails() {
 
     await fetch(`${API_URL}/matches/${id}/team-score`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ team_id: teamId, score: scoreVal })
     });
   };
@@ -454,7 +501,7 @@ export default function MatchDetails() {
     eventDebounceRef.current[debounceKey] = setTimeout(async () => {
       await fetch(`${API_URL}/matches/${id}/player-events`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({ user_id: playerId, type, count: countVal })
       });
       delete eventDebounceRef.current[debounceKey];
@@ -465,13 +512,13 @@ export default function MatchDetails() {
   };
 
   const removeEvent = async (type, eventId) => {
-    await fetch(`${API_URL}/${type}/${eventId}`, { method: 'DELETE' });
+    await fetch(`${API_URL}/${type}/${eventId}`, { method: 'DELETE', headers: authHeaders(user) });
     loadMatch();
   };
 
   const handleDeleteMatch = async () => {
     if (window.confirm('Tem certeza que deseja excluir esta partida? Todos os gols, assistências e notas dela serão apagados permanentemente.')) {
-      await fetch(`${API_URL}/matches/${id}`, { method: 'DELETE' });
+      await fetch(`${API_URL}/matches/${id}`, { method: 'DELETE', headers: authHeaders(user) });
       navigate('/matches');
     }
   };
@@ -479,7 +526,7 @@ export default function MatchDetails() {
   const handleSwitchTeam = async (userId) => {
     await fetch(`${API_URL}/matches/${id}/switch-team`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ user_id: userId })
     });
     setFieldActionPlayer(null);
@@ -489,7 +536,7 @@ export default function MatchDetails() {
   const handleReplacePlayer = async (oldUserId, newUserId) => {
     await fetch(`${API_URL}/matches/${id}/replace-player`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ old_user_id: oldUserId, new_user_id: newUserId })
     });
     setSubstituteTarget(null);
@@ -501,7 +548,7 @@ export default function MatchDetails() {
     e.preventDefault();
     await fetch(`${API_URL}/matches/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify(matchEditForm)
     });
     setEditMatchModal(false);
@@ -511,7 +558,7 @@ export default function MatchDetails() {
   const handleAddPlayerToTeam = async (userId) => {
     await fetch(`${API_URL}/matches/${id}/add-player`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ user_id: userId, team_id: showAddPlayerModal })
     });
     setShowAddPlayerModal(null);
@@ -526,7 +573,7 @@ export default function MatchDetails() {
     try {
       const res = await fetch(`${API_URL}/users`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           username: newPlayerName.trim(),
           nickname: newPlayerNickname.trim() || newPlayerName.trim(),
@@ -556,27 +603,72 @@ export default function MatchDetails() {
   };
 
   const submitRatings = async () => {
-    for (const rated_id in ratings) {
-      await fetch(`${API_URL}/ratings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          match_id: id,
-          rater_id: user ? user.id : 1,
-          rated_id,
-          score: ratings[rated_id]
-        })
-      });
+    const notas = Object.fromEntries(
+      Object.entries(ratings).filter(([, nota]) => nota >= 1 && nota <= 5)
+    );
+
+    if (Object.keys(notas).length === 0) {
+      alert('Dê pelo menos uma nota antes de enviar.');
+      return;
     }
-    // Update match status to completed
-    await fetch(`${API_URL}/matches/${id}`, {
+
+    const res = await fetch(`${API_URL}/ratings`, {
+      method: 'POST',
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ match_id: id, ratings: notas })
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      alert(data.error || 'Não foi possível enviar sua avaliação.');
+      return;
+    }
+
+    alert(`Avaliação enviada! Você deu nota para ${data.saved} atleta(s). Dá para corrigir enquanto o prazo não terminar.`);
+    setShowRating(false);
+    loadMatch();
+  };
+
+  // Encerrar é o que abre o prazo de 12 horas para o pessoal avaliar
+  const handleFinishMatch = async () => {
+    const confirmado = window.confirm(
+      'Encerrar a partida? A partir de agora quem jogou tem 12 horas para dar as notas, e a escalação fica travada para os demais.'
+    );
+    if (!confirmado) return;
+
+    const res = await fetch(`${API_URL}/matches/${id}`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ status: 'completed' })
     });
-    
-    alert('Fim de jogo! Avaliações gravadas com sucesso.');
-    setShowRating(false);
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || 'Não foi possível encerrar a partida.');
+      return;
+    }
+    loadMatch();
+  };
+
+  // Reabrir serve para desfazer um encerramento por engano. O prazo é zerado e
+  // volta a contar do zero no próximo encerramento.
+  const handleReopenMatch = async () => {
+    const confirmado = window.confirm(
+      'Reabrir a partida? O prazo de avaliação é zerado e recomeça quando você encerrar de novo. As notas já enviadas são mantidas.'
+    );
+    if (!confirmado) return;
+
+    const res = await fetch(`${API_URL}/matches/${id}`, {
+      method: 'PUT',
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ status: 'scheduled' })
+    });
+
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || 'Não foi possível reabrir a partida.');
+      return;
+    }
     loadMatch();
   };
 
@@ -645,7 +737,7 @@ export default function MatchDetails() {
       for (const item of newItems) {
         const res = await fetch(`${API_URL}/users`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: authHeaders(user, { 'Content-Type': 'application/json' }),
           body: JSON.stringify({
             username: item.suggestedName.trim(),
             nickname: item.suggestedName.trim(),
@@ -699,6 +791,23 @@ export default function MatchDetails() {
   };
 
   const allMatchPlayers = teamsReady ? match.teams.flatMap(t => t.players) : [];
+
+  // ---------------------------------------------------------------------------
+  // Permissões e prazo de avaliação
+  // ---------------------------------------------------------------------------
+  const isAdmin = isAdminUser(user);
+  const partidaEncerrada = match.status === 'completed';
+
+  // Placar, gols, assistências e a agenda são só do administrador.
+  const podeEditarPlacar = isAdmin;
+  // A escalação fica livre para o grupo montar até o apito final.
+  const podeMexerNaEscalacao = isAdmin || !partidaEncerrada;
+
+  const euJoguei = !!(user && allMatchPlayers.some(p => p.id === user.id));
+  const janelaAberta = !!match.rating_open;
+  const podeAvaliar = partidaEncerrada && janelaAberta && euJoguei;
+  const jaAvaliei = !!(match.my_ratings && Object.keys(match.my_ratings).length > 0);
+  const quantosAvaliaram = (match.raters || []).length;
 
   const sortDefensiveLine = (defList) => {
     const isLateral = (p) => ['LAT', 'LE', 'LD'].includes((p.position || '').toUpperCase());
@@ -828,6 +937,7 @@ export default function MatchDetails() {
 
           <button 
             onClick={handleDeleteMatch}
+            hidden={!isAdmin}
             className="btn btn-secondary"
             style={{ width: 'auto', padding: '9px 18px', fontSize: '0.85rem', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.4)', background: 'rgba(239, 68, 68, 0.08)', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
           >
@@ -868,8 +978,9 @@ export default function MatchDetails() {
                 type="number" 
                 min="0" 
                 value={match.teams[0]?.score ?? 0} 
-                onChange={e => handleUpdateTeamScore(match.teams[0].id, e.target.value)}
-                disabled={match.status === 'completed'}
+                onFocus={e => e.target.select()}
+                onChange={e => handleUpdateTeamScore(match.teams[0].id, e.target.value, e.target)}
+                disabled={!podeEditarPlacar}
                 title="Alterar placar time 1"
                 style={{ 
                   width: '54px', 
@@ -891,8 +1002,9 @@ export default function MatchDetails() {
                 type="number" 
                 min="0" 
                 value={match.teams[1]?.score ?? 0} 
-                onChange={e => handleUpdateTeamScore(match.teams[1].id, e.target.value)}
-                disabled={match.status === 'completed'}
+                onFocus={e => e.target.select()}
+                onChange={e => handleUpdateTeamScore(match.teams[1].id, e.target.value, e.target)}
+                disabled={!podeEditarPlacar}
                 title="Alterar placar time 2"
                 style={{ 
                   width: '54px', 
@@ -1035,7 +1147,7 @@ export default function MatchDetails() {
             <p className="text-muted text-xs mb-4">
               O algoritmo equilibra automaticamente os dois times usando o OVR e a nota média de cada atleta.
             </p>
-            <button className="btn py-4 text-base font-extrabold w-full" onClick={generateTeamsAuto} disabled={selectedPlayers.length === 0} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+            <button className="btn py-4 text-base font-extrabold w-full" onClick={generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
               <Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)
             </button>
           </div>
@@ -1402,6 +1514,7 @@ export default function MatchDetails() {
                     setMatchEditForm({ date: match.date || '', time: match.time || '', location: match.location || '' });
                     setEditMatchModal(true);
                   }}
+                  hidden={!isAdmin}
                   className="no-export"
                   style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}
                   title="Editar Partida"
@@ -1447,6 +1560,7 @@ export default function MatchDetails() {
                           className="btn btn-secondary" 
                           style={{ padding: '4px 8px', fontSize: '0.70rem', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '6px', minWidth: 'auto', width: 'auto' }}
                           title="Adicionar jogador a este time"
+                          hidden={!podeMexerNaEscalacao}
                         >
                           <Plus size={14} /> JOGADOR
                         </button>
@@ -1511,7 +1625,7 @@ export default function MatchDetails() {
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
                                   title="Trocar de time (COM COLETE ⇄ SEM COLETE)" 
                                   onClick={(e) => { e.stopPropagation(); handleSwitchTeam(p.id); }}
-                                  disabled={match.status === 'completed'}
+                                  disabled={!podeMexerNaEscalacao}
                                 >
                                   <RefreshCw size={14} />
                                 </button>
@@ -1521,7 +1635,7 @@ export default function MatchDetails() {
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
                                   title="Substituir por outro atleta do elenco" 
                                   onClick={(e) => { e.stopPropagation(); setSubstituteTarget({ user_id: p.id, name: displayName, team_name: team.name }); }}
-                                  disabled={match.status === 'completed'}
+                                  disabled={!podeMexerNaEscalacao}
                                 >
                                   <UserPlus size={14} />
                                 </button>
@@ -1558,7 +1672,7 @@ export default function MatchDetails() {
                                   value={gCount}
                                   onFocus={e => e.target.select()}
                                   onChange={e => handleSetPlayerEventCount(p.id, 'goal', e.target.value, e.target)}
-                                  disabled={match.status === 'completed'}
+                                  disabled={!podeEditarPlacar}
                                   style={{ 
                                     width: '32px', 
                                     height: '28px', 
@@ -1605,7 +1719,7 @@ export default function MatchDetails() {
                                   value={aCount}
                                   onFocus={e => e.target.select()}
                                   onChange={e => handleSetPlayerEventCount(p.id, 'assist', e.target.value, e.target)}
-                                  disabled={match.status === 'completed'}
+                                  disabled={!podeEditarPlacar}
                                   style={{ 
                                     width: '32px', 
                                     height: '28px', 
@@ -2016,20 +2130,74 @@ export default function MatchDetails() {
           </div>
         )}
           
-          {match.status !== 'completed' && (
-            <motion.div 
-              initial={{ opacity: 0 }} 
-              animate={{ opacity: 1 }} 
+          {/* Encerramento da partida e prazo de avaliação */}
+          {!showRating && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
               transition={{ delay: 0.2 }}
-              style={{ display: 'flex', justifyContent: 'center', marginTop: '28px' }}
+              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', marginTop: '28px' }}
             >
-              <button 
-                className="btn py-4 text-lg font-extrabold" 
-                style={{ width: '100%', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', margin: '0 auto', boxShadow: '0 4px 20px rgba(0, 245, 155, 0.25)' }}
-                onClick={() => setShowRating(true)}
-              >
-                <Star size={22} fill="#000" /> Encerrar Partida & Avaliar Atletas
-              </button>
+              {/* Partida ainda em aberto */}
+              {!partidaEncerrada && (isAdmin ? (
+                <button
+                  className="btn py-4 text-lg font-extrabold"
+                  style={{ width: '100%', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', boxShadow: '0 4px 20px rgba(0, 245, 155, 0.25)' }}
+                  onClick={handleFinishMatch}
+                >
+                  <CheckCircle2 size={22} /> Encerrar Partida & Abrir Avaliação
+                </button>
+              ) : (
+                <div className="text-center text-muted" style={{ fontSize: '0.84rem', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                  <Clock size={15} /> As notas abrem quando o administrador encerrar a partida.
+                </div>
+              ))}
+
+              {/* Partida encerrada, prazo correndo */}
+              {partidaEncerrada && janelaAberta && (
+                <div className="glass-card" style={{ width: '100%', maxWidth: '440px', padding: '16px', borderColor: 'rgba(251, 191, 36, 0.4)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.78rem', color: '#fbbf24', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                    <Clock size={14} /> Avaliações abertas por mais <ContadorPrazo terminaEm={match.rating_ends_at} agoraServidor={match.server_now} />
+                  </div>
+
+                  <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                    {quantosAvaliaram} de {allMatchPlayers.length} atletas já avaliaram
+                  </div>
+
+                  {euJoguei ? (
+                    <button
+                      className="btn py-3 font-extrabold"
+                      style={{ width: '100%', marginTop: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                      onClick={() => setShowRating(true)}
+                    >
+                      <Star size={18} fill="#000" /> {jaAvaliei ? 'Revisar minha avaliação' : 'Avaliar os atletas'}
+                    </button>
+                  ) : (
+                    <div className="text-muted" style={{ fontSize: '0.78rem', marginTop: '10px' }}>
+                      Só quem entrou em campo nesta partida pode dar notas.
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Partida encerrada e prazo vencido */}
+              {partidaEncerrada && !janelaAberta && (
+                <div className="text-center text-muted" style={{ fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                  <CheckCircle2 size={15} /> Partida encerrada. O prazo de avaliação já passou
+                  {quantosAvaliaram > 0 && ` — ${quantosAvaliaram} atleta(s) avaliaram`}.
+                </div>
+              )}
+
+              {/* Desfazer um encerramento por engano */}
+              {isAdmin && partidaEncerrada && (
+                <button
+                  className="btn btn-secondary"
+                  style={{ width: 'auto', padding: '8px 16px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                  onClick={handleReopenMatch}
+                >
+                  <RefreshCw size={14} /> Reabrir partida
+                </button>
+              )}
             </motion.div>
           )}
         </>
@@ -2057,6 +2225,7 @@ export default function MatchDetails() {
                   min="0" 
                   max="30"
                   value={getPlayerEventCount(fieldActionPlayer.player.id, 'goals')}
+                  disabled={!podeEditarPlacar}
                   onFocus={e => e.target.select()}
                   onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'goal', e.target.value, e.target)}
                   style={{ width: '48px', height: '34px', textAlign: 'center', fontSize: '0.9rem', fontWeight: '800', background: 'rgba(0, 245, 155, 0.12)', border: '1px solid rgba(0, 245, 155, 0.4)', borderRadius: '8px', color: 'var(--primary)', padding: 0, margin: 0 }}
@@ -2070,6 +2239,7 @@ export default function MatchDetails() {
                   min="0" 
                   max="30"
                   value={getPlayerEventCount(fieldActionPlayer.player.id, 'assists')}
+                  disabled={!podeEditarPlacar}
                   onFocus={e => e.target.select()}
                   onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'assist', e.target.value, e.target)}
                   style={{ width: '48px', height: '34px', textAlign: 'center', fontSize: '0.9rem', fontWeight: '800', background: 'rgba(251, 191, 36, 0.12)', border: '1px solid rgba(251, 191, 36, 0.4)', borderRadius: '8px', color: '#fbbf24', padding: 0, margin: 0 }}
@@ -2078,10 +2248,10 @@ export default function MatchDetails() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button className="btn btn-secondary" onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)}>
+              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao} onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)}>
                 🔄 Trocar de Equipe
               </button>
-              <button className="btn btn-secondary" onClick={() => {
+              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao} onClick={() => {
                 setSubstituteTarget({ user_id: fieldActionPlayer.player.id, name: getPrimaryName(fieldActionPlayer.player) });
                 setFieldActionPlayer(null);
               }}>
@@ -2190,12 +2360,16 @@ export default function MatchDetails() {
       )}
 
       {/* Vestiário (Avaliação da Partida) - Full Scrollable View for All Players */}
-      {showRating && (
+      {showRating && podeAvaliar && (
         <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card mt-4" style={{ borderColor: '#fbbf24', padding: '16px' }}>
           <div style={{ padding: '0 8px' }}>
             <h3 className="font-bold text-xl md:text-2xl mb-1 text-center text-yellow-400">Vestiário (Avaliação da Partida)</h3>
-            <p className="text-center text-muted text-xs md:text-sm mb-6">
-              Dê a nota para o desempenho de cada jogador na partida de hoje! ({Object.keys(ratings).length}/{allMatchPlayers.length} avaliados)
+            <p className="text-center text-muted text-xs md:text-sm mb-2">
+              Dê a nota de cada jogador que entrou em campo, inclusive a sua. ({Object.keys(ratings).length}/{allMatchPlayers.length} avaliados)
+            </p>
+            <p className="text-center text-xs mb-6" style={{ color: '#fbbf24', fontWeight: 700 }}>
+              <Clock size={13} style={{ display: 'inline', verticalAlign: '-2px', marginRight: '4px' }} />
+              Você tem <ContadorPrazo terminaEm={match.rating_ends_at} agoraServidor={match.server_now} /> para enviar ou corrigir.
             </p>
           </div>
           
@@ -2238,7 +2412,7 @@ export default function MatchDetails() {
           
           <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
             <button className="btn py-3 text-sm md:text-lg font-bold" style={{ flex: '1 1 200px' }} onClick={submitRatings}>
-              <CheckCircle2 size={18} /> Confirmar & Finalizar Partida
+              <CheckCircle2 size={18} /> {jaAvaliei ? 'Atualizar minha avaliação' : 'Enviar minha avaliação'}
             </button>
             <button className="btn btn-secondary py-3 text-sm md:text-lg" style={{ flex: '1 1 100px' }} onClick={() => setShowRating(false)}>Voltar</button>
           </div>

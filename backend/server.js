@@ -94,9 +94,11 @@ const dbAll = (sql, args = []) => new Promise((resolve, reject) =>
   db.all(sql, args, (err, rows) => err ? reject(err) : resolve(rows || [])));
 const dbGet = (sql, args = []) => new Promise((resolve, reject) =>
   db.get(sql, args, (err, row) => err ? reject(err) : resolve(row)));
+const dbRun = (sql, args = []) => new Promise((resolve, reject) =>
+  db.run(sql, args, function (err) { err ? reject(err) : resolve(this || {}); }));
 
 // Colunas de um atleta que sempre podem trafegar sem custo.
-const USER_COLS = 'id, username, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email';
+const USER_COLS = 'id, username, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email, is_admin';
 
 // As fotos ficam guardadas como data URI Base64 (ate 400KB cada). Trazer isso em
 // toda listagem colocava ~7MB na memoria do servidor por request e era o que
@@ -132,6 +134,104 @@ function withPhotoUrls(row, userId) {
   return out;
 }
 
+// ---------------------------------------------------------------------------
+// Migrações. Rodam a cada boot e ignoram o erro de "coluna já existe", então
+// podem ser aplicadas quantas vezes for.
+// ---------------------------------------------------------------------------
+async function runMigrations() {
+  const passos = [
+    // Momento em que a partida foi encerrada: é daqui que conta o prazo de avaliação
+    'ALTER TABLE matches ADD COLUMN finished_at TEXT',
+    // Administrador de verdade, em vez de deduzir pelo nome do usuário
+    'ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0',
+    // Cada atleta dá no máximo uma nota por companheiro em cada partida
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_ratings_unicas ON ratings (match_id, rater_id, rated_id)'
+  ];
+
+  for (const sql of passos) {
+    try {
+      await dbRun(sql);
+      console.log('🛠️  Migração aplicada:', sql.slice(0, 60));
+    } catch (err) {
+      if (!/duplicate column|already exists/i.test(err.message || '')) {
+        console.error('⚠️  Migração falhou:', sql, '->', err.message);
+      }
+    }
+  }
+
+  // Promove uma única vez quem a regra antiga (comparação por nome) reconhecia
+  // como administrador, para o app parar de depender dessa comparação frágil.
+  try {
+    const atual = await dbGet('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1');
+    if (atual && Number(atual.n) === 0) {
+      const r = await dbRun(
+        "UPDATE users SET is_admin = 1 WHERE LOWER(username) LIKE '%thiago%' OR LOWER(COALESCE(nickname, '')) LIKE '%fela%'"
+      );
+      console.log(`✅ Administrador migrado para a coluna is_admin (${r.changes || 0} atleta(s))`);
+    }
+  } catch (err) {
+    console.error('⚠️  Não foi possível migrar o administrador:', err.message);
+  }
+}
+runMigrations();
+
+// ---------------------------------------------------------------------------
+// Autorização
+// ---------------------------------------------------------------------------
+
+// Quem está fazendo a requisição. O app manda o próprio id no cabeçalho
+// x-user-id, mesmo mecanismo já usado pelo backup e pelos logs de auditoria.
+function getRequester(req) {
+  const id = req.headers['x-user-id'] || (req.body && req.body.requester_id);
+  if (!id) return Promise.resolve(null);
+  return dbGet('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [id]).catch(() => null);
+}
+
+function isAdminUser(user) {
+  return !!(user && Number(user.is_admin) === 1);
+}
+
+// Placar, gols, assistências, agenda e encerramento são exclusivos do administrador
+function requireAdmin(req, res, next) {
+  getRequester(req).then(user => {
+    if (!isAdminUser(user)) {
+      return res.status(403).json({ error: 'Apenas o administrador pode fazer isso.' });
+    }
+    req.requester = user;
+    next();
+  });
+}
+
+// Montar e ajustar os times fica livre enquanto a pelada não foi encerrada;
+// depois do apito só o administrador mexe, para o resultado não mudar depois.
+function requireOpenMatchOrAdmin(req, res, next) {
+  Promise.all([
+    getRequester(req),
+    dbGet('SELECT id, status FROM matches WHERE id = ?', [req.params.id])
+  ]).then(([user, match]) => {
+    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
+    req.requester = user;
+    if (isAdminUser(user)) return next();
+    if (match.status === 'completed') {
+      return res.status(403).json({ error: 'Partida encerrada: apenas o administrador pode alterá-la.' });
+    }
+    next();
+  }).catch(() => res.status(500).json({ error: 'Erro ao verificar a partida' }));
+}
+
+// Janela de avaliação: abre quando o administrador encerra a partida e dura 12 horas
+const HORAS_PARA_AVALIAR = 12;
+
+function janelaDeAvaliacao(match) {
+  if (!match || match.status !== 'completed' || !match.finished_at) {
+    return { aberta: false, terminaEm: null };
+  }
+  const encerrada = new Date(match.finished_at).getTime();
+  if (isNaN(encerrada)) return { aberta: false, terminaEm: null };
+  const fim = encerrada + HORAS_PARA_AVALIAR * 60 * 60 * 1000;
+  return { aberta: Date.now() < fim, terminaEm: new Date(fim).toISOString() };
+}
+
 const INVITE_CODE = 'JOGO2026';
 
 // Sistema de Auditoria em Tempo Real (Horário de Brasília)
@@ -155,10 +255,9 @@ app.get('/audit-logs', (req, res) => {
   const requesterId = req.headers['x-user-id'];
   if (!requesterId) return res.status(403).json({ error: 'Acesso não autorizado.' });
 
-  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
     if (err || !user) return res.status(403).json({ error: 'Usuário não encontrado.' });
-    const isAdmin = user.id === 1 || (user.username && user.username.toLowerCase().includes('thiago')) || (user.nickname && user.nickname.toLowerCase().includes('fela'));
-    if (!isAdmin) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+    if (!isAdminUser(user)) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
 
     db.all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300', [], (err2, rows) => {
       if (err2) return res.status(500).json({ error: err2.message });
@@ -170,9 +269,8 @@ app.get('/audit-logs', (req, res) => {
 // Limpar logs de auditoria (Apenas Admin)
 app.delete('/audit-logs', (req, res) => {
   const requesterId = req.headers['x-user-id'];
-  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
-    const isAdmin = user && (user.id === 1 || user.username.toLowerCase().includes('thiago') || (user.nickname && user.nickname.toLowerCase().includes('fela')));
-    if (!isAdmin) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
+    if (!isAdminUser(user)) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
 
     db.run('DELETE FROM audit_logs', [], (err2) => {
       if (err2) return res.status(500).json({ error: err2.message });
@@ -187,7 +285,7 @@ app.post('/audit-logs', (req, res) => {
   const { action, details } = req.body;
   const requesterId = req.headers['x-user-id'];
   if (requesterId) {
-    db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+    db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
       const name = user ? (user.nickname ? `${user.username} (${user.nickname.split(',')[0].trim()})` : user.username) : 'Atleta';
       logAudit(requesterId, name, action || 'GERAL', details || 'Ação registrada');
       res.json({ success: true });
@@ -203,10 +301,9 @@ app.get('/admin/backup', (req, res) => {
   const requesterId = req.headers['x-user-id'];
   if (!requesterId) return res.status(403).json({ error: 'Acesso não autorizado.' });
 
-  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
     if (err || !user) return res.status(403).json({ error: 'Usuário não encontrado.' });
-    const isAdmin = user.id === 1 || (user.username && user.username.toLowerCase().includes('thiago')) || (user.nickname && user.nickname.toLowerCase().includes('fela'));
-    if (!isAdmin) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+    if (!isAdminUser(user)) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
 
     const backupData = {
       app: 'plugshawtycafetoes FC',
@@ -396,9 +493,8 @@ app.post('/users/:id/skip-pin', (req, res) => {
 // Resetar PIN de um usuário (Apenas Administrador / Thiago)
 app.post('/users/:id/reset-pin', (req, res) => {
   const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
-  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, adminUser) => {
-    const isAdmin = adminUser && (adminUser.id === 1 || adminUser.username.toLowerCase().includes('thiago') || adminUser.username.toLowerCase().includes('fela'));
-    if (!isAdmin && String(requesterId) !== String(req.params.id)) {
+  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, adminUser) => {
+    if (!isAdminUser(adminUser) && String(requesterId) !== String(req.params.id)) {
       return res.status(403).json({ error: 'Apenas administradores podem resetar o PIN de outros jogadores.' });
     }
 
@@ -464,15 +560,13 @@ function verifyUserOwnership(req, res, targetPlayerId, callback) {
     return;
   }
 
-  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
     if (err || !user) {
       res.status(403).json({ error: 'Acesso negado: Usuário solicitante não encontrado.' });
       return;
     }
 
-    const isAdmin = user.id === 1 || 
-      (user.username && user.username.toLowerCase().includes('thiago')) || 
-      (user.nickname && user.nickname.toLowerCase().includes('fela'));
+    const isAdmin = isAdminUser(user);
 
     if (isAdmin || String(requesterId) === String(targetPlayerId)) {
       return callback(user, isAdmin);
@@ -812,16 +906,12 @@ app.delete('/users/:id', (req, res) => {
     return res.status(403).json({ error: 'Acesso negado: Usuário não identificado.' });
   }
 
-  db.get('SELECT id, username, nickname FROM users WHERE id = ?', [requesterId], (err, user) => {
+  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
     if (err || !user) {
       return res.status(403).json({ error: 'Acesso negado: Usuário solicitante não encontrado.' });
     }
 
-    const isAdmin = user.id === 1 || 
-      (user.username && user.username.toLowerCase().includes('thiago')) || 
-      (user.nickname && user.nickname.toLowerCase().includes('fela'));
-
-    if (!isAdmin) {
+    if (!isAdminUser(user)) {
       return res.status(403).json({ error: 'Acesso negado: Apenas o Administrador pode excluir jogadores do clube.' });
     }
 
@@ -841,7 +931,7 @@ app.delete('/users/:id', (req, res) => {
 });
 
 // -- MATCHES --
-app.post('/matches', (req, res) => {
+app.post('/matches', requireAdmin, (req, res) => {
   const { date, time, location } = req.body;
   const matchTime = (time && time.trim()) ? time.trim() : '15h';
   const matchLocation = (location && location.trim()) ? location.trim() : 'Arena Petrópolis';
@@ -851,11 +941,23 @@ app.post('/matches', (req, res) => {
   });
 });
 
-app.put('/matches/:id', (req, res) => {
+app.put('/matches/:id', requireAdmin, (req, res) => {
   const { status, date, time, location } = req.body;
   const fields = [];
   const args = [];
-  if (status !== undefined) { fields.push('status = ?'); args.push(status); }
+  if (status !== undefined) {
+    fields.push('status = ?');
+    args.push(status);
+    if (status === 'completed') {
+      // Marca o apito final: é daqui que contam as 12 horas de avaliação.
+      // COALESCE preserva o horário original caso já estivesse encerrada.
+      fields.push('finished_at = COALESCE(finished_at, ?)');
+      args.push(new Date().toISOString());
+    } else {
+      // Reabrir a partida zera o prazo, que recomeça no próximo encerramento
+      fields.push('finished_at = NULL');
+    }
+  }
   if (date !== undefined) { fields.push('date = ?'); args.push(date); }
   if (time !== undefined) { fields.push('time = ?'); args.push(time); }
   if (location !== undefined) { fields.push('location = ?'); args.push(location); }
@@ -916,6 +1018,7 @@ app.get('/matches', (req, res) => {
 
 app.get('/matches/:id', async (req, res) => {
   const matchId = req.params.id;
+  const requesterId = req.headers['x-user-id'] || null;
 
   try {
     const match = await dbGet('SELECT * FROM matches WHERE id = ?', [matchId]);
@@ -924,7 +1027,7 @@ app.get('/matches/:id', async (req, res) => {
     // As quatro consultas abaixo nao dependem umas das outras. Antes cada uma
     // esperava o callback da anterior, somando quatro idas e voltas ate o banco
     // na nuvem; em paralelo o custo passa a ser o da consulta mais lenta.
-    const [teamRows, goalRows, assistRows, ratingRows] = await Promise.all([
+    const [teamRows, goalRows, assistRows, ratingRows, raterRows, myRatingRows] = await Promise.all([
       dbAll(`
         SELECT t.id as team_id, t.name as team_name, t.manual_score, u.id as user_id, u.username, u.nickname, u.position,
                u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical, ${photoCols('u')}
@@ -957,7 +1060,16 @@ app.get('/matches/:id', async (req, res) => {
         FROM ratings r
         JOIN users u ON r.rated_id = u.id
         WHERE r.match_id = ?
-      `, [matchId])
+      `, [matchId]),
+
+      // Quem ja avaliou, para a tela mostrar o progresso. Nao expomos qual nota
+      // cada um deu para ninguem alem do proprio avaliador.
+      dbAll('SELECT DISTINCT rater_id FROM ratings WHERE match_id = ?', [matchId]),
+
+      // As notas que quem esta pedindo a partida ja registrou
+      requesterId
+        ? dbAll('SELECT rated_id, score FROM ratings WHERE match_id = ? AND rater_id = ?', [matchId, requesterId])
+        : Promise.resolve([])
     ]);
 
     const teams = {};
@@ -996,6 +1108,15 @@ app.get('/matches/:id', async (req, res) => {
       }
     });
 
+    // Estado da janela de avaliação. O relógio que vale é o do servidor: mandamos
+    // server_now junto para o contador da tela não depender da hora do celular.
+    const janela = janelaDeAvaliacao(match);
+    match.rating_open = janela.aberta;
+    match.rating_ends_at = janela.terminaEm;
+    match.server_now = new Date().toISOString();
+    match.raters = raterRows.map(r => Number(r.rater_id));
+    match.my_ratings = Object.fromEntries(myRatingRows.map(r => [r.rated_id, r.score]));
+
     res.json(match);
   } catch (err) {
     console.error('Erro ao carregar partida:', err.message);
@@ -1003,52 +1124,41 @@ app.get('/matches/:id', async (req, res) => {
   }
 });
 
-app.post('/matches/:id/teams', (req, res) => {
+app.post('/matches/:id/teams', requireOpenMatchOrAdmin, async (req, res) => {
   const matchId = req.params.id;
   const { teams } = req.body;
-  
-  db.serialize(() => {
-    // 1. Delete existing team_players for this match
-    db.run('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
-    // 2. Delete existing teams for this match
-    db.run('DELETE FROM teams WHERE match_id = ?', [matchId]);
+
+  try {
+    // Mesma armadilha do DELETE: sem aguardar cada comando, os INSERT dos times
+    // novos corriam junto com o DELETE dos antigos e a escalação saía embaralhada.
+    await dbRun('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
+    await dbRun('DELETE FROM teams WHERE match_id = ?', [matchId]);
 
     if (!teams || teams.length === 0) {
       return res.json({ success: true });
     }
 
-    let completedTeams = 0;
-    teams.forEach(team => {
-      db.run('INSERT INTO teams (match_id, name) VALUES (?, ?)', [matchId, team.name], function(err) {
-        if (err) console.error('Error creating team:', err);
-        const teamId = this.lastID;
-        const playerIds = team.playerIds || [];
+    for (const team of teams) {
+      const criado = await dbRun('INSERT INTO teams (match_id, name) VALUES (?, ?)', [matchId, team.name]);
+      const teamId = criado.lastID;
+      const playerIds = team.playerIds || [];
+      if (playerIds.length === 0) continue;
 
-        if (playerIds.length === 0) {
-          completedTeams++;
-          if (completedTeams === teams.length) res.json({ success: true });
-          return;
-        }
+      // Uma única ida ao banco para escalar o time inteiro
+      const placeholders = playerIds.map(() => '(?, ?)').join(', ');
+      const args = playerIds.flatMap(playerId => [teamId, playerId]);
+      await dbRun(`INSERT INTO team_players (team_id, user_id) VALUES ${placeholders}`, args);
+    }
 
-        let insertedPlayers = 0;
-        playerIds.forEach(playerId => {
-          db.run('INSERT INTO team_players (team_id, user_id) VALUES (?, ?)', [teamId, playerId], () => {
-            insertedPlayers++;
-            if (insertedPlayers === playerIds.length) {
-              completedTeams++;
-              if (completedTeams === teams.length) {
-                res.json({ success: true });
-              }
-            }
-          });
-        });
-      });
-    });
-  });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Erro ao salvar os times:', err.message);
+    res.status(500).json({ error: 'Não foi possível salvar a escalação.' });
+  }
 });
 
 // Update team manual score
-app.put('/matches/:id/team-score', (req, res) => {
+app.put('/matches/:id/team-score', requireAdmin, (req, res) => {
   const { team_id, score } = req.body;
   const numScore = parseInt(score, 10);
   db.run('UPDATE teams SET manual_score = ? WHERE id = ?', [isNaN(numScore) ? null : numScore, team_id], (err) => {
@@ -1058,7 +1168,7 @@ app.put('/matches/:id/team-score', (req, res) => {
 });
 
 // Update player goals or assists count directly
-app.put('/matches/:id/player-events', (req, res) => {
+app.put('/matches/:id/player-events', requireAdmin, (req, res) => {
   const matchId = req.params.id;
   const { user_id, type, count } = req.body;
   const table = type === 'goal' ? 'goals' : 'assists';
@@ -1081,7 +1191,7 @@ app.put('/matches/:id/player-events', (req, res) => {
 });
 
 // -- EVENTS (Goals, Assists) --
-app.post('/events', (req, res) => {
+app.post('/events', requireAdmin, (req, res) => {
   const { type, match_id, user_id } = req.body;
   if (type === 'goal') {
     db.run('INSERT INTO goals (match_id, user_id) VALUES (?, ?)', [match_id, user_id], function() {
@@ -1097,44 +1207,101 @@ app.post('/events', (req, res) => {
 });
 
 // -- RATINGS --
-app.post('/ratings', (req, res) => {
-  const { match_id, rater_id, rated_id, score } = req.body;
-  db.run('INSERT INTO ratings (match_id, rater_id, rated_id, score) VALUES (?, ?, ?, ?)', 
-    [match_id, rater_id, rated_id, score], function(err) {
-      res.json({ success: true });
-  });
+// Envio das notas da partida. Cada atleta que entrou em campo avalia todos os
+// jogadores (inclusive a si mesmo), e pode reenviar para corrigir enquanto o prazo
+// de 12 horas depois do encerramento não terminar.
+app.post('/ratings', async (req, res) => {
+  try {
+    const matchId = req.body.match_id;
+    const notas = req.body.ratings || {};
+
+    const avaliador = await getRequester(req);
+    if (!avaliador) return res.status(403).json({ error: 'Faça login novamente para avaliar.' });
+
+    const match = await dbGet('SELECT id, status, finished_at FROM matches WHERE id = ?', [matchId]);
+    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
+
+    const janela = janelaDeAvaliacao(match);
+    if (!janela.aberta) {
+      return res.status(403).json({
+        error: match.status === 'completed'
+          ? 'O prazo de 12 horas para avaliar esta partida já encerrou.'
+          : 'A partida ainda não foi encerrada pelo administrador.'
+      });
+    }
+
+    // Só quem entrou em campo avalia, e só dá nota a quem também jogou
+    const escalados = await dbAll(
+      'SELECT tp.user_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ?',
+      [matchId]
+    );
+    const jogaram = new Set(escalados.map(r => Number(r.user_id)));
+
+    if (!jogaram.has(Number(avaliador.id))) {
+      return res.status(403).json({ error: 'Somente quem jogou esta partida pode avaliar.' });
+    }
+
+    const entradas = Object.entries(notas)
+      .map(([id, nota]) => [Number(id), Math.round(Number(nota))])
+      .filter(([id, nota]) => jogaram.has(id) && nota >= 1 && nota <= 5);
+
+    if (entradas.length === 0) {
+      return res.status(400).json({ error: 'Nenhuma nota válida foi enviada.' });
+    }
+
+    // Reenviar substitui as notas anteriores deste avaliador em vez de somar linhas
+    await dbRun('DELETE FROM ratings WHERE match_id = ? AND rater_id = ?', [matchId, avaliador.id]);
+
+    const placeholders = entradas.map(() => '(?, ?, ?, ?)').join(', ');
+    const args = entradas.flatMap(([ratedId, nota]) => [matchId, avaliador.id, ratedId, nota]);
+    await dbRun(`INSERT INTO ratings (match_id, rater_id, rated_id, score) VALUES ${placeholders}`, args);
+
+    logAudit(avaliador.id, avaliador.username, 'AVALIAÇÃO', `Avaliou ${entradas.length} atleta(s) na partida ${matchId}`);
+    res.json({ success: true, saved: entradas.length, rating_ends_at: janela.terminaEm });
+  } catch (err) {
+    console.error('Erro ao gravar avaliações:', err.message);
+    res.status(500).json({ error: 'Erro ao gravar as avaliações' });
+  }
 });
 
 // Delete individual goal or assist
-app.delete('/goals/:id', (req, res) => {
+app.delete('/goals/:id', requireAdmin, (req, res) => {
   db.run('DELETE FROM goals WHERE id = ?', [req.params.id], (err) => {
     res.json({ success: true });
   });
 });
 
-app.delete('/assists/:id', (req, res) => {
+app.delete('/assists/:id', requireAdmin, (req, res) => {
   db.run('DELETE FROM assists WHERE id = ?', [req.params.id], (err) => {
     res.json({ success: true });
   });
 });
 
 // Delete match and all related records
-app.delete('/matches/:id', (req, res) => {
+app.delete('/matches/:id', requireAdmin, async (req, res) => {
   const matchId = req.params.id;
-  db.serialize(() => {
-    db.run('DELETE FROM ratings WHERE match_id = ?', [matchId]);
-    db.run('DELETE FROM goals WHERE match_id = ?', [matchId]);
-    db.run('DELETE FROM assists WHERE match_id = ?', [matchId]);
-    db.run('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
-    db.run('DELETE FROM teams WHERE match_id = ?', [matchId]);
-    db.run('DELETE FROM matches WHERE id = ?', [matchId], (err) => {
-      res.json({ success: true });
-    });
-  });
+  try {
+    // A ordem importa: o Turso valida chaves estrangeiras, então os registros
+    // filhos precisam sair antes da partida. O db.serialize do driver não
+    // serializa de fato — disparava os seis comandos em paralelo, e o DELETE da
+    // partida falhava por FOREIGN KEY enquanto a API respondia sucesso.
+    await dbRun('DELETE FROM ratings WHERE match_id = ?', [matchId]);
+    await dbRun('DELETE FROM goals WHERE match_id = ?', [matchId]);
+    await dbRun('DELETE FROM assists WHERE match_id = ?', [matchId]);
+    await dbRun('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
+    await dbRun('DELETE FROM teams WHERE match_id = ?', [matchId]);
+    await dbRun('DELETE FROM matches WHERE id = ?', [matchId]);
+
+    logAudit(req.requester.id, req.requester.username, 'PARTIDA', `Excluiu a partida ${matchId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Erro ao excluir partida:', err.message);
+    res.status(500).json({ error: 'Não foi possível excluir a partida.' });
+  }
 });
 
 // Switch player between teams (Time A <-> Time B)
-app.put('/matches/:id/switch-team', (req, res) => {
+app.put('/matches/:id/switch-team', requireOpenMatchOrAdmin, (req, res) => {
   const matchId = req.params.id;
   const { user_id } = req.body;
   db.all('SELECT id FROM teams WHERE match_id = ?', [matchId], (err, teams) => {
@@ -1154,7 +1321,7 @@ app.put('/matches/:id/switch-team', (req, res) => {
 });
 
 // Replace a player in a team with another player from the roster
-app.put('/matches/:id/replace-player', (req, res) => {
+app.put('/matches/:id/replace-player', requireOpenMatchOrAdmin, (req, res) => {
   const matchId = req.params.id;
   const { old_user_id, new_user_id } = req.body;
   db.all('SELECT id FROM teams WHERE match_id = ?', [matchId], (err, teams) => {
@@ -1169,7 +1336,7 @@ app.put('/matches/:id/replace-player', (req, res) => {
 });
 
 // Add a new player to a team in an ongoing match
-app.put('/matches/:id/add-player', (req, res) => {
+app.put('/matches/:id/add-player', requireOpenMatchOrAdmin, (req, res) => {
   const matchId = req.params.id;
   const { user_id, team_id } = req.body;
   

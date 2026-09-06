@@ -9,3 +9,15 @@ export const formatPhotoUrl = (photo) => {
   }
   return `${API_URL}${photo}`;
 };
+
+/**
+ * Cabeçalho que identifica quem está fazendo a requisição.
+ * O backend usa isso para liberar as ações exclusivas do administrador.
+ */
+export const authHeaders = (user, extra = {}) => ({
+  ...extra,
+  ...(user && user.id ? { 'x-user-id': String(user.id) } : {})
+});
+
+/** Administrador do clube, definido pela coluna is_admin do banco. */
+export const isAdminUser = (user) => !!(user && Number(user.is_admin) === 1);
