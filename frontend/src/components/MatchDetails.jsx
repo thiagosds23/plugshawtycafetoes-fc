@@ -2401,15 +2401,39 @@ export default function MatchDetails() {
                     const avaliado = nota !== undefined && nota !== null;
                     const valorBarra = avaliado ? nota : 5;
                     const cor = avaliado ? corDaNota(nota) : 'rgba(255,255,255,0.22)';
+                    // O que o atleta produziu em campo, para ajudar a decidir a nota
+                    const golsNaPartida = getPlayerEventCount(p.id, 'goals');
+                    const assistsNaPartida = getPlayerEventCount(p.id, 'assists');
 
                     return (
                       <div key={p.id} className="p-3" style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '12px', border: `1px solid ${avaliado ? cor + '55' : 'var(--border)'}`, transition: 'border-color 0.2s ease' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', marginBottom: '10px' }}>
-                          <span className="font-bold text-main" style={{ fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {getPrimaryName(p)}
-                            {user && user.id === p.id && <span style={{ fontSize: '10px', color: 'var(--primary)', marginLeft: '6px' }}>(Você)</span>}
-                          </span>
-                          <span style={{ fontSize: '1.45rem', fontWeight: 900, color: cor, lineHeight: 1, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '10px' }}>
+                          <div style={{ minWidth: 0 }}>
+                            <div className="font-bold text-main" style={{ fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', lineHeight: 1.2 }}>
+                              {getPrimaryName(p)}
+                              {user && user.id === p.id && <span style={{ fontSize: '10px', color: 'var(--primary)', marginLeft: '6px' }}>(Você)</span>}
+                            </div>
+
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '4px', fontSize: '0.72rem', fontWeight: 800, minHeight: '15px' }}>
+                              {golsNaPartida > 0 && (
+                                <span style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '3px' }} title="Gols na partida">
+                                  <Goal size={13} /> {golsNaPartida}
+                                </span>
+                              )}
+                              {assistsNaPartida > 0 && (
+                                <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '3px' }} title="Assistências na partida">
+                                  <Footprints size={13} /> {assistsNaPartida}
+                                </span>
+                              )}
+                              {golsNaPartida === 0 && assistsNaPartida === 0 && (
+                                <span style={{ color: 'var(--text-muted)', fontWeight: 600, fontSize: '0.68rem' }}>
+                                  sem gols ou assistências
+                                </span>
+                              )}
+                            </div>
+                          </div>
+
+                          <span style={{ fontSize: '1.45rem', fontWeight: 900, color: cor, lineHeight: 1.1, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
                             {avaliado ? nota : '–'}
                           </span>
                         </div>
