@@ -175,6 +175,15 @@ function parseWhatsAppList(text, playersList) {
   return recognized;
 }
 
+/** Cor da nota na escala de 0 a 10, do vermelho ao verde do clube. */
+export function corDaNota(nota) {
+  if (nota >= 9) return '#00f59b';
+  if (nota >= 7) return '#4ade80';
+  if (nota >= 5) return '#fbbf24';
+  if (nota >= 3) return '#fb923c';
+  return '#ef4444';
+}
+
 /**
  * Contador regressivo do prazo de avaliação.
  *
@@ -353,10 +362,13 @@ export default function MatchDetails() {
     const selected = allPlayers.filter(p => selectedPlayers.includes(p.id));
     if (selected.length === 0) return;
 
-    // Sort descending by Effective Power: OVR + (avg_rating * 2)
+    // Ordena pela Força Efetiva: OVR + nota média.
+    // A nota já vem na escala de 0 a 10, então entra direto. Antes ela ia de 0 a 5
+    // e era multiplicada por 2 para chegar ao mesmo peso — manter a multiplicação
+    // agora dobraria a influência da nota no sorteio.
     selected.sort((a, b) => {
-      const powerA = calcOVR(a) + ((a.avg_rating || 0) * 2);
-      const powerB = calcOVR(b) + ((b.avg_rating || 0) * 2);
+      const powerA = calcOVR(a) + (a.avg_rating || 0);
+      const powerB = calcOVR(b) + (b.avg_rating || 0);
       return powerB - powerA;
     });
 
@@ -604,7 +616,7 @@ export default function MatchDetails() {
 
   const submitRatings = async () => {
     const notas = Object.fromEntries(
-      Object.entries(ratings).filter(([, nota]) => nota >= 1 && nota <= 5)
+      Object.entries(ratings).filter(([, nota]) => nota >= 0 && nota <= 10)
     );
 
     if (Object.keys(notas).length === 0) {
@@ -2381,30 +2393,47 @@ export default function MatchDetails() {
                   <Shield size={16} /> {team.name}
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
-                  {team.players.map(p => (
-                    <div key={p.id} className="flex justify-between items-center p-3" style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '12px', border: '1px solid var(--border)', flexWrap: 'wrap', gap: '8px' }}>
-                      <div style={{ flex: '1 1 auto', minWidth: '100px' }}>
-                        <span className="font-bold text-main" style={{ fontSize: '0.95rem' }}>{getPrimaryName(p)}</span>
-                        {user && user.id === p.id && <span style={{ fontSize: '10px', color: 'var(--primary)', marginLeft: '6px' }}>(Você)</span>}
-                      </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 300px), 1fr))', gap: '12px' }}>
+                  {team.players.map(p => {
+                    const nota = ratings[p.id];
+                    // Nota 0 é válida, então "ainda não avaliei" precisa ser a ausência
+                    // do valor, e não o zero.
+                    const avaliado = nota !== undefined && nota !== null;
+                    const valorBarra = avaliado ? nota : 5;
+                    const cor = avaliado ? corDaNota(nota) : 'rgba(255,255,255,0.22)';
 
-                      <div className="flex gap-1" style={{ flexShrink: 0 }}>
-                        {[1, 2, 3, 4, 5].map(star => (
-                          <Star 
-                            key={star} 
-                            size={22} 
-                            color={ratings[p.id] >= star ? '#fbbf24' : 'rgba(255,255,255,0.1)'} 
-                            fill={ratings[p.id] >= star ? '#fbbf24' : 'none'}
-                            cursor="pointer"
-                            onClick={() => setRatings({ ...ratings, [p.id]: star })}
-                            style={{ transition: 'transform 0.15s ease' }}
-                            className="hover:scale-125"
-                          />
-                        ))}
+                    return (
+                      <div key={p.id} className="p-3" style={{ background: 'rgba(255,255,255,0.04)', borderRadius: '12px', border: `1px solid ${avaliado ? cor + '55' : 'var(--border)'}`, transition: 'border-color 0.2s ease' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '8px', marginBottom: '10px' }}>
+                          <span className="font-bold text-main" style={{ fontSize: '0.95rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {getPrimaryName(p)}
+                            {user && user.id === p.id && <span style={{ fontSize: '10px', color: 'var(--primary)', marginLeft: '6px' }}>(Você)</span>}
+                          </span>
+                          <span style={{ fontSize: '1.45rem', fontWeight: 900, color: cor, lineHeight: 1, flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                            {avaliado ? nota : '–'}
+                          </span>
+                        </div>
+
+                        <input
+                          type="range"
+                          min="0"
+                          max="10"
+                          step="1"
+                          value={valorBarra}
+                          onChange={e => setRatings({ ...ratings, [p.id]: Number(e.target.value) })}
+                          className="nota-slider"
+                          style={{ '--nota-cor': cor, '--nota-pct': `${valorBarra * 10}%` }}
+                          aria-label={`Nota de ${getPrimaryName(p)}, de 0 a 10`}
+                        />
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.62rem', color: 'var(--text-muted)', fontWeight: 700, marginTop: '2px' }}>
+                          <span>0</span>
+                          {!avaliado && <span style={{ fontSize: '0.6rem' }}>arraste para dar a nota</span>}
+                          <span>10</span>
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             ))}

@@ -96,7 +96,7 @@ export default function Dashboard() {
     if (p.avg_rating && p.avg_rating === maxRating && maxRating > 0) {
       medals.push({ icon: <Crown size={14} color="#ffd700" />, title: period === 'month' ? 'Craque do Mês' : 'MVP da Temporada', bg: 'rgba(255, 215, 0, 0.2)' });
     }
-    if (p.avg_rating && p.avg_rating === minRating && minRating < 3 && stats.length > 2) {
+    if (p.avg_rating && p.avg_rating === minRating && minRating < 6 && stats.length > 2) {
       medals.push({ icon: <ThumbsDown size={14} color="#ff3366" />, title: 'Pé Murcho (Café com Leite)', bg: 'rgba(255, 51, 102, 0.15)' });
     }
 
@@ -768,10 +768,10 @@ export default function Dashboard() {
                         <span style={{ 
                           fontWeight: '900', 
                           fontSize: '0.95rem',
-                          color: player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)'),
+                          color: player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)'),
                           display: 'inline-flex', alignItems: 'center', gap: '4px'
                         }}>
-                          <StarIcon size={14} fill={player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)')} color={player.avg_rating >= 4 ? 'var(--primary)' : (player.avg_rating >= 3 ? '#fbbf24' : 'var(--text-muted)')} />{player.avg_rating.toFixed(1)}
+                          <StarIcon size={14} fill={player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)')} color={player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)')} />{player.avg_rating.toFixed(1)}
                         </span>
                       ) : (
                         <span className="text-muted text-xs">-</span>

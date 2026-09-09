@@ -138,6 +138,31 @@ function withPhotoUrls(row, userId) {
 // Migrações. Rodam a cada boot e ignoram o erro de "coluna já existe", então
 // podem ser aplicadas quantas vezes for.
 // ---------------------------------------------------------------------------
+/**
+ * Executa uma migração de dados no máximo uma vez na vida do banco.
+ *
+ * O marcador é gravado ANTES do trabalho: se outra instância do servidor subir ao
+ * mesmo tempo, a chave primária rejeita a segunda e o dado não é convertido duas
+ * vezes — o que, no caso das notas, dobraria valores já dobrados.
+ */
+async function aplicarUmaVez(nome, executar) {
+  try {
+    await dbRun('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)', [nome, new Date().toISOString()]);
+  } catch (err) {
+    return false; // já aplicada anteriormente
+  }
+
+  try {
+    await executar();
+    return true;
+  } catch (err) {
+    // Desfaz o marcador para a migração poder ser tentada de novo no próximo boot
+    await dbRun('DELETE FROM schema_migrations WHERE name = ?', [nome]).catch(() => {});
+    console.error(`⚠️  Migração "${nome}" falhou:`, err.message);
+    return false;
+  }
+}
+
 async function runMigrations() {
   const passos = [
     // Momento em que a partida foi encerrada: é daqui que conta o prazo de avaliação
@@ -158,6 +183,17 @@ async function runMigrations() {
       }
     }
   }
+
+  // Migrações que alteram DADOS (e não o formato) não podem simplesmente rodar de
+  // novo a cada boot, então ficam registradas nesta tabela.
+  await dbRun('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)').catch(() => {});
+
+  // Converte as notas antigas, dadas em estrelas de 1 a 5, para a escala de 0 a 10.
+  // Uma nota 4 vira 8, mantendo a proporção.
+  await aplicarUmaVez('notas_escala_0_a_10', async () => {
+    const r = await dbRun('UPDATE ratings SET score = score * 2');
+    console.log(`⭐ ${r.changes || 0} nota(s) convertidas de 0-5 para 0-10`);
+  });
 
   // Promove uma única vez quem a regra antiga (comparação por nome) reconhecia
   // como administrador, para o app parar de depender dessa comparação frágil.
@@ -1243,7 +1279,7 @@ app.post('/ratings', async (req, res) => {
 
     const entradas = Object.entries(notas)
       .map(([id, nota]) => [Number(id), Math.round(Number(nota))])
-      .filter(([id, nota]) => jogaram.has(id) && nota >= 1 && nota <= 5);
+      .filter(([id, nota]) => jogaram.has(id) && nota >= 0 && nota <= 10);
 
     if (entradas.length === 0) {
       return res.status(400).json({ error: 'Nenhuma nota válida foi enviada.' });

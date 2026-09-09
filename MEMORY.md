@@ -63,6 +63,8 @@ Livre para o grupo **até o encerramento**, depois só administrador:
 1. O administrador clica em *Encerrar Partida*. Isso grava `matches.finished_at`.
 2. A partir daí, **quem entrou em campo** (está em `team_players`) tem **12 horas**
    para dar nota a todos os jogadores da partida, inclusive a si mesmo.
+   As notas vão de **0 a 10**, escolhidas numa barra deslizante. Zero é uma nota
+   válida, então "ainda não avaliei" é a *ausência* da chave em `ratings`, nunca o zero.
 3. Dentro do prazo dá para reenviar e corrigir: o `POST /ratings` apaga as notas
    anteriores daquele avaliador e grava as novas (índice único
    `ux_ratings_unicas` impede duplicata).
@@ -73,6 +75,11 @@ Livre para o grupo **até o encerramento**, depois só administrador:
 A autorização usa o cabeçalho `x-user-id` (mesmo mecanismo do backup e da auditoria).
 Isso protege o uso normal, mas **não é autenticação de verdade** — quem souber forjar
 a requisição consegue se passar por admin. Corrigir isso exige sessão/token assinado.
+
+**Escala das notas:** de 0 a 10. As notas antigas (1 a 5) foram convertidas pelo dobro
+numa migração de dados registrada em `schema_migrations` — migração de DADOS nunca pode
+rodar a cada boot, use `aplicarUmaVez(nome, fn)`. A Força Efetiva do sorteio é
+`OVR + nota_média` (antes era `OVR + nota × 2`, porque a nota ia só até 5).
 
 **Armadilha do driver:** `db.serialize()` no wrapper do Turso NÃO serializa nada —
 ele só executa a função. Comandos que dependem de ordem (apagar filhos antes do pai,
