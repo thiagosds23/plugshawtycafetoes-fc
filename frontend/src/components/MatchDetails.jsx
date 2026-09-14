@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useContext, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
-import { Users, Shuffle, Star, Shield, ArrowLeft, Share2, Trophy, Goal, Award, Trash2, RefreshCw, UserPlus, UserCheck, X, CheckCircle2, Clipboard, Check, Sparkles, LayoutList, MapPin, Plus, Zap, Footprints, Lightbulb, Clock, Edit2 } from 'lucide-react';
+import { Users, Shuffle, Star, Shield, ArrowLeft, Share2, Trophy, Goal, Award, Trash2, RefreshCw, UserPlus, UserCheck, X, CheckCircle2, Clipboard, Check, Sparkles, LayoutList, MapPin, Plus, Zap, Footprints, Lightbulb, Clock, Edit2, Swords } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
@@ -61,8 +61,10 @@ export function getPrimaryName(player) {
 export function formatShortTeamName(name) {
   if (!name) return '';
   const upper = String(name).toUpperCase();
-  if (upper.includes('SEM')) return 'SEM';
-  if (upper.includes('COM')) return 'COM';
+  // Só os times do racha viram COM/SEM. Sem exigir "COLETE", um adversário chamado
+  // "Comercial FC" ou "Semeadores" aparecia abreviado no celular.
+  if (upper.includes('COLETE') && upper.includes('SEM')) return 'SEM';
+  if (upper.includes('COLETE') && upper.includes('COM')) return 'COM';
   return name;
 }
 
@@ -257,7 +259,7 @@ export default function MatchDetails() {
 
   // Match Edit & Add Player
   const [editMatchModal, setEditMatchModal] = useState(false);
-  const [matchEditForm, setMatchEditForm] = useState({ date: '', time: '', location: '' });
+  const [matchEditForm, setMatchEditForm] = useState({ date: '', time: '', location: '', opponent: '' });
   const [showAddPlayerModal, setShowAddPlayerModal] = useState(null); // holds teamId
 
   // Tactical Pitch Tab: 'both' | 0 | 1
@@ -356,6 +358,22 @@ export default function MatchDetails() {
     } else {
       setSelectedPlayers([...selectedPlayers, playerId]);
     }
+  };
+
+  // Contra rival não há sorteio: os convocados formam direto o nosso time
+  const saveRivalLineup = async () => {
+    if (selectedPlayers.length === 0) return;
+    const res = await fetch(`${API_URL}/matches/${id}/teams`, {
+      method: 'POST',
+      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ teams: [{ name: 'plugshawty FC', playerIds: selectedPlayers }] })
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      alert(data.error || 'Não foi possível salvar a escalação.');
+      return;
+    }
+    loadMatch();
   };
 
   const generateTeamsAuto = async () => {
@@ -780,7 +798,17 @@ export default function MatchDetails() {
     }
   };
 
-  const teamsReady = match.teams && match.teams.length >= 2;
+  // Contra rival os dois times já existem desde a criação: o nosso e o adversário, que
+  // nunca tem jogadores. A escalação só está pronta quando o nosso time recebeu atletas.
+  const isRival = match.type === 'rival';
+  const nossoTime = isRival ? (match.teams || []).find(t => !t.is_opponent) : null;
+  const teamsReady = isRival
+    ? !!(nossoTime && nossoTime.players.length > 0)
+    : !!(match.teams && match.teams.length >= 2);
+  // Times que aparecem com jogadores na tela: contra rival, só o nosso
+  const timesEscalados = isRival ? (nossoTime ? [nossoTime] : []) : (match.teams || []);
+  // Contra rival só existe o nosso time em campo, então não há o que alternar
+  const abaDoCampo = isRival ? 'team0' : pitchTab;
 
   // Calculate team OVR averages
   const getTeamOVR = (team) => {
@@ -974,7 +1002,7 @@ export default function MatchDetails() {
           }}>
             {/* Left: Time 1 */}
             <div style={{ flex: '1 1 0', textAlign: 'center', minWidth: 0 }}>
-              <div className="font-extrabold" style={{ color: '#00f59b', fontSize: 'clamp(1rem, 3.8vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap' }}>
+              <div className="font-extrabold" style={{ color: '#00f59b', fontSize: 'clamp(1rem, 3.8vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 <span className="desktop-only">{match.teams[0]?.name || 'SEM COLETE'}</span>
                 <span className="mobile-only">{formatShortTeamName(match.teams[0]?.name || 'SEM COLETE')}</span>
               </div>
@@ -1036,17 +1064,17 @@ export default function MatchDetails() {
 
             {/* Right: Time 2 */}
             <div style={{ flex: '1 1 0', textAlign: 'center', minWidth: 0 }}>
-              <div className="font-extrabold" style={{ color: '#ffffff', fontSize: 'clamp(1rem, 3.8vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap' }}>
+              <div className="font-extrabold" style={{ color: '#ffffff', fontSize: 'clamp(1rem, 3.8vw, 1.4rem)', letterSpacing: '-0.3px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 <span className="desktop-only">{match.teams[1]?.name || 'COM COLETE'}</span>
                 <span className="mobile-only">{formatShortTeamName(match.teams[1]?.name || 'COM COLETE')}</span>
               </div>
               <div className="text-muted text-xs font-bold uppercase tracking-wider mt-1">
-                OVR {getTeamOVR(match.teams[1])}
+                {isRival ? 'Adversário' : `OVR ${getTeamOVR(match.teams[1])}`}
               </div>
             </div>
           </div>
         ) : (
-          <div className="text-muted text-base my-3">Times a definir — faça a convocação e sorteie as equipes abaixo!</div>
+          <div className="text-muted text-base my-3">{isRival ? `Jogo contra ${match.opponent} — escale o time abaixo!` : 'Times a definir — faça a convocação e sorteie as equipes abaixo!'}</div>
         )}
 
         <div className="flex justify-center gap-3 mt-4">
@@ -1073,7 +1101,7 @@ export default function MatchDetails() {
               <Users color="var(--primary)" size={22} /> 1. Convocação dos Jogadores
             </h3>
             <p className="text-muted text-sm" style={{ margin: 0, lineHeight: 1.4 }}>
-              Selecione os atletas confirmados para o sorteio ou cole a lista rápida do grupo.
+              {isRival ? 'Selecione os atletas que vão entrar em campo ou cole a lista rápida do grupo.' : 'Selecione os atletas confirmados para o sorteio ou cole a lista rápida do grupo.'}
             </p>
           </div>
 
@@ -1153,13 +1181,13 @@ export default function MatchDetails() {
           
           <div style={{ paddingTop: '28px', borderTop: '1px solid var(--border)' }}>
             <h4 className="font-extrabold text-lg text-main flex items-center gap-2 mb-3">
-              <Shuffle color="var(--primary)" size={20} /> 2. Sorteio Ponderado por OVR (COM COLETE vs SEM COLETE)
+              {isRival ? <><Swords color="var(--primary)" size={20} /> 2. Escalação contra {match.opponent}</> : <><Shuffle color="var(--primary)" size={20} /> 2. Sorteio Ponderado por OVR (COM COLETE vs SEM COLETE)</>}
             </h4>
             <p className="text-muted text-xs mb-4">
-              O algoritmo equilibra automaticamente os dois times usando o OVR e a nota média de cada atleta.
+              {isRival ? 'Todos os convocados formam o time do plugshawty FC. Dá para ajustar a escalação depois.' : 'O algoritmo equilibra automaticamente os dois times pelo OVR de cada atleta, que já reflete o desempenho nas partidas.'}
             </p>
-            <button className="btn py-4 text-base font-extrabold w-full" onClick={generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              <Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)
+            <button className="btn py-4 text-base font-extrabold w-full" onClick={isRival ? saveRivalLineup : generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+              {isRival ? <><Swords size={20} /> Confirmar Escalação ({selectedPlayers.length} Atletas)</> : <><Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)</>}
             </button>
           </div>
         </div>
@@ -1433,7 +1461,7 @@ export default function MatchDetails() {
             </div>
 
             {/* Linha 2: Seletor de Time no Campo Tático (Fora da exportação da imagem) */}
-            {viewMode === 'pitch' && (
+            {viewMode === 'pitch' && !isRival && (
               <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
                 <button 
                   type="button"
@@ -1516,13 +1544,13 @@ export default function MatchDetails() {
           <div ref={cardRef} style={{ maxWidth: viewMode === 'pitch' ? '540px' : '960px', width: '100%', margin: '0 auto', padding: '24px 14px 20px', background: '#08090e', borderRadius: '0px', border: '1px solid var(--border)' }}>
             <div style={{ textAlign: 'center', marginBottom: '20px' }}>
               <h4 style={{ color: 'var(--primary)', fontWeight: '900', fontSize: '1.35rem', margin: 0, letterSpacing: '-0.3px', textTransform: 'uppercase' }}>
-                Escalação Oficial da Partida
+                {isRival ? `plugshawty FC x ${match.opponent}` : 'Escalação Oficial da Partida'}
               </h4>
               <div style={{ color: '#ffffff', fontSize: '0.88rem', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                 {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')} — {match.time || '15h'} — {match.location || 'Arena Petrópolis'}
                 <button 
                   onClick={() => {
-                    setMatchEditForm({ date: match.date || '', time: match.time || '', location: match.location || '' });
+                    setMatchEditForm({ date: match.date || '', time: match.time || '', location: match.location || '', opponent: match.opponent || '' });
                     setEditMatchModal(true);
                   }}
                   hidden={!isAdmin}
@@ -1546,7 +1574,7 @@ export default function MatchDetails() {
                   transition={{ duration: 0.28 }}
                   style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '16px' }}
                 >
-                {match.teams.map((team, idx) => (
+                {timesEscalados.map((team, idx) => (
                   <div 
                     key={team.id} 
                     className="glass-card" 
@@ -1635,6 +1663,7 @@ export default function MatchDetails() {
                                   className="btn btn-secondary" 
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
                                   title="Trocar de time (COM COLETE ⇄ SEM COLETE)" 
+                                  hidden={isRival}
                                   onClick={(e) => { e.stopPropagation(); handleSwitchTeam(p.id); }}
                                   disabled={!podeMexerNaEscalacao}
                                 >
@@ -1770,7 +1799,7 @@ export default function MatchDetails() {
                 <div 
                   style={{
                     width: '100%',
-                    minHeight: pitchTab === 'both' ? '540px' : '430px',
+                    minHeight: abaDoCampo === 'both' ? '540px' : '430px',
                     borderRadius: '22px',
                     border: '2px solid rgba(255, 255, 255, 0.35)',
                     position: 'relative',
@@ -1792,7 +1821,7 @@ export default function MatchDetails() {
                   <div style={{ position: 'absolute', inset: '8px', border: '2px solid rgba(255,255,255,0.45)', borderRadius: '14px', pointerEvents: 'none' }} />
 
                   {/* Linha do Meio de Campo e Círculo Central com Escudo Oficial Preenchendo */}
-                  {pitchTab === 'both' && (
+                  {abaDoCampo === 'both' && (
                     <>
                       <div style={{ position: 'absolute', top: '50%', left: '8px', right: '8px', height: '2px', background: 'rgba(255,255,255,0.45)', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
                       
@@ -1850,7 +1879,7 @@ export default function MatchDetails() {
                   <div style={{ position: 'absolute', bottom: '10px', right: '10px', width: '20px', height: '20px', borderLeft: '2px solid rgba(255,255,255,0.45)', borderTop: '2px solid rgba(255,255,255,0.45)', borderRadius: '20px 0 0 0', pointerEvents: 'none' }} />
 
                   {/* Renderização Tática dos Jogadores */}
-                  {pitchTab === 'both' ? (
+                  {abaDoCampo === 'both' ? (
                     <>
                       {/* Metade Superior: Time 0 */}
                       {match.teams[0] && (
@@ -1952,7 +1981,7 @@ export default function MatchDetails() {
                         </div>
                       )}
                     </>
-                  ) : pitchTab === 'team0' ? (
+                  ) : abaDoCampo === 'team0' ? (
                     match.teams[0] && (
                       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, padding: '12px 0' }}>
                         <div style={{ textAlign: 'center' }}>
@@ -2080,7 +2109,7 @@ export default function MatchDetails() {
               <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>TEMPORADA 2026</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '0.64rem', color: 'rgba(255, 255, 255, 0.45)', whiteSpace: 'nowrap' }}>
-              <span>{match.teams && match.teams[0]?.players && match.teams[1]?.players ? `${match.teams[0].players.length} VS ${match.teams[1].players.length}` : ''}</span>
+              <span>{isRival ? `VS ${match.opponent}` : (match.teams && match.teams[0]?.players && match.teams[1]?.players ? `${match.teams[0].players.length} VS ${match.teams[1].players.length}` : '')}</span>
               <span style={{ opacity: 0.35, fontSize: '0.62rem' }}>•</span>
               <span style={{ color: '#ffffff', fontWeight: '900' }}>MATCHDAY OFICIAL</span>
             </div>
@@ -2259,7 +2288,7 @@ export default function MatchDetails() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao} onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)}>
+              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao || isRival} onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)}>
                 🔄 Trocar de Equipe
               </button>
               <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao} onClick={() => {
@@ -2295,6 +2324,12 @@ export default function MatchDetails() {
                 <label className="block text-sm font-bold text-muted mb-2">Local / Arena</label>
                 <input type="text" className="input" placeholder="ex: Arena Petrópolis" required value={matchEditForm.location} onChange={e => setMatchEditForm({...matchEditForm, location: e.target.value})} />
               </div>
+              {isRival && (
+                <div className="mb-6">
+                  <label className="block text-sm font-bold text-muted mb-2">Time Adversário</label>
+                  <input type="text" className="input" placeholder="ex: Real Madruga FC" required maxLength={40} value={matchEditForm.opponent} onChange={e => setMatchEditForm({...matchEditForm, opponent: e.target.value})} />
+                </div>
+              )}
               <button type="submit" className="btn w-full">Salvar Alterações</button>
             </form>
           </motion.div>

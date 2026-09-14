@@ -170,7 +170,14 @@ async function runMigrations() {
     // Administrador de verdade, em vez de deduzir pelo nome do usuário
     'ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0',
     // Cada atleta dá no máximo uma nota por companheiro em cada partida
-    'CREATE UNIQUE INDEX IF NOT EXISTS ux_ratings_unicas ON ratings (match_id, rater_id, rated_id)'
+    'CREATE UNIQUE INDEX IF NOT EXISTS ux_ratings_unicas ON ratings (match_id, rater_id, rated_id)',
+    // Tipo da partida: 'internal' (racha entre o próprio elenco) ou 'rival' (contra outro time)
+    "ALTER TABLE matches ADD COLUMN type TEXT DEFAULT 'internal'",
+    // Nome do adversário, só nas partidas contra rival
+    'ALTER TABLE matches ADD COLUMN opponent TEXT',
+    // O adversário vira um time sem jogadores. Assim placar, vitórias e derrotas do
+    // ranking funcionam igual ao racha, sem lógica paralela.
+    'ALTER TABLE teams ADD COLUMN is_opponent INTEGER DEFAULT 0'
   ];
 
   for (const sql of passos) {
@@ -418,6 +425,9 @@ function aplicarForma(atleta, formas) {
   saida.form = { ...variacao, partidas: forma.partidas, nota: forma.nota };
   return saida;
 }
+
+// Nome do time do clube nas partidas contra adversários
+const NOME_DO_CLUBE = 'plugshawty FC';
 
 const INVITE_CODE = 'JOGO2026';
 
@@ -1128,20 +1138,54 @@ app.delete('/users/:id', (req, res) => {
 });
 
 // -- MATCHES --
-app.post('/matches', requireAdmin, (req, res) => {
-  const { date, time, location } = req.body;
+app.post('/matches', requireAdmin, async (req, res) => {
+  const { date, time, location, type, opponent } = req.body;
   const matchTime = (time && time.trim()) ? time.trim() : '15h';
   const matchLocation = (location && location.trim()) ? location.trim() : 'Arena Petrópolis';
-  db.run('INSERT INTO matches (date, time, location) VALUES (?, ?, ?)', [date, matchTime, matchLocation], function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json({ id: this.lastID, date, time: matchTime, location: matchLocation, status: 'scheduled' });
-  });
+  const contraRival = type === 'rival';
+  const adversario = (opponent || '').trim();
+
+  if (!date) return res.status(400).json({ error: 'Informe a data da partida.' });
+  if (contraRival && !adversario) {
+    return res.status(400).json({ error: 'Informe o nome do time adversário.' });
+  }
+
+  try {
+    const criada = await dbRun(
+      'INSERT INTO matches (date, time, location, type, opponent) VALUES (?, ?, ?, ?, ?)',
+      [date, matchTime, matchLocation, contraRival ? 'rival' : 'internal', contraRival ? adversario : null]
+    );
+    const matchId = criada.lastID;
+
+    // Contra rival os dois times já nascem prontos: o nosso, que recebe a escalação,
+    // e o adversário, que nunca tem jogadores e só serve para o placar.
+    if (contraRival) {
+      await dbRun('INSERT INTO teams (match_id, name, is_opponent) VALUES (?, ?, 0)', [matchId, NOME_DO_CLUBE]);
+      await dbRun('INSERT INTO teams (match_id, name, is_opponent) VALUES (?, ?, 1)', [matchId, adversario]);
+    }
+
+    logAudit(req.requester.id, req.requester.username, 'PARTIDA',
+      contraRival ? `Criou jogo contra ${adversario} em ${date}` : `Criou racha em ${date}`);
+
+    res.json({
+      id: matchId, date, time: matchTime, location: matchLocation, status: 'scheduled',
+      type: contraRival ? 'rival' : 'internal', opponent: contraRival ? adversario : null
+    });
+  } catch (err) {
+    console.error('Erro ao criar partida:', err.message);
+    res.status(500).json({ error: 'Não foi possível criar a partida.' });
+  }
 });
 
 app.put('/matches/:id', requireAdmin, (req, res) => {
-  const { status, date, time, location } = req.body;
+  const { status, date, time, location, opponent } = req.body;
   const fields = [];
   const args = [];
+  const novoAdversario = typeof opponent === 'string' ? opponent.trim() : null;
+  if (novoAdversario) {
+    fields.push('opponent = ?');
+    args.push(novoAdversario);
+  }
   if (status !== undefined) {
     fields.push('status = ?');
     args.push(status);
@@ -1166,7 +1210,12 @@ app.put('/matches/:id', requireAdmin, (req, res) => {
   args.push(req.params.id);
   db.run(`UPDATE matches SET ${fields.join(', ')} WHERE id = ?`, args, function(err) {
     if (err) return res.status(500).json({ error: err.message });
-    res.json({ success: true });
+    if (!novoAdversario) return res.json({ success: true });
+
+    // O nome do adversário também é o nome do time dele no placar
+    db.run('UPDATE teams SET name = ? WHERE match_id = ? AND is_opponent = 1', [novoAdversario, req.params.id], () => {
+      res.json({ success: true });
+    });
   });
 });
 
@@ -1226,7 +1275,7 @@ app.get('/matches/:id', async (req, res) => {
     // na nuvem; em paralelo o custo passa a ser o da consulta mais lenta.
     const [teamRows, goalRows, assistRows, ratingRows, raterRows, myRatingRows, formas] = await Promise.all([
       dbAll(`
-        SELECT t.id as team_id, t.name as team_name, t.manual_score, u.id as user_id, u.username, u.nickname, u.position,
+        SELECT t.id as team_id, t.name as team_name, t.manual_score, t.is_opponent, u.id as user_id, u.username, u.nickname, u.position,
                u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical, ${photoCols('u')}
         FROM teams t
         LEFT JOIN team_players tp ON t.id = tp.team_id
@@ -1274,7 +1323,13 @@ app.get('/matches/:id', async (req, res) => {
     const teams = {};
     teamRows.forEach(row => {
       if (!teams[row.team_id]) {
-        teams[row.team_id] = { id: row.team_id, name: row.team_name, manual_score: row.manual_score, players: [] };
+        teams[row.team_id] = {
+          id: row.team_id,
+          name: row.team_name,
+          manual_score: row.manual_score,
+          is_opponent: Number(row.is_opponent) === 1,
+          players: []
+        };
       }
       if (row.user_id) {
         teams[row.team_id].players.push(aplicarForma({
@@ -1294,7 +1349,10 @@ app.get('/matches/:id', async (req, res) => {
       }
     });
 
-    match.teams = Object.values(teams);
+    // O time do clube sempre primeiro: a tela usa teams[0] como "nós" e teams[1]
+    // como o adversário nas partidas contra rival
+    match.teams = Object.values(teams).sort((a, b) => (a.is_opponent - b.is_opponent) || (a.id - b.id));
+    match.type = match.type || 'internal';
     match.goals = goalRows;
     match.assists = assistRows;
     match.ratings = ratingRows;
@@ -1328,6 +1386,26 @@ app.post('/matches/:id/teams', requireOpenMatchOrAdmin, async (req, res) => {
   const { teams } = req.body;
 
   try {
+    const partida = await dbGet('SELECT type FROM matches WHERE id = ?', [matchId]);
+
+    // Contra rival não existe sorteio: só trocamos quem está escalado no nosso time.
+    // Recriar os times apagaria o adversário e o placar que o admin já tivesse lançado.
+    if (partida && partida.type === 'rival') {
+      const nosso = await dbGet('SELECT id FROM teams WHERE match_id = ? AND is_opponent = 0', [matchId]);
+      if (!nosso) return res.status(400).json({ error: 'Time do clube não encontrado nesta partida.' });
+
+      const playerIds = [...new Set(((teams && teams[0] && teams[0].playerIds) || []).map(Number))];
+      await dbRun('DELETE FROM team_players WHERE team_id = ?', [nosso.id]);
+      if (playerIds.length > 0) {
+        const placeholders = playerIds.map(() => '(?, ?)').join(', ');
+        await dbRun(
+          `INSERT INTO team_players (team_id, user_id) VALUES ${placeholders}`,
+          playerIds.flatMap(playerId => [nosso.id, playerId])
+        );
+      }
+      return res.json({ success: true });
+    }
+
     // Mesma armadilha do DELETE: sem aguardar cada comando, os INSERT dos times
     // novos corriam junto com o DELETE dos antigos e a escalação saía embaralhada.
     await dbRun('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
@@ -1584,15 +1662,30 @@ app.get('/stats', async (req, res) => {
       dbAll(`SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id
              WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`, dateArgs),
 
-      // Detalhe por partida, necessario para calcular sequencia e forma recente
+      // Detalhe por partida, necessario para calcular sequencia e forma recente.
+      // O placar de cada time segue a mesma regra da tela da partida: o digitado pelo
+      // admin ou, se ele não digitou, a soma dos gols lançados para os atletas daquele
+      // time. Antes o ranking lia só o digitado e tratava a ausência como zero — contra
+      // rival, lançar 3 gols e digitar só o 1 do adversário virava derrota no ranking.
       dbAll(`
+        WITH placar_time AS (
+          SELECT t.id AS team_id,
+                 COALESCE(t.manual_score, (
+                   SELECT COUNT(*) FROM goals g
+                   JOIN team_players tpg ON tpg.user_id = g.user_id AND tpg.team_id = t.id
+                   WHERE g.match_id = t.match_id
+                 )) AS gols
+          FROM teams t
+        )
         SELECT tp.user_id, m.id as match_id, m.date,
-          t_own.manual_score as own_score,
-          t_opp.manual_score as opp_score
+          po.gols as own_score,
+          pa.gols as opp_score
         FROM team_players tp
         JOIN teams t_own ON tp.team_id = t_own.id
         JOIN matches m ON t_own.match_id = m.id
+        JOIN placar_time po ON po.team_id = t_own.id
         LEFT JOIN teams t_opp ON t_opp.match_id = m.id AND t_opp.id != t_own.id
+        LEFT JOIN placar_time pa ON pa.team_id = t_opp.id
         WHERE m.status = 'completed'${dateFilter}
         ORDER BY m.date DESC, m.id DESC
       `, dateArgs),

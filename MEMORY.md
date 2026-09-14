@@ -46,6 +46,27 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 
 ---
 
+## ⚔️ Jogos Contra Rival
+
+`matches.type` é `'internal'` (racha entre o elenco, com sorteio) ou `'rival'` (contra outro time).
+Nas partidas contra rival, `matches.opponent` guarda o nome do adversário.
+
+**O adversário é um registro em `teams` com `is_opponent = 1` e sem jogadores.** Isso é de
+propósito: placar, vitórias/derrotas do ranking, avaliação e evolução das cartas funcionam
+igual ao racha, sem lógica paralela.
+
+- Os dois times nascem junto com a partida (`POST /matches`): `plugshawty FC` e o adversário.
+- `GET /matches/:id` devolve sempre o nosso time em `teams[0]` e o adversário em `teams[1]`.
+- `POST /matches/:id/teams` numa partida rival **só troca os jogadores do nosso time** — nunca
+  recria os times, senão apagaria o adversário e o placar já lançado.
+- No frontend: `isRival`, `nossoTime`, `timesEscalados` e `abaDoCampo` em `MatchDetails.jsx`.
+  Não há sorteio nem "trocar de time"; o campo tático mostra só o nosso time.
+
+**Placar:** vale o digitado pelo admin; se ele não digitou, a soma dos gols lançados para os
+atletas daquele time. A tela e o ranking (`/stats`) usam essa mesma regra.
+
+---
+
 ## 📈 Evolução das Cartas pelo Desempenho
 
 Os atributos gravados em `users` (pace, shooting...) são a **BASE**, vinda da planilha de

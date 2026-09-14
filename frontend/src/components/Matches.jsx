@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Calendar, Plus, ChevronRight, Activity, Clock, CheckCircle2, Trash2, MapPin } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, Activity, Clock, CheckCircle2, Trash2, MapPin, Swords, Shuffle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { API_URL, authHeaders, isAdminUser } from '../config';
 import { AuthContext } from '../AuthContext';
@@ -23,6 +23,9 @@ export default function Matches() {
   const [newDate, setNewDate] = useState(getTodayDate);
   const [newTime, setNewTime] = useState('15h');
   const [newLocation, setNewLocation] = useState('Arena Petrópolis');
+  // 'internal' = racha entre o próprio elenco, 'rival' = jogo contra outro time
+  const [newType, setNewType] = useState('internal');
+  const [newOpponent, setNewOpponent] = useState('');
   const navigate = useNavigate();
 
   const loadMatches = () => {
@@ -39,13 +42,21 @@ export default function Matches() {
     e.preventDefault();
     const timeToSend = newTime.trim() || '15h';
     const locToSend = newLocation.trim() || 'Arena Petrópolis';
+    const contraRival = newType === 'rival';
+
+    if (contraRival && !newOpponent.trim()) {
+      alert('Informe o nome do time adversário.');
+      return;
+    }
     const res = await fetch(`${API_URL}/matches`, {
       method: 'POST',
       headers: authHeaders(user, { 'Content-Type': 'application/json' }),
       body: JSON.stringify({ 
         date: newDate,
         time: timeToSend,
-        location: locToSend
+        location: locToSend,
+        type: newType,
+        opponent: contraRival ? newOpponent.trim() : undefined
       })
     });
     const data = await res.json();
@@ -113,6 +124,61 @@ export default function Matches() {
           <h4 style={{ margin: '0 0 16px 0', fontSize: '1rem', fontWeight: 800, color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '8px' }}>
             <Calendar size={18} /> Agendar Nova Partida
           </h4>
+
+          {/* Tipo de partida */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '16px' }}>
+            {[
+              { valor: 'internal', titulo: 'Racha', detalhe: 'Sorteio entre o elenco', Icone: Shuffle },
+              { valor: 'rival', titulo: 'Contra rival', detalhe: 'Nosso time x adversário', Icone: Swords }
+            ].map(({ valor, titulo, detalhe, Icone }) => {
+              const ativo = newType === valor;
+              return (
+                <button
+                  key={valor}
+                  type="button"
+                  onClick={() => setNewType(valor)}
+                  aria-pressed={ativo}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '10px',
+                    padding: '12px',
+                    borderRadius: '14px',
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    background: ativo ? 'rgba(0, 245, 155, 0.12)' : 'rgba(255, 255, 255, 0.03)',
+                    border: `1.5px solid ${ativo ? 'var(--primary)' : 'var(--border)'}`,
+                    color: '#fff',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  <Icone size={20} color={ativo ? 'var(--primary)' : 'var(--text-muted)'} style={{ flexShrink: 0 }} />
+                  <span style={{ minWidth: 0 }}>
+                    <span style={{ display: 'block', fontWeight: 800, fontSize: '0.9rem' }}>{titulo}</span>
+                    <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--text-muted)' }}>{detalhe}</span>
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {newType === 'rival' && (
+            <div style={{ marginBottom: '16px' }}>
+              <label className="label" style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)' }}>
+                Time Adversário *
+              </label>
+              <input
+                type="text"
+                className="input"
+                style={{ marginBottom: 0 }}
+                placeholder="Ex: Real Madruga FC"
+                value={newOpponent}
+                onChange={(e) => setNewOpponent(e.target.value)}
+                maxLength={40}
+                required
+              />
+            </div>
+          )}
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '14px', marginBottom: '16px' }}>
             <div>
@@ -257,6 +323,11 @@ export default function Matches() {
 
                       {/* Linha Central: Data Completa, Horário, Local e Descrição */}
                       <div>
+                        {match.type === 'rival' && match.opponent && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', fontWeight: 900, color: '#f472b6', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: '4px' }}>
+                            <Swords size={14} /> vs {match.opponent}
+                          </div>
+                        )}
                         <div style={{ fontSize: '1.15rem', fontWeight: '900', color: '#fff', letterSpacing: '-0.3px', marginBottom: '6px' }}>
                           {formattedDate}
                         </div>
@@ -271,7 +342,9 @@ export default function Matches() {
                         </div>
                         <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                           {match.status === 'scheduled' 
-                            ? 'Acesse para confirmar presenças, sortear os times e gerenciar a partida.' 
+                            ? (match.type === 'rival'
+                                ? 'Acesse para escalar o time e gerenciar o jogo.'
+                                : 'Acesse para confirmar presenças, sortear os times e gerenciar a partida.') 
                             : 'Partida finalizada. Acesse para conferir os gols, assistências e notas dos atletas.'}
                         </div>
                       </div>
