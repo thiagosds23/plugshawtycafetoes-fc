@@ -284,24 +284,46 @@ function janelaDeAvaliacao(match) {
 // Por ser derivado, dá para recalibrar a fórmula sem estragar nenhum dado, e
 // reabrir ou corrigir uma partida reflete sozinho na carta.
 //
-// Constantes calibradas com as partidas reais do clube: equilibram quem sobe e
-// quem cai sem inflar todo mundo numa pelada com muitos gols.
+// Cada atuação é comparada com o que se espera do NÍVEL e da POSIÇÃO do atleta, e
+// não com uma régua única. Nota 7 é ótima para um 60 e abaixo do esperado para um
+// 81; fazer 2 gols é muito numa partida de 4 gols e pouco numa de 25. Assim um OVR
+// alto só se sustenta com atuação alta, e quem joga acima do próprio nível sobe.
+//
+// Constantes calibradas com as partidas reais do clube (setembro/2026).
 // ---------------------------------------------------------------------------
 const EVOLUCAO = {
+  // Nota esperada para cada nível. Nas partidas reais o grupo já dá notas maiores a
+  // quem tem OVR maior (correlação de 0,64): cerca de +0,9 de nota a cada 10 de OVR.
+  // Um atleta de OVR 62 costuma tirar 6,2; um de 81, perto de 7,9.
+  NOTA_MEDIA_DO_GRUPO: 6.2,
+  OVR_MEDIO_DO_GRUPO: 62,
+  NOTA_A_MAIS_POR_PONTO_DE_OVR: 0.09,
+  // Cada ponto de nota acima (ou abaixo) do esperado move todos os atributos em 3
+  PONTOS_POR_PONTO_DE_NOTA: 3,
+
+  // Parcela dos gols do time que se espera de cada posição, em gols e em assistências.
+  // Medir a parcela, e não o número de gols, faz o placar do jogo não importar: numa
+  // pelada de 15 gols, marcar 2 é pouco. Ficar abaixo do esperado não tira ponto —
+  // zagueiro que não marca não perde nada —, só ficar acima soma.
+  PARCELA_DE_GOLS_ESPERADA:   { ATA: 0.28, MEI: 0.18, VOL: 0.14, LAT: 0.14, ZAG: 0.03, GOL: 0.01 },
+  PARCELA_DE_ASSIST_ESPERADA: { ATA: 0.10, MEI: 0.15, VOL: 0.12, LAT: 0.10, ZAG: 0.03, GOL: 0.01 },
+  // Participar de 10% a mais dos gols do time do que o esperado vale 2 pontos
+  PONTOS_POR_PARCELA_EXTRA: 20,
+  TETO_BONUS_OFENSIVO: 8,
+
   // Peso de cada partida do atleta, da mais recente para a mais antiga: 1, 0.85,
   // 0.72, 0.61... Todas contam, mas a fase atual pesa mais.
   DECAIMENTO: 0.85,
-  // Com poucas partidas o efeito é parcial (1 jogo = 25%, 4 ou mais = 100%), para
-  // uma única atuação fora da curva não transformar a carta.
+
+  // Com poucas partidas o efeito é parcial: 1 jogo = 50%, 2 = 71%, 3 = 87%, 4 ou mais
+  // = 100%. Antes era linear e 1 jogo valia só 25%, o que apagava atuações de destaque.
   JOGOS_PARA_CONFIANCA_TOTAL: 4,
-  // Nota média acima disto melhora todos os atributos; abaixo, piora.
-  NOTA_NEUTRA: 6,
-  PONTOS_POR_PONTO_DE_NOTA: 2,
-  // Gols e assistências só somam, nunca tiram: zagueiro que não marca não perde nada.
-  PONTOS_POR_GOL_POR_JOGO: 3,
-  TETO_BONUS_GOL: 6,
-  PONTOS_POR_ASSIST_POR_JOGO: 3,
-  TETO_BONUS_ASSIST: 6,
+
+  // Acima de 75 subir fica gradualmente mais lento (um 85 sobe a 80% do ritmo, um 95
+  // a 60%). Abaixo disso não há freio extra: a nota esperada maior já cobra o nível.
+  OVR_ONDE_SUBIR_FICA_MAIS_LENTO: 75,
+  RITMO_MINIMO_DE_SUBIDA: 0.6,
+
   // Quanto cada atributo pode se afastar da base, para cima ou para baixo
   VARIACAO_MAXIMA: 10
 };
@@ -309,27 +331,48 @@ const EVOLUCAO = {
 const ATRIBUTOS = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physical'];
 const limitar = (valor, minimo, maximo) => Math.max(minimo, Math.min(maximo, valor));
 
+// A fórmula de OVR por posição vive no frontend (utils/ovr.js) e é carregada daqui
+// também, para servidor e tela usarem exatamente a mesma conta. O arquivo não
+// importa nada, então pode rodar no Node sem o resto do frontend.
+const carregandoCalcOVR = import(
+  require('url').pathToFileURL(path.join(__dirname, '../frontend/src/utils/ovr.js')).href
+).then(modulo => modulo.calcOVR);
+carregandoCalcOVR.catch(err => console.error('⚠️  Não foi possível carregar a fórmula de OVR:', err.message));
+
 /**
  * Calcula a variação de cada atributo de todos os atletas que já jogaram.
  * Devolve um Map de user_id -> { delta, partidas, nota }.
  */
 async function calcularFormas() {
+  const calcOVR = await carregandoCalcOVR;
+
   const linhas = await dbAll(`
     -- Os nomes dos CTEs não podem repetir os das tabelas: "assists AS (... FROM assists)"
     -- vira uma referência circular no SQLite
     WITH gols_partida AS (SELECT match_id, user_id, COUNT(*) AS n FROM goals GROUP BY match_id, user_id),
          assists_partida AS (SELECT match_id, user_id, COUNT(*) AS n FROM assists GROUP BY match_id, user_id),
-         notas_partida AS (SELECT match_id, rated_id AS user_id, AVG(score) AS media FROM ratings GROUP BY match_id, rated_id)
+         notas_partida AS (SELECT match_id, rated_id AS user_id, AVG(score) AS media FROM ratings GROUP BY match_id, rated_id),
+         gols_do_time AS (
+           SELECT tp.team_id, COUNT(*) AS n
+           FROM goals g
+           JOIN team_players tp ON tp.user_id = g.user_id
+           JOIN teams t ON t.id = tp.team_id AND t.match_id = g.match_id
+           GROUP BY tp.team_id
+         )
     SELECT tp.user_id, m.finished_at,
+           u.position, u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical,
            COALESCE(gp.n, 0) AS gols,
            COALESCE(ap.n, 0) AS assists,
-           np.media AS nota
+           np.media AS nota,
+           COALESCE(gt.n, 0) AS gols_time
     FROM team_players tp
     JOIN teams t ON tp.team_id = t.id
     JOIN matches m ON t.match_id = m.id
+    JOIN users u ON u.id = tp.user_id
     LEFT JOIN gols_partida gp ON gp.match_id = m.id AND gp.user_id = tp.user_id
     LEFT JOIN assists_partida ap ON ap.match_id = m.id AND ap.user_id = tp.user_id
     LEFT JOIN notas_partida np ON np.match_id = m.id AND np.user_id = tp.user_id
+    LEFT JOIN gols_do_time gt ON gt.team_id = t.id
     WHERE m.status = 'completed'
     ORDER BY m.date DESC, m.id DESC
   `);
@@ -351,32 +394,50 @@ async function calcularFormas() {
     porAtleta.get(id).push(l);
   });
 
+  const E = EVOLUCAO;
   const formas = new Map();
+
   porAtleta.forEach((jogos, id) => {
-    let somaPesos = 0, somaGols = 0, somaAssists = 0, somaPesosNota = 0, somaNotas = 0;
+    const atleta = jogos[0];
+    const base = {};
+    ATRIBUTOS.forEach(k => { base[k] = Number(atleta[k]) || 50; });
+
+    // O nível do atleta é o OVR da planilha, nunca o já evoluído: comparar com o
+    // evoluído realimentaria a fórmula a cada leitura
+    const ovrBase = calcOVR({ ...atleta, ...base });
+    const posicao = String(atleta.position || 'MEI').toUpperCase().trim();
+    const parcelaGolEsperada = E.PARCELA_DE_GOLS_ESPERADA[posicao] ?? E.PARCELA_DE_GOLS_ESPERADA.MEI;
+    const parcelaAssistEsperada = E.PARCELA_DE_ASSIST_ESPERADA[posicao] ?? E.PARCELA_DE_ASSIST_ESPERADA.MEI;
+    const notaEsperada = E.NOTA_MEDIA_DO_GRUPO + (ovrBase - E.OVR_MEDIO_DO_GRUPO) * E.NOTA_A_MAIS_POR_PONTO_DE_OVR;
+
+    let somaPesos = 0, somaPesosNota = 0, somaDesvioNota = 0, somaExtraGol = 0, somaExtraAssist = 0, somaNotas = 0;
 
     jogos.forEach((jogo, indice) => {
-      const peso = Math.pow(EVOLUCAO.DECAIMENTO, indice);
+      const peso = Math.pow(E.DECAIMENTO, indice);
       somaPesos += peso;
-      somaGols += peso * Number(jogo.gols);
-      somaAssists += peso * Number(jogo.assists);
+
+      // Avaliado jogo a jogo: uma partida sem gol não apaga o bônus de outra com 5
+      const golsDoTime = Math.max(Number(jogo.gols_time), 1);
+      somaExtraGol += peso * Math.max(0, Number(jogo.gols) / golsDoTime - parcelaGolEsperada);
+      somaExtraAssist += peso * Math.max(0, Number(jogo.assists) / golsDoTime - parcelaAssistEsperada);
+
       if (jogo.nota !== null && jogo.nota !== undefined && notaFechada(jogo.finished_at)) {
         somaPesosNota += peso;
+        somaDesvioNota += peso * (Number(jogo.nota) - notaEsperada);
         somaNotas += peso * Number(jogo.nota);
       }
     });
 
-    const nota = somaPesosNota > 0 ? somaNotas / somaPesosNota : null;
-    const golsPorJogo = somaGols / somaPesos;
-    const assistsPorJogo = somaAssists / somaPesos;
-    const confianca = Math.min(jogos.length / EVOLUCAO.JOGOS_PARA_CONFIANCA_TOTAL, 1);
+    const desvioNota = somaPesosNota > 0 ? somaDesvioNota / somaPesosNota : 0;
+    const efeitoNota = desvioNota * E.PONTOS_POR_PONTO_DE_NOTA;
+    const bonusGol = Math.min((somaExtraGol / somaPesos) * E.PONTOS_POR_PARCELA_EXTRA, E.TETO_BONUS_OFENSIVO);
+    const bonusAssist = Math.min((somaExtraAssist / somaPesos) * E.PONTOS_POR_PARCELA_EXTRA, E.TETO_BONUS_OFENSIVO);
 
-    const efeitoNota = nota === null ? 0 : (nota - EVOLUCAO.NOTA_NEUTRA) * EVOLUCAO.PONTOS_POR_PONTO_DE_NOTA;
-    const bonusGol = Math.min(golsPorJogo * EVOLUCAO.PONTOS_POR_GOL_POR_JOGO, EVOLUCAO.TETO_BONUS_GOL);
-    const bonusAssist = Math.min(assistsPorJogo * EVOLUCAO.PONTOS_POR_ASSIST_POR_JOGO, EVOLUCAO.TETO_BONUS_ASSIST);
+    const confianca = Math.sqrt(Math.min(jogos.length / E.JOGOS_PARA_CONFIANCA_TOTAL, 1));
+    const ritmoDeSubida = limitar(1 - (ovrBase - E.OVR_ONDE_SUBIR_FICA_MAIS_LENTO) / 50, E.RITMO_MINIMO_DE_SUBIDA, 1);
 
-    // A nota mexe em tudo; gol puxa finalização, assistência puxa passe, e o
-    // drible fica com metade de cada um.
+    // A nota mexe em tudo; participação em gols puxa finalização, em assistências
+    // puxa passe, e o drible fica com metade de cada
     const bruto = {
       pace: efeitoNota,
       defending: efeitoNota,
@@ -388,13 +449,15 @@ async function calcularFormas() {
 
     const delta = {};
     ATRIBUTOS.forEach(k => {
-      delta[k] = Math.round(limitar(bruto[k] * confianca, -EVOLUCAO.VARIACAO_MAXIMA, EVOLUCAO.VARIACAO_MAXIMA));
+      const ajustado = bruto[k] >= 0 ? bruto[k] * ritmoDeSubida : bruto[k];
+      delta[k] = Math.round(limitar(ajustado * confianca, -E.VARIACAO_MAXIMA, E.VARIACAO_MAXIMA));
     });
 
     formas.set(id, {
       delta,
       partidas: jogos.length,
-      nota: nota === null ? null : Math.round(nota * 10) / 10
+      nota: somaPesosNota > 0 ? Math.round((somaNotas / somaPesosNota) * 10) / 10 : null,
+      nota_esperada: Math.round(notaEsperada * 10) / 10
     });
   });
 
@@ -422,7 +485,7 @@ function aplicarForma(atleta, formas) {
     variacao[k] = saida[k] - base[k];
   });
 
-  saida.form = { ...variacao, partidas: forma.partidas, nota: forma.nota };
+  saida.form = { ...variacao, partidas: forma.partidas, nota: forma.nota, nota_esperada: forma.nota_esperada };
   return saida;
 }
 

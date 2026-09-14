@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import { AuthContext } from '../AuthContext';
 import { calcOVR, ovrTrend } from '../utils/ovr';
+import ResumoForma from './ResumoForma';
 import { API_URL, formatPhotoUrl, isAdminUser } from '../config';
 import { waitForImages } from '../utils/exportImage';
 import '../fut-card.css';
@@ -2403,6 +2404,7 @@ export default function Players() {
                 <div style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
                   Atributos da Carta FUT
                 </div>
+                <ResumoForma atleta={selectedPlayerModal} />
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                   {[
                     { key: 'pace', label: 'Ritmo (PAC)', val: selectedPlayerModal.pace || 50 },

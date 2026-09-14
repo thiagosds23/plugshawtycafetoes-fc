@@ -79,13 +79,27 @@ Cada atleta chega com:
 - `base_attrs` → os valores originais da planilha
 - `form` → quanto cada atributo mudou, mais `partidas` e `nota` ponderada (null se nunca jogou)
 
-Regras (constantes em `EVOLUCAO`, calibradas com as partidas reais):
-- Todas as partidas encerradas contam; a mais recente pesa 1, a anterior 0,85, depois 0,72...
-- Confiança parcial com poucos jogos: 1 jogo = 25% do efeito, 4 ou mais = 100%
-- Nota acima de 6 melhora todos os atributos, abaixo piora (2 pontos por ponto de nota)
-- Gols somam em Finalização, assistências em Passe, Drible leva metade de cada. **Nunca penalizam**
-- Cada atributo varia no máximo ±10 em relação à base
-- A nota de uma partida só entra depois que o prazo de 12h de avaliação fecha
+**Cada atuação é comparada com o esperado para o NÍVEL e a POSIÇÃO do atleta** — não com
+uma régua única. Constantes em `EVOLUCAO`, calibradas com as partidas reais (set/2026):
+
+- **Nota esperada cresce com o OVR base**: `6,2 + (OVR − 62) × 0,09`. O grupo já dá notas
+  maiores a quem tem OVR maior (correlação 0,64), então nota 7 é ótima para um 60 e abaixo do
+  esperado para um 81. Cada ponto de nota acima/abaixo do esperado move todos os atributos em 3.
+- **Gols e assistências contam como parcela dos gols do time**, comparada com o esperado da
+  posição (atacante 28% dos gols, zagueiro 3%...). Assim o placar do jogo não importa: 2 gols
+  numa pelada de 15 é pouco. Só ficar acima soma; ficar abaixo **nunca penaliza**.
+- O nível usado é sempre o **OVR base** da planilha — usar o evoluído realimentaria a fórmula.
+- Todas as partidas contam; peso 1 para a mais recente, 0,85 para a anterior, 0,72...
+- Confiança com poucos jogos: 1 jogo = 50%, 2 = 71%, 3 = 87%, 4+ = 100% (raiz quadrada).
+- Acima de OVR 75 a subida fica mais lenta (um 85 sobe a 80% do ritmo, mínimo 60%).
+- Cada atributo varia no máximo ±10. A nota só entra quando o prazo de 12h fecha.
+
+A fórmula de OVR por posição vive só em `frontend/src/utils/ovr.js`; o backend carrega esse
+mesmo arquivo via `import()`. **Não copie a fórmula para o backend**, e mantenha o ovr.js sem
+imports, senão ele deixa de carregar no Node.
+
+O perfil do atleta mostra `ResumoForma`, que explica a variação ("nota 6,7, abaixo do esperado
+para OVR 81"). `form.nota_esperada` vem do backend para isso.
 
 No frontend, `calcBaseOVR(player)` e `ovrTrend(player)` (em `utils/ovr.js`) dão o OVR da
 planilha e a variação. O sorteio usa só `calcOVR` — somar a nota média de novo contaria o
