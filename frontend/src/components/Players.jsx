@@ -4,7 +4,7 @@ import { Camera, UserCircle, Edit2, Check, X, Plus, Trash2, Sliders, Image as Im
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import { AuthContext } from '../AuthContext';
-import { calcOVR } from '../utils/ovr';
+import { calcOVR, ovrTrend } from '../utils/ovr';
 import { API_URL, formatPhotoUrl, isAdminUser } from '../config';
 import { waitForImages } from '../utils/exportImage';
 import '../fut-card.css';
@@ -1641,6 +1641,9 @@ export default function Players() {
   const renderPlayerCard = (player, isEditable, idx = 0) => {
     if (!player) return null;
     const overall = calcOVR(player);
+    const tendencia = ovrTrend(player);
+    const variacaoAtributo = (k) => (player.form && player.form[k]) || 0;
+    const classeVariacao = (k) => variacaoAtributo(k) > 0 ? ' up' : variacaoAtributo(k) < 0 ? ' down' : '';
     const displayName = player.nickname ? String(player.nickname).split(',')[0].trim() : (player.username || 'Atleta');
 
     return (
@@ -1727,6 +1730,14 @@ export default function Players() {
               
               <div className="fut-rating">{overall}</div>
               <div className="fut-position">{player.position || 'MEI'}</div>
+              {tendencia !== 0 && (
+                <div
+                  className={`fut-trend ${tendencia > 0 ? 'up' : 'down'}`}
+                  title={`OVR ${tendencia > 0 ? 'subiu' : 'caiu'} ${Math.abs(tendencia)} pelo desempenho nas partidas`}
+                >
+                  {tendencia > 0 ? '▲' : '▼'}{Math.abs(tendencia)}
+                </div>
+              )}
               
               {/* Foto do Atleta */}
               <div className="fut-photo">
@@ -1743,12 +1754,12 @@ export default function Players() {
               
               {/* Linha Oficial de 6 Atributos */}
               <div className="fut-stats">
-                <div className="fut-stat-item"><span className="fut-stat-label">PAC</span><span className="fut-stat-val">{player.pace || 50}</span></div>
-                <div className="fut-stat-item"><span className="fut-stat-label">SHO</span><span className="fut-stat-val">{player.shooting || 50}</span></div>
-                <div className="fut-stat-item"><span className="fut-stat-label">PAS</span><span className="fut-stat-val">{player.passing || 50}</span></div>
-                <div className="fut-stat-item"><span className="fut-stat-label">DRI</span><span className="fut-stat-val">{player.dribbling || 50}</span></div>
-                <div className="fut-stat-item"><span className="fut-stat-label">DEF</span><span className="fut-stat-val">{player.defending || 50}</span></div>
-                <div className="fut-stat-item"><span className="fut-stat-label">PHY</span><span className="fut-stat-val">{player.physical || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">PAC</span><span className={'fut-stat-val' + classeVariacao('pace')}>{player.pace || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">SHO</span><span className={'fut-stat-val' + classeVariacao('shooting')}>{player.shooting || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">PAS</span><span className={'fut-stat-val' + classeVariacao('passing')}>{player.passing || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">DRI</span><span className={'fut-stat-val' + classeVariacao('dribbling')}>{player.dribbling || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">DEF</span><span className={'fut-stat-val' + classeVariacao('defending')}>{player.defending || 50}</span></div>
+                <div className="fut-stat-item"><span className="fut-stat-label">PHY</span><span className={'fut-stat-val' + classeVariacao('physical')}>{player.physical || 50}</span></div>
               </div>
             </div>
           </div>
@@ -2394,23 +2405,34 @@ export default function Players() {
                 </div>
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '8px' }}>
                   {[
-                    { label: 'Ritmo (PAC)', val: selectedPlayerModal.pace || 50 },
-                    { label: 'Finalização (SHO)', val: selectedPlayerModal.shooting || 50 },
-                    { label: 'Passe (PAS)', val: selectedPlayerModal.passing || 50 },
-                    { label: 'Drible (DRI)', val: selectedPlayerModal.dribbling || 50 },
-                    { label: 'Defesa (DEF)', val: selectedPlayerModal.defending || 50 },
-                    { label: 'Físico (PHY)', val: selectedPlayerModal.physical || 50 }
-                  ].map(attr => (
+                    { key: 'pace', label: 'Ritmo (PAC)', val: selectedPlayerModal.pace || 50 },
+                    { key: 'shooting', label: 'Finalização (SHO)', val: selectedPlayerModal.shooting || 50 },
+                    { key: 'passing', label: 'Passe (PAS)', val: selectedPlayerModal.passing || 50 },
+                    { key: 'dribbling', label: 'Drible (DRI)', val: selectedPlayerModal.dribbling || 50 },
+                    { key: 'defending', label: 'Defesa (DEF)', val: selectedPlayerModal.defending || 50 },
+                    { key: 'physical', label: 'Físico (PHY)', val: selectedPlayerModal.physical || 50 }
+                  ].map(attr => {
+                    // Quanto o atributo mudou pelo desempenho nas partidas
+                    const variacao = (selectedPlayerModal.form && selectedPlayerModal.form[attr.key]) || 0;
+                    return (
                     <div key={attr.label} style={{ background: 'rgba(255,255,255,0.03)', padding: '8px 12px', borderRadius: '10px', border: '1px solid var(--border)' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 700, marginBottom: '4px' }}>
                         <span style={{ color: 'var(--text-muted)' }}>{attr.label}</span>
-                        <span style={{ color: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', fontWeight: 900 }}>{attr.val}</span>
+                        <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '5px' }}>
+                          {variacao !== 0 && (
+                            <span style={{ fontSize: '0.66rem', fontWeight: 800, color: variacao > 0 ? 'var(--primary)' : '#ef4444' }}>
+                              {variacao > 0 ? '▲' : '▼'}{Math.abs(variacao)}
+                            </span>
+                          )}
+                          <span style={{ color: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', fontWeight: 900 }}>{attr.val}</span>
+                        </span>
                       </div>
                       <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
                         <div style={{ width: `${Math.min(100, Math.max(0, attr.val))}%`, height: '100%', background: attr.val >= 75 ? 'var(--primary)' : attr.val >= 60 ? '#fbbf24' : '#ef4444', borderRadius: '2px' }} />
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
 

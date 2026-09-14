@@ -182,3 +182,27 @@
   color: #1a1002;
   line-height: 1;
 }
+
+/* Evolução pelo desempenho nas partidas. Tons escuros de propósito: verde e vermelho
+   vivos somem sobre o fundo dourado da carta. */
+.fut-trend {
+  position: absolute;
+  top: 37%;
+  left: 29%;
+  transform: translate(-50%, -50%);
+  font-size: 0.74rem;
+  font-weight: 900;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+}
+
+.fut-trend.up,
+.fut-stat-val.up {
+  color: #0b6b3a;
+}
+
+.fut-trend.down,
+.fut-stat-val.down {
+  color: #9b1c1c;
+}

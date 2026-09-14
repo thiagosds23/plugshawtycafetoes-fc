@@ -51,3 +51,18 @@ export function calcOVR(player) {
 
   return Math.max(25, Math.min(99, Math.round(ovr)));
 }
+
+/**
+ * OVR só com os atributos da planilha de avaliação do elenco, sem a evolução pelos jogos.
+ * O backend manda esses valores originais em base_attrs.
+ */
+export function calcBaseOVR(player) {
+  if (!player || !player.base_attrs) return calcOVR(player);
+  return calcOVR({ ...player, ...player.base_attrs });
+}
+
+/** Quanto o OVR subiu (positivo) ou caiu (negativo) pelo desempenho nas partidas. */
+export function ovrTrend(player) {
+  if (!player || !player.form) return 0;
+  return calcOVR(player) - calcBaseOVR(player);
+}

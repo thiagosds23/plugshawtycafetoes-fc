@@ -268,6 +268,157 @@ function janelaDeAvaliacao(match) {
   return { aberta: Date.now() < fim, terminaEm: new Date(fim).toISOString() };
 }
 
+// ---------------------------------------------------------------------------
+// Evolução das cartas
+//
+// Os atributos gravados em users (vindos da planilha de avaliação do elenco) são a
+// BASE e nunca são alterados pelos jogos. A cada leitura calculamos a "forma" do
+// atleta a partir das partidas encerradas e devolvemos os atributos já evoluídos.
+// Por ser derivado, dá para recalibrar a fórmula sem estragar nenhum dado, e
+// reabrir ou corrigir uma partida reflete sozinho na carta.
+//
+// Constantes calibradas com as partidas reais do clube: equilibram quem sobe e
+// quem cai sem inflar todo mundo numa pelada com muitos gols.
+// ---------------------------------------------------------------------------
+const EVOLUCAO = {
+  // Peso de cada partida do atleta, da mais recente para a mais antiga: 1, 0.85,
+  // 0.72, 0.61... Todas contam, mas a fase atual pesa mais.
+  DECAIMENTO: 0.85,
+  // Com poucas partidas o efeito é parcial (1 jogo = 25%, 4 ou mais = 100%), para
+  // uma única atuação fora da curva não transformar a carta.
+  JOGOS_PARA_CONFIANCA_TOTAL: 4,
+  // Nota média acima disto melhora todos os atributos; abaixo, piora.
+  NOTA_NEUTRA: 6,
+  PONTOS_POR_PONTO_DE_NOTA: 2,
+  // Gols e assistências só somam, nunca tiram: zagueiro que não marca não perde nada.
+  PONTOS_POR_GOL_POR_JOGO: 3,
+  TETO_BONUS_GOL: 6,
+  PONTOS_POR_ASSIST_POR_JOGO: 3,
+  TETO_BONUS_ASSIST: 6,
+  // Quanto cada atributo pode se afastar da base, para cima ou para baixo
+  VARIACAO_MAXIMA: 10
+};
+
+const ATRIBUTOS = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physical'];
+const limitar = (valor, minimo, maximo) => Math.max(minimo, Math.min(maximo, valor));
+
+/**
+ * Calcula a variação de cada atributo de todos os atletas que já jogaram.
+ * Devolve um Map de user_id -> { delta, partidas, nota }.
+ */
+async function calcularFormas() {
+  const linhas = await dbAll(`
+    -- Os nomes dos CTEs não podem repetir os das tabelas: "assists AS (... FROM assists)"
+    -- vira uma referência circular no SQLite
+    WITH gols_partida AS (SELECT match_id, user_id, COUNT(*) AS n FROM goals GROUP BY match_id, user_id),
+         assists_partida AS (SELECT match_id, user_id, COUNT(*) AS n FROM assists GROUP BY match_id, user_id),
+         notas_partida AS (SELECT match_id, rated_id AS user_id, AVG(score) AS media FROM ratings GROUP BY match_id, rated_id)
+    SELECT tp.user_id, m.finished_at,
+           COALESCE(gp.n, 0) AS gols,
+           COALESCE(ap.n, 0) AS assists,
+           np.media AS nota
+    FROM team_players tp
+    JOIN teams t ON tp.team_id = t.id
+    JOIN matches m ON t.match_id = m.id
+    LEFT JOIN gols_partida gp ON gp.match_id = m.id AND gp.user_id = tp.user_id
+    LEFT JOIN assists_partida ap ON ap.match_id = m.id AND ap.user_id = tp.user_id
+    LEFT JOIN notas_partida np ON np.match_id = m.id AND np.user_id = tp.user_id
+    WHERE m.status = 'completed'
+    ORDER BY m.date DESC, m.id DESC
+  `);
+
+  // A nota só entra depois que o prazo de avaliação fecha. Enquanto ele corre, a média
+  // oscila a cada voto e a carta de alguém poderia despencar só porque a primeira
+  // pessoa a votar deu nota baixa. Gols e assistências são fatos e contam na hora.
+  const agora = Date.now();
+  const notaFechada = (finishedAt) => {
+    if (!finishedAt) return true; // partida antiga, de antes do prazo existir
+    const fim = new Date(finishedAt).getTime() + HORAS_PARA_AVALIAR * 60 * 60 * 1000;
+    return isNaN(fim) || fim <= agora;
+  };
+
+  const porAtleta = new Map();
+  linhas.forEach(l => {
+    const id = Number(l.user_id);
+    if (!porAtleta.has(id)) porAtleta.set(id, []);
+    porAtleta.get(id).push(l);
+  });
+
+  const formas = new Map();
+  porAtleta.forEach((jogos, id) => {
+    let somaPesos = 0, somaGols = 0, somaAssists = 0, somaPesosNota = 0, somaNotas = 0;
+
+    jogos.forEach((jogo, indice) => {
+      const peso = Math.pow(EVOLUCAO.DECAIMENTO, indice);
+      somaPesos += peso;
+      somaGols += peso * Number(jogo.gols);
+      somaAssists += peso * Number(jogo.assists);
+      if (jogo.nota !== null && jogo.nota !== undefined && notaFechada(jogo.finished_at)) {
+        somaPesosNota += peso;
+        somaNotas += peso * Number(jogo.nota);
+      }
+    });
+
+    const nota = somaPesosNota > 0 ? somaNotas / somaPesosNota : null;
+    const golsPorJogo = somaGols / somaPesos;
+    const assistsPorJogo = somaAssists / somaPesos;
+    const confianca = Math.min(jogos.length / EVOLUCAO.JOGOS_PARA_CONFIANCA_TOTAL, 1);
+
+    const efeitoNota = nota === null ? 0 : (nota - EVOLUCAO.NOTA_NEUTRA) * EVOLUCAO.PONTOS_POR_PONTO_DE_NOTA;
+    const bonusGol = Math.min(golsPorJogo * EVOLUCAO.PONTOS_POR_GOL_POR_JOGO, EVOLUCAO.TETO_BONUS_GOL);
+    const bonusAssist = Math.min(assistsPorJogo * EVOLUCAO.PONTOS_POR_ASSIST_POR_JOGO, EVOLUCAO.TETO_BONUS_ASSIST);
+
+    // A nota mexe em tudo; gol puxa finalização, assistência puxa passe, e o
+    // drible fica com metade de cada um.
+    const bruto = {
+      pace: efeitoNota,
+      defending: efeitoNota,
+      physical: efeitoNota,
+      shooting: efeitoNota + bonusGol,
+      passing: efeitoNota + bonusAssist,
+      dribbling: efeitoNota + (bonusGol + bonusAssist) / 2
+    };
+
+    const delta = {};
+    ATRIBUTOS.forEach(k => {
+      delta[k] = Math.round(limitar(bruto[k] * confianca, -EVOLUCAO.VARIACAO_MAXIMA, EVOLUCAO.VARIACAO_MAXIMA));
+    });
+
+    formas.set(id, {
+      delta,
+      partidas: jogos.length,
+      nota: nota === null ? null : Math.round(nota * 10) / 10
+    });
+  });
+
+  return formas;
+}
+
+/**
+ * Devolve o atleta com os atributos evoluídos. Os valores originais da planilha
+ * seguem em base_attrs, e form traz quanto cada atributo mudou.
+ */
+function aplicarForma(atleta, formas) {
+  if (!atleta) return atleta;
+
+  const base = {};
+  ATRIBUTOS.forEach(k => { base[k] = Number(atleta[k]) || 50; });
+
+  const saida = { ...atleta, base_attrs: base, form: null };
+  const forma = formas && formas.get(Number(atleta.id));
+  if (!forma) return saida;
+
+  const variacao = {};
+  ATRIBUTOS.forEach(k => {
+    saida[k] = limitar(base[k] + forma.delta[k], 25, 99);
+    // Variação real: o teto de 99 pode ter comido parte do bônus
+    variacao[k] = saida[k] - base[k];
+  });
+
+  saida.form = { ...variacao, partidas: forma.partidas, nota: forma.nota };
+  return saida;
+}
+
 const INVITE_CODE = 'JOGO2026';
 
 // Sistema de Auditoria em Tempo Real (Horário de Brasília)
@@ -543,21 +694,31 @@ app.post('/users/:id/reset-pin', (req, res) => {
 });
 
 // -- USERS --
-app.get('/users', (req, res) => {
-  db.all(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`, [], (err, rows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    res.json((rows || []).map(r => withPhotoUrls(r)));
-  });
+app.get('/users', async (req, res) => {
+  try {
+    const [rows, formas] = await Promise.all([
+      dbAll(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`),
+      calcularFormas()
+    ]);
+    res.json(rows.map(r => aplicarForma(withPhotoUrls(r), formas)));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Dados de um unico atleta. Usado pela sincronizacao do app na abertura, que antes
 // baixava a lista inteira (com todas as fotos) so para reler o proprio usuario.
-app.get('/users/:id', (req, res) => {
-  db.get(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users WHERE id = ?`, [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+app.get('/users/:id', async (req, res) => {
+  try {
+    const [row, formas] = await Promise.all([
+      dbGet(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users WHERE id = ?`, [req.params.id]),
+      calcularFormas()
+    ]);
     if (!row) return res.status(404).json({ error: 'Atleta não encontrado' });
-    res.json(withPhotoUrls(row));
-  });
+    res.json(aplicarForma(withPhotoUrls(row), formas));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Serve a foto do atleta como imagem binaria. Como a URL carrega a versao do
@@ -1063,7 +1224,7 @@ app.get('/matches/:id', async (req, res) => {
     // As quatro consultas abaixo nao dependem umas das outras. Antes cada uma
     // esperava o callback da anterior, somando quatro idas e voltas ate o banco
     // na nuvem; em paralelo o custo passa a ser o da consulta mais lenta.
-    const [teamRows, goalRows, assistRows, ratingRows, raterRows, myRatingRows] = await Promise.all([
+    const [teamRows, goalRows, assistRows, ratingRows, raterRows, myRatingRows, formas] = await Promise.all([
       dbAll(`
         SELECT t.id as team_id, t.name as team_name, t.manual_score, u.id as user_id, u.username, u.nickname, u.position,
                u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical, ${photoCols('u')}
@@ -1105,7 +1266,9 @@ app.get('/matches/:id', async (req, res) => {
       // As notas que quem esta pedindo a partida ja registrou
       requesterId
         ? dbAll('SELECT rated_id, score FROM ratings WHERE match_id = ? AND rater_id = ?', [matchId, requesterId])
-        : Promise.resolve([])
+        : Promise.resolve([]),
+
+      calcularFormas()
     ]);
 
     const teams = {};
@@ -1114,7 +1277,7 @@ app.get('/matches/:id', async (req, res) => {
         teams[row.team_id] = { id: row.team_id, name: row.team_name, manual_score: row.manual_score, players: [] };
       }
       if (row.user_id) {
-        teams[row.team_id].players.push({
+        teams[row.team_id].players.push(aplicarForma({
           id: row.user_id,
           username: row.username,
           nickname: row.nickname,
@@ -1127,7 +1290,7 @@ app.get('/matches/:id', async (req, res) => {
           dribbling: row.dribbling,
           defending: row.defending,
           physical: row.physical
-        });
+        }, formas));
       }
     });
 
@@ -1409,7 +1572,7 @@ app.get('/stats', async (req, res) => {
   try {
     // Cinco consultas independentes: rodam juntas em vez de encadeadas.
     // A lista de atletas nao traz mais as fotos em Base64, so a URL de cada uma.
-    const [users, goalsRows, assistsRows, ratingsRows, matchDetails] = await Promise.all([
+    const [users, goalsRows, assistsRows, ratingsRows, matchDetails, formas] = await Promise.all([
       dbAll(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`),
 
       dbAll(`SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id
@@ -1432,7 +1595,11 @@ app.get('/stats', async (req, res) => {
         LEFT JOIN teams t_opp ON t_opp.match_id = m.id AND t_opp.id != t_own.id
         WHERE m.status = 'completed'${dateFilter}
         ORDER BY m.date DESC, m.id DESC
-      `, dateArgs)
+      `, dateArgs),
+
+      // A evolução da carta usa sempre o histórico completo, mesmo quando o ranking
+      // está filtrado por mês: o OVR é do atleta, não do período
+      calcularFormas()
     ]);
 
     const goalsMap = {};
@@ -1472,7 +1639,7 @@ app.get('/stats', async (req, res) => {
       const matchesCount = userMatches.length;
 
       return {
-        ...withPhotoUrls(user),
+        ...aplicarForma(withPhotoUrls(user), formas),
         goals: goalsMap[user.id] || 0,
         assists: assistsMap[user.id] || 0,
         avg_rating: ratingsMap[user.id] || 0,

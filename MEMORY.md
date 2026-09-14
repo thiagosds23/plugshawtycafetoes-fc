@@ -46,6 +46,32 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 
 ---
 
+## 📈 Evolução das Cartas pelo Desempenho
+
+Os atributos gravados em `users` (pace, shooting...) são a **BASE**, vinda da planilha de
+avaliação do elenco. **Nunca grave desempenho neles.** A evolução é calculada a cada leitura
+por `calcularFormas()` + `aplicarForma()` no backend, e aplicada em `/users`, `/users/:id`,
+`/stats` e `/matches/:id`.
+
+Cada atleta chega com:
+- `pace`, `shooting`... → já evoluídos (o `calcOVR` do frontend usa estes)
+- `base_attrs` → os valores originais da planilha
+- `form` → quanto cada atributo mudou, mais `partidas` e `nota` ponderada (null se nunca jogou)
+
+Regras (constantes em `EVOLUCAO`, calibradas com as partidas reais):
+- Todas as partidas encerradas contam; a mais recente pesa 1, a anterior 0,85, depois 0,72...
+- Confiança parcial com poucos jogos: 1 jogo = 25% do efeito, 4 ou mais = 100%
+- Nota acima de 6 melhora todos os atributos, abaixo piora (2 pontos por ponto de nota)
+- Gols somam em Finalização, assistências em Passe, Drible leva metade de cada. **Nunca penalizam**
+- Cada atributo varia no máximo ±10 em relação à base
+- A nota de uma partida só entra depois que o prazo de 12h de avaliação fecha
+
+No frontend, `calcBaseOVR(player)` e `ovrTrend(player)` (em `utils/ovr.js`) dão o OVR da
+planilha e a variação. O sorteio usa só `calcOVR` — somar a nota média de novo contaria o
+desempenho duas vezes.
+
+---
+
 ## 🔐 Permissões e Avaliação da Partida
 
 **Administrador** vem da coluna `users.is_admin` (migrada uma vez a partir da regra
