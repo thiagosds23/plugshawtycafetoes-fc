@@ -38,11 +38,43 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 ---
 
 ## 💡 Skills Instaladas no Projeto & Antigravity
-- **Locais (`.agents/skills/`):**
-  - `fut-card-engine`: Regras de OVR e enquadramento das cartas.
-  - `team-balancer-rules`: Algoritmo Snake Draft por OVR.
-  - `pelada-achievements`: Lógica de distribuição de medalhas.
+- **Locais (`.agents/skills/` e orquestrador `.agents/skills.json`):**
+  - `fut-card-engine`: Regras de OVR posicional, enquadramento e Tiers visuais (Special 85+, Gold 75-84, Silver 65-74, Bronze <65).
+  - `team-balancer-rules`: Algoritmo Snake Draft por OVR efetivo e suporte a partidas rivais vs rachas internos.
+  - `pelada-achievements`: Lógica automatizada de medalhas/badges (*Artilheiro*, *Garçom*, *MVP/Craque*, *Quem Tá Voando*, *Paredão/Xerife*, *Café com Leite*).
 - **Globais:** `find-skills`, `frontend-design`, `webapp-testing`, `sqlite-database-expert`, `vercel-react-best-practices`, `react-doctor`, `improve-codebase-architecture`, `grill-me`, `grill-with-docs`, `tdd`, `setup-matt-pocock-skills`, `react-email`, `stitch::react-components`.
+
+---
+
+## 🏗️ Arquitetura Modular do Frontend
+Para garantir manutenibilidade, carregamento rápido e respeitar os limites de Fast Refresh do Vite, os componentes monolíticos foram decompostos em submódulos especializados:
+
+### Subcomponentes de Atleta (`frontend/src/components/player/`)
+- `PhotoAdjustModal.jsx`: Recorte, zoom e remoção inteligente de fundo por IA (@imgly/background-removal) com fallback WebGPU/WASM.
+- `EditPlayerModal.jsx`: Edição completa de perfil, múltiplos apelidos, dados antropométricos e PIN de segurança.
+- `AuditModal.jsx`: Auditoria de ações administrativas e download seguro do banco JSON.
+- `PlayerDetailsModal.jsx`: Modal unificado de estatísticas, histórico de jogos, badges e variação de atributos (`ResumoForma`), compartilhado entre `Players.jsx` e `MatchDetails.jsx`.
+
+### Subcomponentes de Partida (`frontend/src/components/match/`)
+- `TacticalPitch.jsx`: Campo tático interativo estilo transmissão EA Sports FC (abas Time Jamaica / Roots ou Time Único em jogos rivais).
+- `DraftAnimation.jsx`: Sorteio cinemático com efeitos sonoros sintéticos via Web Audio API (`playDraftSound`, `playCelebrationSound`).
+- `WhatsAppImportModal.jsx`: Parser inteligente de lista de convocados do WhatsApp com fuzzy matching de apelidos.
+- `RatingModal.jsx`: Painel de avaliação pós-jogo com contagem regressiva de 12h ajustada para relógio do servidor e sliders táteis 0-10.
+
+### Utilitários Centralizados & Componente FUT
+- `frontend/src/components/FutCard.jsx`: Carta interativa com bordas luminosas, suporte a 4 tiers (Special/Gold/Silver/Bronze) e tamanhos (`normal`, `sm`, `xs`).
+- `frontend/src/utils/formatters.js`: Fonte única da verdade para formatação de nomes (`getPrimaryName`), notas (`formatarNota`, `corDaNota`), nomes curtos (`formatShortTeamName`) e badges (`getPlayerAchievements`).
+
+---
+
+## 🗄️ Otimizações do Banco de Dados & Turso
+- **Índices de Alta Performance (`runMigrations`):**
+  - `idx_team_players_team` e `idx_team_players_user`: Aceleram agregação de elencos e partidas disputadas.
+  - `idx_goals_match_user` e `idx_assists_match_user`: Otimizam cálculo de artilharia e ranking.
+  - `idx_ratings_match_rater`: Acelera a consulta de notas do usuário e prazo de votação.
+  - `idx_matches_date_status` e `idx_teams_match`: Agilizam listagens da agenda e histórico.
+- **Transações Sequenciais sem `db.serialize()`:** Operações de escrita em lote e deleção de dados usam estritamente `await dbRun(...)` sequencial, garantindo compatibilidade tanto com SQLite local quanto com @libsql/client (Turso).
+
 
 ---
 

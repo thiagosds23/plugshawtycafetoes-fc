@@ -1,7 +1,7 @@
 import React, { useState, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
-import { LogIn, UserPlus, Phone, Mail, User, KeyRound, Trophy, ArrowRight, ShieldCheck, ArrowLeft, Shield } from 'lucide-react';
+import { LogIn, UserPlus, Phone, Mail, User, KeyRound, Trophy, ShieldCheck, ArrowLeft, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { API_URL, formatPhotoUrl } from '../config';
 

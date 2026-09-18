@@ -177,7 +177,15 @@ async function runMigrations() {
     'ALTER TABLE matches ADD COLUMN opponent TEXT',
     // O adversário vira um time sem jogadores. Assim placar, vitórias e derrotas do
     // ranking funcionam igual ao racha, sem lógica paralela.
-    'ALTER TABLE teams ADD COLUMN is_opponent INTEGER DEFAULT 0'
+    'ALTER TABLE teams ADD COLUMN is_opponent INTEGER DEFAULT 0',
+    // Índices de alta performance para acelerar ranking, histórico e listagens
+    'CREATE INDEX IF NOT EXISTS idx_team_players_team ON team_players (team_id)',
+    'CREATE INDEX IF NOT EXISTS idx_team_players_user ON team_players (user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_goals_match_user ON goals (match_id, user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_assists_match_user ON assists (match_id, user_id)',
+    'CREATE INDEX IF NOT EXISTS idx_ratings_match_rater ON ratings (match_id, rater_id)',
+    'CREATE INDEX IF NOT EXISTS idx_matches_date_status ON matches (date, status)',
+    'CREATE INDEX IF NOT EXISTS idx_teams_match ON teams (match_id)'
   ];
 
   for (const sql of passos) {
@@ -1170,34 +1178,23 @@ app.post('/users/import-ratings-excel', docUpload.single('file'), (req, res) => 
   }
 });
 
-app.delete('/users/:id', (req, res) => {
-  const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
-  if (!requesterId) {
-    return res.status(403).json({ error: 'Acesso negado: Usuário não identificado.' });
+app.delete('/users/:id', requireAdmin, async (req, res) => {
+  const id = req.params.id;
+  try {
+    // Ordem estrita de deleção: Turso e SQLite validam foreign keys, então
+    // registros dependentes devem ser apagados antes do atleta.
+    await dbRun('DELETE FROM team_players WHERE user_id = ?', [id]);
+    await dbRun('DELETE FROM goals WHERE user_id = ?', [id]);
+    await dbRun('DELETE FROM assists WHERE user_id = ?', [id]);
+    await dbRun('DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', [id, id]);
+    await dbRun('DELETE FROM users WHERE id = ?', [id]);
+
+    logAudit(req.requester.id, req.requester.username, 'ADMIN', `Excluiu o atleta ID ${id}`);
+    res.json({ success: true, message: 'Jogador excluído com sucesso!' });
+  } catch (err) {
+    console.error('Erro ao excluir atleta:', err.message);
+    res.status(500).json({ error: 'Erro ao excluir atleta: ' + err.message });
   }
-
-  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
-    if (err || !user) {
-      return res.status(403).json({ error: 'Acesso negado: Usuário solicitante não encontrado.' });
-    }
-
-    if (!isAdminUser(user)) {
-      return res.status(403).json({ error: 'Acesso negado: Apenas o Administrador pode excluir jogadores do clube.' });
-    }
-
-    const id = req.params.id;
-    db.serialize(() => {
-      db.run('DELETE FROM team_players WHERE user_id = ?', [id]);
-      db.run('DELETE FROM goals WHERE user_id = ?', [id]);
-      db.run('DELETE FROM assists WHERE user_id = ?', [id]);
-      db.run('DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', [id, id]);
-      db.run('DELETE FROM users WHERE id = ?', [id], (err2) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-        logAudit(user.id, user.username, 'ADMIN', `Excluiu o atleta ID ${id}`);
-        res.json({ success: true, message: 'Jogador excluído com sucesso!' });
-      });
-    });
-  });
 });
 
 // -- MATCHES --
@@ -1508,26 +1505,27 @@ app.put('/matches/:id/team-score', requireAdmin, (req, res) => {
 });
 
 // Update player goals or assists count directly
-app.put('/matches/:id/player-events', requireAdmin, (req, res) => {
+app.put('/matches/:id/player-events', requireAdmin, async (req, res) => {
   const matchId = req.params.id;
   const { user_id, type, count } = req.body;
+  if (type !== 'goal' && type !== 'assist') {
+    return res.status(400).json({ error: 'Tipo de evento inválido (deve ser "goal" ou "assist").' });
+  }
   const table = type === 'goal' ? 'goals' : 'assists';
   const targetCount = Math.max(0, parseInt(count, 10) || 0);
 
-  db.run(`DELETE FROM ${table} WHERE match_id = ? AND user_id = ?`, [matchId, user_id], (err) => {
-    if (err) return res.status(500).json({ error: err.message });
-    if (targetCount === 0) return res.json({ success: true, count: 0 });
-
-    let inserted = 0;
-    for (let i = 0; i < targetCount; i++) {
-      db.run(`INSERT INTO ${table} (match_id, user_id) VALUES (?, ?)`, [matchId, user_id], () => {
-        inserted++;
-        if (inserted === targetCount) {
-          res.json({ success: true, count: targetCount });
-        }
-      });
+  try {
+    await dbRun(`DELETE FROM ${table} WHERE match_id = ? AND user_id = ?`, [matchId, user_id]);
+    if (targetCount > 0) {
+      const placeholders = Array(targetCount).fill('(?, ?)').join(', ');
+      const args = Array(targetCount).flatMap(() => [matchId, user_id]);
+      await dbRun(`INSERT INTO ${table} (match_id, user_id) VALUES ${placeholders}`, args);
     }
-  });
+    res.json({ success: true, count: targetCount });
+  } catch (err) {
+    console.error(`Erro ao atualizar ${table}:`, err.message);
+    res.status(500).json({ error: 'Erro ao atualizar eventos: ' + err.message });
+  }
 });
 
 // -- EVENTS (Goals, Assists) --

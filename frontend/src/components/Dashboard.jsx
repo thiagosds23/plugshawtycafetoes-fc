@@ -1,18 +1,10 @@
 import React, { useEffect, useState, useContext } from 'react';
-import { Trophy, Star, Goal, Award, ThumbsDown, Crown, Coffee, Calendar, Target, Flame, Activity, TrendingUp, ShieldCheck, Zap, ArrowRight, PlusCircle, Search, User, Footprints, Handshake, Swords, Star as StarIcon } from 'lucide-react';
+import { Goal, Award, Crown, Coffee, Calendar, Flame, Activity, ShieldCheck, Zap, ArrowRight, Search, Footprints, Swords, Star as StarIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AuthContext } from '../AuthContext';
 import { API_URL, formatPhotoUrl } from '../config';
-
-function getPrimaryName(player) {
-  if (!player) return '';
-  if (player.nickname && typeof player.nickname === 'string') {
-    const first = player.nickname.split(',')[0].trim();
-    if (first) return first;
-  }
-  return player.username || '';
-}
+import { getPrimaryName, getPlayerAchievements } from '../utils/formatters';
 
 export default function Dashboard() {
   const { user } = useContext(AuthContext);
@@ -75,32 +67,9 @@ export default function Dashboard() {
     : '0.0';
 
   // Compute Achievements per player
-  const getAchievements = (playerId) => {
-    const medals = [];
-    if (stats.length === 0) return medals;
-
-    const maxGoals = Math.max(...stats.map(s => s.goals || 0));
-    const maxAssists = Math.max(...stats.map(s => s.assists || 0));
-    const maxRating = Math.max(...stats.map(s => s.avg_rating || 0));
-    const minRating = Math.min(...stats.map(s => (s.avg_rating > 0 ? s.avg_rating : 99)));
-
-    const p = stats.find(s => s.id === playerId);
-    if (!p) return medals;
-
-    if (p.goals && p.goals === maxGoals && maxGoals > 0) {
-      medals.push({ icon: <Goal size={14} color="#00f59b" />, title: 'Artilheiro da Temporada', bg: 'rgba(0, 245, 155, 0.15)' });
-    }
-    if (p.assists && p.assists === maxAssists && maxAssists > 0) {
-      medals.push({ icon: <Coffee size={14} color="#ffd700" />, title: 'Líder em Assistências', bg: 'rgba(255, 215, 0, 0.15)' });
-    }
-    if (p.avg_rating && p.avg_rating === maxRating && maxRating > 0) {
-      medals.push({ icon: <Crown size={14} color="#ffd700" />, title: period === 'month' ? 'Craque do Mês' : 'MVP da Temporada', bg: 'rgba(255, 215, 0, 0.2)' });
-    }
-    if (p.avg_rating && p.avg_rating === minRating && minRating < 6 && stats.length > 2) {
-      medals.push({ icon: <ThumbsDown size={14} color="#ff3366" />, title: 'Pé Murcho (Café com Leite)', bg: 'rgba(255, 51, 102, 0.15)' });
-    }
-
-    return medals;
+  const getAchievements = (playerOrId) => {
+    const p = typeof playerOrId === 'object' ? playerOrId : stats.find(s => s.id === playerOrId);
+    return getPlayerAchievements(p, stats, period);
   };
 
   const container = {
@@ -559,9 +528,30 @@ export default function Dashboard() {
                     </div>
 
                     {/* Nome e Posição */}
-                    <div style={{ minWidth: 0 }}>
-                      <div className="font-extrabold text-main" style={{ fontSize: '0.95rem', lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {getPrimaryName(player)}
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div className="font-extrabold text-main" style={{ fontSize: '0.95rem', lineHeight: 1.2, display: 'flex', alignItems: 'center', gap: '5px', flexWrap: 'wrap' }}>
+                        <span style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px' }}>
+                          {getPrimaryName(player)}
+                        </span>
+                        {getAchievements(player).map((ach) => (
+                          <span
+                            key={ach.id}
+                            title={ach.title}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              fontSize: '11px',
+                              padding: '1px 3px',
+                              borderRadius: '5px',
+                              background: ach.bg,
+                              border: `1px solid ${ach.border}`,
+                              cursor: 'help'
+                            }}
+                          >
+                            {ach.badge}
+                          </span>
+                        ))}
                       </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
                         <span style={{ color: 'var(--primary)', fontWeight: 800 }}>{player.position || 'MEI'}</span>
@@ -702,7 +692,31 @@ export default function Dashboard() {
                         )}
                       </div>
                       <div>
-                        <div className="font-bold text-base text-main">{getPrimaryName(player)}</div>
+                        <div className="font-bold text-base text-main" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                          <span>{getPrimaryName(player)}</span>
+                          {getAchievements(player).map((ach) => (
+                            <span
+                              key={ach.id}
+                              title={ach.title}
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                fontSize: '11px',
+                                padding: '2px 6px',
+                                borderRadius: '6px',
+                                background: ach.bg,
+                                border: `1px solid ${ach.border}`,
+                                cursor: 'help'
+                              }}
+                            >
+                              <span>{ach.badge}</span>
+                              <span style={{ fontSize: '10px', fontWeight: 800, color: ach.color }}>
+                                {ach.title.split(' ')[0]}
+                              </span>
+                            </span>
+                          ))}
+                        </div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>{player.position || 'MEI'}</div>
                       </div>
                     </td>

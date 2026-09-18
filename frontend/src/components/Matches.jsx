@@ -1,6 +1,6 @@
 import React, { useEffect, useState, useContext } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Calendar, Plus, ChevronRight, Activity, Clock, CheckCircle2, Trash2, MapPin, Swords, Shuffle } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, Clock, CheckCircle2, Trash2, MapPin, Swords, Shuffle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { API_URL, authHeaders, isAdminUser } from '../config';
 import { AuthContext } from '../AuthContext';

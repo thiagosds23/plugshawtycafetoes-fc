@@ -1,14 +1,14 @@
 import React, { useContext } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom';
 import { AuthProvider, AuthContext } from './AuthContext';
-import { LogOut, Home, Trophy, Calendar, Users, Shield, Sparkles, UserCheck } from 'lucide-react';
+import { LogOut, Trophy, Calendar, Users } from 'lucide-react';
 
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import Matches from './components/Matches';
 import Players from './components/Players';
 import MatchDetails from './components/MatchDetails';
-import { API_URL, formatPhotoUrl } from './config';
+import { formatPhotoUrl } from './config';
 
 const PrivateRoute = ({ children }) => {
   const { user } = useContext(AuthContext);
