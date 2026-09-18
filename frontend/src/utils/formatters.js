@@ -108,10 +108,13 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     achievements.push({
       id: 'top_scorer',
       title: period === 'month' ? 'Artilheiro do Mês' : 'Artilheiro da Temporada',
+      shortLabel: 'Artilheiro',
       badge: '⚽',
       color: '#00f59b',
-      bg: 'rgba(0, 245, 155, 0.15)',
-      border: 'rgba(0, 245, 155, 0.35)'
+      bg: 'linear-gradient(135deg, rgba(0, 245, 155, 0.22), rgba(0, 200, 115, 0.08))',
+      border: 'rgba(0, 245, 155, 0.45)',
+      glow: '0 0 10px rgba(0, 245, 155, 0.25)',
+      description: `${player.goals} gols marcados`
     });
   }
 
@@ -119,10 +122,13 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     achievements.push({
       id: 'top_playmaker',
       title: period === 'month' ? 'Garçom do Mês' : 'Líder em Assistências',
+      shortLabel: 'Garçom',
       badge: '👟',
       color: '#00e5ff',
-      bg: 'rgba(0, 229, 255, 0.15)',
-      border: 'rgba(0, 229, 255, 0.35)'
+      bg: 'linear-gradient(135deg, rgba(0, 229, 255, 0.22), rgba(0, 160, 220, 0.08))',
+      border: 'rgba(0, 229, 255, 0.45)',
+      glow: '0 0 10px rgba(0, 229, 255, 0.25)',
+      description: `${player.assists} assistências concedidas`
     });
   }
 
@@ -130,10 +136,13 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     achievements.push({
       id: 'mvp',
       title: period === 'month' ? 'Craque do Mês' : 'MVP da Temporada',
+      shortLabel: period === 'month' ? 'Craque' : 'MVP',
       badge: '👑',
-      color: '#fbbf24',
-      bg: 'rgba(251, 191, 36, 0.2)',
-      border: 'rgba(251, 191, 36, 0.4)'
+      color: '#ffd700',
+      bg: 'linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(218, 165, 32, 0.1))',
+      border: 'rgba(255, 215, 0, 0.55)',
+      glow: '0 0 12px rgba(255, 215, 0, 0.35)',
+      description: `Nota média de elite (${player.avg_rating.toFixed(1)})`
     });
   }
 
@@ -141,10 +150,13 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     achievements.push({
       id: 'hot_streak',
       title: `Quem Tá Voando (${player.win_streak} vitórias seguidas)`,
+      shortLabel: `${player.win_streak}V Seguidas`,
       badge: '🔥',
-      color: '#ff7b00',
-      bg: 'rgba(255, 123, 0, 0.15)',
-      border: 'rgba(255, 123, 0, 0.35)'
+      color: '#ff7700',
+      bg: 'linear-gradient(135deg, rgba(255, 119, 0, 0.25), rgba(255, 68, 0, 0.08))',
+      border: 'rgba(255, 119, 0, 0.5)',
+      glow: '0 0 12px rgba(255, 119, 0, 0.35)',
+      description: `Sequência de ${player.win_streak} vitórias consecutivas`
     });
   }
 
@@ -155,10 +167,13 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
       achievements.push({
         id: 'wall',
         title: 'Paredão / Xerife da Zaga',
+        shortLabel: 'Xerife',
         badge: '🛡️',
-        color: '#a855f7',
-        bg: 'rgba(168, 85, 247, 0.15)',
-        border: 'rgba(168, 85, 247, 0.35)'
+        color: '#c084fc',
+        bg: 'linear-gradient(135deg, rgba(192, 132, 252, 0.22), rgba(126, 34, 206, 0.08))',
+        border: 'rgba(192, 132, 252, 0.45)',
+        glow: '0 0 10px rgba(192, 132, 252, 0.25)',
+        description: `Melhor nota defensiva (${player.avg_rating.toFixed(1)})`
       });
     }
   }
@@ -167,10 +182,13 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     achievements.push({
       id: 'cafe_com_leite',
       title: 'Pé Murcho (Café com Leite)',
+      shortLabel: 'Pé Murcho',
       badge: '☕',
-      color: '#ff3366',
-      bg: 'rgba(251, 191, 36, 0.15)',
-      border: 'rgba(255, 51, 102, 0.35)'
+      color: '#ff4d79',
+      bg: 'linear-gradient(135deg, rgba(255, 77, 121, 0.22), rgba(190, 18, 60, 0.08))',
+      border: 'rgba(255, 77, 121, 0.45)',
+      glow: '0 0 10px rgba(255, 77, 121, 0.25)',
+      description: `Menor nota média do elenco (${player.avg_rating.toFixed(1)})`
     });
   }
 

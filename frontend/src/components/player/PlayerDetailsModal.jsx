@@ -5,6 +5,7 @@ import { calcOVR } from '../../utils/ovr';
 import { formatPhotoUrl } from '../../config';
 import { getPrimaryName } from '../../utils/formatters';
 import ResumoForma from '../ResumoForma';
+import AchievementBadge from '../AchievementBadge';
 
 export default function PlayerDetailsModal({
   isOpen,
@@ -22,16 +23,48 @@ export default function PlayerDetailsModal({
 
   const badges = [];
   if (player.goals && player.goals >= 5) {
-    badges.push({ badge: '⚽', title: `${player.goals} gols marcados`, bg: 'rgba(0, 245, 155, 0.15)', border: 'rgba(0, 245, 155, 0.35)' });
+    badges.push({
+      id: 'top_scorer',
+      title: `${player.goals} gols marcados na temporada`,
+      shortLabel: `${player.goals} Gols`,
+      color: '#00f59b',
+      bg: 'linear-gradient(135deg, rgba(0, 245, 155, 0.22), rgba(0, 200, 115, 0.08))',
+      border: 'rgba(0, 245, 155, 0.45)',
+      glow: '0 0 10px rgba(0, 245, 155, 0.25)'
+    });
   }
   if (player.assists && player.assists >= 3) {
-    badges.push({ badge: '👟', title: `${player.assists} assistências`, bg: 'rgba(0, 229, 255, 0.15)', border: 'rgba(0, 229, 255, 0.35)' });
+    badges.push({
+      id: 'top_playmaker',
+      title: `${player.assists} assistências na temporada`,
+      shortLabel: `${player.assists} Ast`,
+      color: '#00e5ff',
+      bg: 'linear-gradient(135deg, rgba(0, 229, 255, 0.22), rgba(0, 160, 220, 0.08))',
+      border: 'rgba(0, 229, 255, 0.45)',
+      glow: '0 0 10px rgba(0, 229, 255, 0.25)'
+    });
   }
   if (player.avg_rating && player.avg_rating >= 7.5) {
-    badges.push({ badge: '⭐', title: `Nota média de elite (${player.avg_rating.toFixed(1)})`, bg: 'rgba(251, 191, 36, 0.2)', border: 'rgba(251, 191, 36, 0.4)' });
+    badges.push({
+      id: 'mvp',
+      title: `Nota média de elite (${player.avg_rating.toFixed(1)})`,
+      shortLabel: 'Elite',
+      color: '#ffd700',
+      bg: 'linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(218, 165, 32, 0.1))',
+      border: 'rgba(255, 215, 0, 0.55)',
+      glow: '0 0 12px rgba(255, 215, 0, 0.35)'
+    });
   }
   if (player.win_streak && player.win_streak >= 2) {
-    badges.push({ badge: '🔥', title: `Sequência de ${player.win_streak} vitórias`, bg: 'rgba(255, 123, 0, 0.15)', border: 'rgba(255, 123, 0, 0.35)' });
+    badges.push({
+      id: 'hot_streak',
+      title: `Sequência de ${player.win_streak} vitórias consecutivas`,
+      shortLabel: `${player.win_streak}V`,
+      color: '#ff7700',
+      bg: 'linear-gradient(135deg, rgba(255, 119, 0, 0.25), rgba(255, 68, 0, 0.08))',
+      border: 'rgba(255, 119, 0, 0.5)',
+      glow: '0 0 12px rgba(255, 119, 0, 0.35)'
+    });
   }
 
   return (
@@ -110,22 +143,12 @@ export default function PlayerDetailsModal({
                 {player.height && <span>• {Number(player.height).toFixed(2)}m</span>}
                 {player.weight && <span>• {player.weight}kg</span>}
                 {badges.map((b, idx) => (
-                  <span
+                  <AchievementBadge
                     key={idx}
-                    title={b.title}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '3px',
-                      fontSize: '11px',
-                      padding: '1px 5px',
-                      borderRadius: '5px',
-                      background: b.bg,
-                      border: `1px solid ${b.border}`
-                    }}
-                  >
-                    {b.badge}
-                  </span>
+                    badge={b}
+                    size="xs"
+                    variant="pill"
+                  />
                 ))}
               </div>
             </div>

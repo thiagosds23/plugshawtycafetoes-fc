@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import { AuthContext } from '../AuthContext';
 import { API_URL, formatPhotoUrl } from '../config';
 import { getPrimaryName, getPlayerAchievements } from '../utils/formatters';
+import AchievementBadge from './AchievementBadge';
 
 export default function Dashboard() {
   const { user } = useContext(AuthContext);
@@ -534,23 +535,12 @@ export default function Dashboard() {
                           {getPrimaryName(player)}
                         </span>
                         {getAchievements(player).map((ach) => (
-                          <span
+                          <AchievementBadge
                             key={ach.id}
-                            title={ach.title}
-                            style={{
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              fontSize: '11px',
-                              padding: '1px 3px',
-                              borderRadius: '5px',
-                              background: ach.bg,
-                              border: `1px solid ${ach.border}`,
-                              cursor: 'help'
-                            }}
-                          >
-                            {ach.badge}
-                          </span>
+                            badge={ach}
+                            size="xs"
+                            variant="compact"
+                          />
                         ))}
                       </div>
                       <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', fontWeight: 700, marginTop: '2px', display: 'flex', alignItems: 'center', gap: '5px' }}>
@@ -695,26 +685,12 @@ export default function Dashboard() {
                         <div className="font-bold text-base text-main" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <span>{getPrimaryName(player)}</span>
                           {getAchievements(player).map((ach) => (
-                            <span
+                            <AchievementBadge
                               key={ach.id}
-                              title={ach.title}
-                              style={{
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                gap: '4px',
-                                fontSize: '11px',
-                                padding: '2px 6px',
-                                borderRadius: '6px',
-                                background: ach.bg,
-                                border: `1px solid ${ach.border}`,
-                                cursor: 'help'
-                              }}
-                            >
-                              <span>{ach.badge}</span>
-                              <span style={{ fontSize: '10px', fontWeight: 800, color: ach.color }}>
-                                {ach.title.split(' ')[0]}
-                              </span>
-                            </span>
+                              badge={ach}
+                              size="sm"
+                              variant="pill"
+                            />
                           ))}
                         </div>
                         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: '600' }}>{player.position || 'MEI'}</div>

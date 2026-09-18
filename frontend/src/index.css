@@ -695,3 +695,21 @@ body {
 .nota-slider:focus-visible {
   box-shadow: 0 0 0 3px rgba(0, 245, 155, 0.35);
 }
+
+/* ---------------------------------------------------------------------------
+   Insígnias de Conquistas & Badges (EA Sports FC / Champions League Style)
+   --------------------------------------------------------------------------- */
+.achievement-badge {
+  position: relative;
+  will-change: transform;
+}
+
+.achievement-badge:hover {
+  transform: translateY(-1.5px) scale(1.06);
+  filter: brightness(1.22);
+}
+
+.achievement-badge:active {
+  transform: translateY(0) scale(0.98);
+}
+

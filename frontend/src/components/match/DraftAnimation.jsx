@@ -57,8 +57,8 @@ export default function DraftAnimation({ draftAnim, onClose }) {
               </div>
             </div>
 
-            <h2 style={{ fontSize: '1.75rem', fontWeight: 900, color: '#fff', margin: '0 0 10px', letterSpacing: '-0.5px' }}>
-              ⚖️ BALANCEANDO EQUIPES...
+            <h2 style={{ fontSize: '1.75rem', fontWeight: 900, color: '#fff', margin: '0 0 10px', letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+              <Sparkles size={24} color="#00f59b" /> BALANCEANDO EQUIPES...
             </h2>
             <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', margin: 0, lineHeight: 1.5 }}>
               Analisando os <strong style={{ color: '#00f59b' }}>{draftAnim.total} atletas convocados</strong>, combinando OVRs individuais e notas médias para gerar o confronto perfeito!
@@ -177,10 +177,10 @@ export default function DraftAnimation({ draftAnim, onClose }) {
               >
                 <button
                   className="btn"
-                  style={{ width: '100%', maxWidth: '380px', padding: '14px 28px', fontSize: '1rem', fontWeight: 900, margin: '0 auto', boxShadow: '0 8px 30px rgba(0, 245, 155, 0.45)' }}
+                  style={{ width: '100%', maxWidth: '380px', padding: '14px 28px', fontSize: '1rem', fontWeight: 900, margin: '0 auto', boxShadow: '0 8px 30px rgba(0, 245, 155, 0.45)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                   onClick={onClose}
                 >
-                  🚀 Ver Escalação Completa no Campo
+                  <Sparkles size={18} /> Ver Escalação Completa no Campo
                 </button>
               </motion.div>
             )}
