@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { Edit2, X, Camera, UserCircle, Sliders, Trash2, Plus, User, UserCheck, Tag, Phone, Mail, Lock, ShieldCheck, ShieldAlert, Shield, Info, Check } from 'lucide-react';
+import { Edit2, X, Camera, UserCircle, Sliders, Trash2, Plus, User, UserCheck, Tag, Phone, Mail, Lock, ShieldCheck, ShieldAlert, Shield, Info, Check, AlertCircle } from 'lucide-react';
 import { motion } from 'framer-motion';
 import { calcOVR } from '../../utils/ovr';
 import { formatHeight } from '../../utils/formatters';
@@ -70,11 +70,11 @@ export default function EditPlayerModal({
       if (user && user.id === player.id) {
         user.has_pin = data.has_pin;
       }
-      setPinFeedback(val ? '✅ PIN atualizado!' : '✅ PIN removido! Acesso livre.');
+      setPinFeedback({ type: 'success', message: val ? 'PIN atualizado com sucesso!' : 'PIN removido! Acesso livre.' });
       setPinVal('');
-      setTimeout(() => setPinFeedback(''), 3500);
+      setTimeout(() => setPinFeedback(null), 3500);
     } catch (err) {
-      setPinFeedback(`❌ ${err.message}`);
+      setPinFeedback({ type: 'error', message: err.message });
     } finally {
       setIsSavingPin(false);
     }
@@ -348,8 +348,17 @@ export default function EditPlayerModal({
             </div>
 
             {pinFeedback && (
-              <div style={{ fontSize: '0.75rem', fontWeight: 'bold', marginBottom: '8px', color: pinFeedback.startsWith('✅') ? 'var(--primary)' : '#ff3366' }}>
-                {pinFeedback}
+              <div style={{ 
+                fontSize: '0.75rem', 
+                fontWeight: 'bold', 
+                marginBottom: '8px', 
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '5px',
+                color: pinFeedback.type === 'success' ? 'var(--primary)' : '#ff4d79' 
+              }}>
+                {pinFeedback.type === 'success' ? <Check size={13} /> : <AlertCircle size={13} />}
+                <span>{pinFeedback.message}</span>
               </div>
             )}
 

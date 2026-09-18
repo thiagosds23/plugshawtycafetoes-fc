@@ -2,7 +2,7 @@ import React, { useEffect, useState, useContext, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
 import { 
-  Users, Shuffle, Star, Shield, ArrowLeft, Share2, Goal, 
+  Users, Shuffle, Star, Shield, ArrowLeft, ArrowRight, Share2, Goal, 
   Award, Trash2, RefreshCw, UserPlus, X, CheckCircle2, 
   Clipboard, LayoutList, MapPin, Plus, 
   Footprints, Lightbulb, Clock, Edit2, Swords 
@@ -1545,14 +1545,14 @@ export default function MatchDetails() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao || isRival} onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)}>
-                🔄 Trocar de Equipe
+              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao || isRival} onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <RefreshCw size={15} /> Trocar de Equipe
               </button>
               <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao} onClick={() => {
                 setSubstituteTarget({ user_id: fieldActionPlayer.player.id, name: getPrimaryName(fieldActionPlayer.player) });
                 setFieldActionPlayer(null);
-              }}>
-                👤+ Substituir por Reserva
+              }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <UserPlus size={15} /> Substituir por Reserva
               </button>
             </div>
           </div>
@@ -1649,7 +1649,7 @@ export default function MatchDetails() {
                       <span className="font-bold text-main">{getPrimaryName(p)}</span>
                       <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>{p.position || 'CM'}</span>
                     </div>
-                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--primary)' }}>Entrar ➔</span>
+                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Entrar <ArrowRight size={13} /></span>
                   </div>
                 ))
               ) : (

@@ -3,7 +3,8 @@ import { useLocation } from 'react-router-dom';
 import { 
   Edit2, Plus, Loader2, UserCheck, Users, Search, 
   ArrowUpDown, FileSpreadsheet, ClipboardList, ExternalLink, 
-  ShieldCheck, Download, HardDriveDownload, Check, X 
+  ShieldCheck, Download, HardDriveDownload, Check, X,
+  CheckCircle2, HelpCircle
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
@@ -663,7 +664,9 @@ export default function Players() {
               title="Preencher ou consultar formulário de avaliação dos jogadores"
             >
               <ClipboardList size={16} color="var(--primary)" style={{ flexShrink: 0 }} />
-              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>Avaliação {evalAnswered && '✅'}</span>
+              <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                Avaliação {evalAnswered && <CheckCircle2 size={13} color="var(--primary)" />}
+              </span>
             </button>
 
             {isAdmin && (
@@ -910,8 +913,9 @@ export default function Players() {
                 </p>
 
                 <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '16px', padding: '16px 14px', marginBottom: '22px', textAlign: 'left' }}>
-                  <div style={{ fontSize: '0.94rem', fontWeight: 800, color: '#fff', marginBottom: '6px' }}>
-                    ❓ Você já respondeu ao formulário de avaliação dos jogadores?
+                  <div style={{ fontSize: '0.94rem', fontWeight: 800, color: '#fff', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <HelpCircle size={18} color="var(--primary)" style={{ flexShrink: 0 }} />
+                    <span>Você já respondeu ao formulário de avaliação dos jogadores?</span>
                   </div>
                   <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', lineHeight: 1.4 }}>
                     As notas atribuídas pelos atletas são indispensáveis para calcular os atributos oficiais (PAC, SHO, PAS, DRI, DEF, PHY) e o OVR de cada carta FUT.

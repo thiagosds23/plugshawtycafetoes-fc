@@ -141,8 +141,8 @@ export default function WhatsAppImportModal({
                     </div>
                   ) : (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', width: '100%' }}>
-                      <span className="badge badge-gold" style={{ fontSize: '0.68rem', padding: '4px 8px', flexShrink: 0 }}>
-                        ✨ Novo
+                      <span className="badge badge-gold" style={{ fontSize: '0.68rem', padding: '4px 8px', flexShrink: 0, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <Sparkles size={11} /> Novo
                       </span>
                       <input 
                         type="text" 
