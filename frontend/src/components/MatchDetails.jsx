@@ -318,7 +318,16 @@ export default function MatchDetails() {
       for (let i = 0; i < countVal; i++) {
         filtered.push({ match_id: prev.id, user_id: playerId, id: -(Date.now() + i) });
       }
-      return { ...prev, [eventKey]: filtered };
+      const updatedMatch = { ...prev, [eventKey]: filtered };
+      if (type === 'goal' && Array.isArray(prev.teams)) {
+        updatedMatch.teams = prev.teams.map(t => {
+          if (t.manual_score !== null && t.manual_score !== undefined) return t;
+          const playerIds = (t.players || []).map(p => p.id);
+          const teamGoals = filtered.filter(g => playerIds.includes(g.user_id)).length;
+          return { ...t, score: teamGoals };
+        });
+      }
+      return updatedMatch;
     });
 
     // Debounce the actual API call (wait 600ms after last keystroke)
@@ -327,15 +336,24 @@ export default function MatchDetails() {
       clearTimeout(eventDebounceRef.current[debounceKey]);
     }
     eventDebounceRef.current[debounceKey] = setTimeout(async () => {
-      await fetch(`${API_URL}/matches/${id}/player-events`, {
-        method: 'PUT',
-        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ user_id: playerId, type, count: countVal })
-      });
-      delete eventDebounceRef.current[debounceKey];
-      // So recarrega do servidor quando nao ha mais nenhum input pendente, senao o
-      // refetch sobrescreve o numero que o usuario ainda esta digitando em outro campo
-      if (Object.keys(eventDebounceRef.current).length === 0) loadMatch();
+      try {
+        const res = await fetch(`${API_URL}/matches/${id}/player-events`, {
+          method: 'PUT',
+          headers: authHeaders(user, { 'Content-Type': 'application/json' }),
+          body: JSON.stringify({ user_id: playerId, type, count: countVal })
+        });
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({}));
+          console.error('Erro ao atualizar eventos do atleta:', errData.error || res.statusText);
+        }
+      } catch (err) {
+        console.error('Falha de rede ao salvar eventos:', err);
+      } finally {
+        delete eventDebounceRef.current[debounceKey];
+        // So recarrega do servidor quando nao ha mais nenhum input pendente, senao o
+        // refetch sobrescreve o numero que o usuario ainda esta digitando em outro campo
+        if (Object.keys(eventDebounceRef.current).length === 0) loadMatch();
+      }
     }, 600);
   };
 

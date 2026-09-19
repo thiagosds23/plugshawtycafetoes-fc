@@ -223,6 +223,12 @@ async function runMigrations() {
   } catch (err) {
     console.error('⚠️  Não foi possível migrar o administrador:', err.message);
   }
+
+  // Limpa registros orfaos de gols e assistencias nulos caso tenham ocorrido
+  try {
+    await dbRun('DELETE FROM goals WHERE match_id IS NULL OR user_id IS NULL');
+    await dbRun('DELETE FROM assists WHERE match_id IS NULL OR user_id IS NULL');
+  } catch (_) {}
 }
 runMigrations();
 
@@ -1518,7 +1524,10 @@ app.put('/matches/:id/player-events', requireAdmin, async (req, res) => {
     await dbRun(`DELETE FROM ${table} WHERE match_id = ? AND user_id = ?`, [matchId, user_id]);
     if (targetCount > 0) {
       const placeholders = Array(targetCount).fill('(?, ?)').join(', ');
-      const args = Array(targetCount).flatMap(() => [matchId, user_id]);
+      const args = [];
+      for (let i = 0; i < targetCount; i++) {
+        args.push(matchId, user_id);
+      }
       await dbRun(`INSERT INTO ${table} (match_id, user_id) VALUES ${placeholders}`, args);
     }
     res.json({ success: true, count: targetCount });
