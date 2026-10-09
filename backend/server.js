@@ -178,6 +178,9 @@ async function runMigrations() {
     // O adversário vira um time sem jogadores. Assim placar, vitórias e derrotas do
     // ranking funcionam igual ao racha, sem lógica paralela.
     'ALTER TABLE teams ADD COLUMN is_opponent INTEGER DEFAULT 0',
+    // Prazo da votação definido pelo administrador (finalizar antes ou mudar a
+    // duração). Vazio, vale o padrão de 12 horas depois do encerramento.
+    'ALTER TABLE matches ADD COLUMN rating_deadline TEXT',
     // Índices de alta performance para acelerar ranking, histórico e listagens
     'CREATE INDEX IF NOT EXISTS idx_team_players_team ON team_players (team_id)',
     'CREATE INDEX IF NOT EXISTS idx_team_players_user ON team_players (user_id)',
@@ -276,17 +279,28 @@ function requireOpenMatchOrAdmin(req, res, next) {
   }).catch(() => res.status(500).json({ error: 'Erro ao verificar a partida' }));
 }
 
-// Janela de avaliação: abre quando o administrador encerra a partida e dura 12 horas
+// Janela de avaliação: abre quando o administrador encerra a partida e dura 12 horas,
+// a não ser que ele tenha finalizado a votação antes ou mudado a duração. Esse prazo
+// definido à mão fica em matches.rating_deadline.
 const HORAS_PARA_AVALIAR = 12;
+const DURACAO_MAXIMA_DA_AVALIACAO = 7 * 24; // horas
+
+/** Momento (em ms) em que a votação da partida fecha, ou NaN se ela nunca abriu. */
+function fimDaAvaliacao(match) {
+  if (!match || !match.finished_at) return NaN;
+  if (match.rating_deadline) return new Date(match.rating_deadline).getTime();
+  return new Date(match.finished_at).getTime() + HORAS_PARA_AVALIAR * 60 * 60 * 1000;
+}
 
 function janelaDeAvaliacao(match) {
   if (!match || match.status !== 'completed' || !match.finished_at) {
-    return { aberta: false, terminaEm: null };
+    return { aberta: false, terminaEm: null, horas: null };
   }
-  const encerrada = new Date(match.finished_at).getTime();
-  if (isNaN(encerrada)) return { aberta: false, terminaEm: null };
-  const fim = encerrada + HORAS_PARA_AVALIAR * 60 * 60 * 1000;
-  return { aberta: Date.now() < fim, terminaEm: new Date(fim).toISOString() };
+  const fim = fimDaAvaliacao(match);
+  if (isNaN(fim)) return { aberta: false, terminaEm: null, horas: null };
+  // Duração total contada do apito final, com uma casa decimal
+  const horas = Math.round(((fim - new Date(match.finished_at).getTime()) / 3600000) * 10) / 10;
+  return { aberta: Date.now() < fim, terminaEm: new Date(fim).toISOString(), horas };
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +387,7 @@ async function calcularFormas() {
            JOIN teams t ON t.id = tp.team_id AND t.match_id = g.match_id
            GROUP BY tp.team_id
          )
-    SELECT tp.user_id, m.finished_at,
+    SELECT tp.user_id, m.finished_at, m.rating_deadline,
            u.position, u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical,
            COALESCE(gp.n, 0) AS gols,
            COALESCE(ap.n, 0) AS assists,
@@ -395,9 +409,9 @@ async function calcularFormas() {
   // oscila a cada voto e a carta de alguém poderia despencar só porque a primeira
   // pessoa a votar deu nota baixa. Gols e assistências são fatos e contam na hora.
   const agora = Date.now();
-  const notaFechada = (finishedAt) => {
-    if (!finishedAt) return true; // partida antiga, de antes do prazo existir
-    const fim = new Date(finishedAt).getTime() + HORAS_PARA_AVALIAR * 60 * 60 * 1000;
+  const notaFechada = (jogo) => {
+    if (!jogo.finished_at) return true; // partida antiga, de antes do prazo existir
+    const fim = fimDaAvaliacao(jogo);
     return isNaN(fim) || fim <= agora;
   };
 
@@ -435,7 +449,7 @@ async function calcularFormas() {
       somaExtraGol += peso * Math.max(0, Number(jogo.gols) / golsDoTime - parcelaGolEsperada);
       somaExtraAssist += peso * Math.max(0, Number(jogo.assists) / golsDoTime - parcelaAssistEsperada);
 
-      if (jogo.nota !== null && jogo.nota !== undefined && notaFechada(jogo.finished_at)) {
+      if (jogo.nota !== null && jogo.nota !== undefined && notaFechada(jogo)) {
         somaPesosNota += peso;
         somaDesvioNota += peso * (Number(jogo.nota) - notaEsperada);
         somaNotas += peso * Number(jogo.nota);
@@ -1261,8 +1275,10 @@ app.put('/matches/:id', requireAdmin, (req, res) => {
       fields.push('finished_at = COALESCE(finished_at, ?)');
       args.push(new Date().toISOString());
     } else {
-      // Reabrir a partida zera o prazo, que recomeça no próximo encerramento
+      // Reabrir a partida zera o prazo, que recomeça no próximo encerramento, e
+      // descarta a duração que o administrador tinha ajustado
       fields.push('finished_at = NULL');
+      fields.push('rating_deadline = NULL');
     }
   }
   if (date !== undefined) { fields.push('date = ?'); args.push(date); }
@@ -1436,6 +1452,7 @@ app.get('/matches/:id', async (req, res) => {
     const janela = janelaDeAvaliacao(match);
     match.rating_open = janela.aberta;
     match.rating_ends_at = janela.terminaEm;
+    match.rating_hours = janela.horas;
     match.server_now = new Date().toISOString();
     match.raters = raterRows.map(r => Number(r.rater_id));
     match.my_ratings = Object.fromEntries(myRatingRows.map(r => [r.rated_id, r.score]));
@@ -1565,14 +1582,14 @@ app.post('/ratings', async (req, res) => {
     const avaliador = await getRequester(req);
     if (!avaliador) return res.status(403).json({ error: 'Faça login novamente para avaliar.' });
 
-    const match = await dbGet('SELECT id, status, finished_at FROM matches WHERE id = ?', [matchId]);
+    const match = await dbGet('SELECT id, status, finished_at, rating_deadline FROM matches WHERE id = ?', [matchId]);
     if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
 
     const janela = janelaDeAvaliacao(match);
     if (!janela.aberta) {
       return res.status(403).json({
         error: match.status === 'completed'
-          ? 'O prazo de 12 horas para avaliar esta partida já encerrou.'
+          ? 'A votação desta partida já foi encerrada.'
           : 'A partida ainda não foi encerrada pelo administrador.'
       });
     }
@@ -1608,6 +1625,42 @@ app.post('/ratings', async (req, res) => {
   } catch (err) {
     console.error('Erro ao gravar avaliações:', err.message);
     res.status(500).json({ error: 'Erro ao gravar as avaliações' });
+  }
+});
+
+// O administrador pode finalizar a votação antes do prazo ({ action: 'close' }) ou
+// mudar quanto tempo ela dura ({ hours }). A duração conta sempre do apito final,
+// então aumentá-la depois que a votação fechou abre a votação de novo.
+app.put('/matches/:id/rating-window', requireAdmin, async (req, res) => {
+  try {
+    const match = await dbGet('SELECT id, status, finished_at, rating_deadline FROM matches WHERE id = ?', [req.params.id]);
+    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
+    if (match.status !== 'completed' || !match.finished_at) {
+      return res.status(400).json({ error: 'Encerre a partida antes de mexer na votação.' });
+    }
+
+    let prazo;
+    let descricao;
+    if (req.body.action === 'close') {
+      prazo = new Date();
+      descricao = `Finalizou a votação da partida ${match.id}`;
+    } else {
+      const horas = Number(req.body.hours);
+      if (!Number.isFinite(horas) || horas < 1 || horas > DURACAO_MAXIMA_DA_AVALIACAO) {
+        return res.status(400).json({ error: `Informe uma duração entre 1 e ${DURACAO_MAXIMA_DA_AVALIACAO} horas.` });
+      }
+      prazo = new Date(new Date(match.finished_at).getTime() + horas * 60 * 60 * 1000);
+      descricao = `Mudou a duração da votação da partida ${match.id} para ${horas}h`;
+    }
+
+    await dbRun('UPDATE matches SET rating_deadline = ? WHERE id = ?', [prazo.toISOString(), match.id]);
+    logAudit(req.requester.id, req.requester.username, 'AVALIAÇÃO', descricao);
+
+    const janela = janelaDeAvaliacao({ ...match, rating_deadline: prazo.toISOString() });
+    res.json({ success: true, rating_open: janela.aberta, rating_ends_at: janela.terminaEm, rating_hours: janela.horas });
+  } catch (err) {
+    console.error('Erro ao ajustar a votação:', err.message);
+    res.status(500).json({ error: 'Não foi possível ajustar a votação.' });
   }
 });
 
@@ -1700,6 +1753,47 @@ app.put('/matches/:id/add-player', requireOpenMatchOrAdmin, (req, res) => {
         res.json({ success: true, team_id, user_id });
       });
   });
+});
+
+// Tira um atleta da partida. Junto saem os gols, as assistências e as notas dele
+// nesta partida: quem não jogou não pontua no ranking nem avalia os outros.
+app.delete('/matches/:id/players/:userId', requireOpenMatchOrAdmin, async (req, res) => {
+  const matchId = req.params.id;
+  const userId = req.params.userId;
+
+  try {
+    const escalado = await dbGet(
+      'SELECT tp.team_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ? AND tp.user_id = ?',
+      [matchId, userId]
+    );
+    if (!escalado) return res.status(404).json({ error: 'Este atleta não está na partida.' });
+
+    // Gols e assistências são exclusivos do administrador: tirar alguém que já tem
+    // lances lançados apagaria esses números, então isso fica só com ele
+    if (!isAdminUser(req.requester)) {
+      const lances = await dbGet(
+        `SELECT (SELECT COUNT(*) FROM goals WHERE match_id = ? AND user_id = ?) +
+                (SELECT COUNT(*) FROM assists WHERE match_id = ? AND user_id = ?) AS n`,
+        [matchId, userId, matchId, userId]
+      );
+      if (lances && Number(lances.n) > 0) {
+        return res.status(403).json({ error: 'Este atleta já tem gols ou assistências lançados: só o administrador pode tirá-lo da partida.' });
+      }
+    }
+
+    // Em sequência, como nas outras exclusões: o driver do Turso não serializa sozinho
+    await dbRun('DELETE FROM ratings WHERE match_id = ? AND (rater_id = ? OR rated_id = ?)', [matchId, userId, userId]);
+    await dbRun('DELETE FROM goals WHERE match_id = ? AND user_id = ?', [matchId, userId]);
+    await dbRun('DELETE FROM assists WHERE match_id = ? AND user_id = ?', [matchId, userId]);
+    await dbRun('DELETE FROM team_players WHERE user_id = ? AND team_id IN (SELECT id FROM teams WHERE match_id = ?)', [userId, matchId]);
+
+    const quem = req.requester;
+    logAudit(quem ? quem.id : null, quem ? quem.username : 'Atleta', 'PARTIDA', `Tirou o atleta ID ${userId} da partida ${matchId}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Erro ao tirar atleta da partida:', err.message);
+    res.status(500).json({ error: 'Não foi possível tirar o atleta da partida.' });
+  }
 });
 
 // -- LEADERBOARD & STATS (OPTIMIZED — SQL aggregation instead of loading all tables) --

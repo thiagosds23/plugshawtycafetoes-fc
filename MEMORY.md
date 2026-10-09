@@ -124,7 +124,8 @@ uma régua única. Constantes em `EVOLUCAO`, calibradas com as partidas reais (s
 - Todas as partidas contam; peso 1 para a mais recente, 0,85 para a anterior, 0,72...
 - Confiança com poucos jogos: 1 jogo = 50%, 2 = 71%, 3 = 87%, 4+ = 100% (raiz quadrada).
 - Acima de OVR 75 a subida fica mais lenta (um 85 sobe a 80% do ritmo, mínimo 60%).
-- Cada atributo varia no máximo ±10. A nota só entra quando o prazo de 12h fecha.
+- Cada atributo varia no máximo ±10. A nota só entra quando a votação fecha (prazo
+  vencido ou finalizada pelo administrador).
 
 A fórmula de OVR por posição vive só em `frontend/src/utils/ovr.js`; o backend carrega esse
 mesmo arquivo via `import()`. **Não copie a fórmula para o backend**, e mantenha o ovr.js sem
@@ -150,7 +151,12 @@ Exclusivo do administrador, sempre:
 - Número de gols e assistências de cada atleta
 
 Livre para o grupo **até o encerramento**, depois só administrador:
-- Sortear times, trocar de time, adicionar e substituir jogador
+- Sortear times, montar times à mão (`ManualTeamsModal`), trocar de time, adicionar,
+  substituir e tirar jogador da partida
+
+**Tirar jogador** (`DELETE /matches/:id/players/:userId`) apaga junto os gols, as
+assistências e as notas dele naquela partida. Se ele já tem gol ou assistência
+lançado, só o administrador pode tirá-lo (gols são exclusivos do admin).
 
 **Fluxo de avaliação:**
 1. O administrador clica em *Encerrar Partida*. Isso grava `matches.finished_at`.
@@ -161,9 +167,16 @@ Livre para o grupo **até o encerramento**, depois só administrador:
 3. Dentro do prazo dá para reenviar e corrigir: o `POST /ratings` apaga as notas
    anteriores daquele avaliador e grava as novas (índice único
    `ux_ratings_unicas` impede duplicata).
-4. Passadas as 12 horas ninguém mais avalia. `GET /matches/:id` devolve
-   `rating_open`, `rating_ends_at`, `server_now` (para o contador não depender do
-   relógio do celular), `raters` (quem já avaliou) e `my_ratings` (as notas de quem pediu).
+4. Passado o prazo ninguém mais avalia. `GET /matches/:id` devolve
+   `rating_open`, `rating_ends_at`, `rating_hours` (duração total), `server_now` (para o
+   contador não depender do relógio do celular), `raters` (quem já avaliou) e
+   `my_ratings` (as notas de quem pediu).
+5. O administrador pode **finalizar a votação antes** ou **mudar a duração**
+   (`PUT /matches/:id/rating-window` com `{ action: 'close' }` ou `{ hours }`, de 1 a 168).
+   O prazo fica em `matches.rating_deadline`; vazio, vale o padrão de 12h depois de
+   `finished_at`. A duração conta do apito final, então aumentá-la depois do fim reabre
+   a votação. Reabrir a partida zera `rating_deadline`. Toda conta de prazo passa por
+   `fimDaAvaliacao()` no backend — inclusive a da evolução das cartas.
 
 A autorização usa o cabeçalho `x-user-id` (mesmo mecanismo do backup e da auditoria).
 Isso protege o uso normal, mas **não é autenticação de verdade** — quem souber forjar

@@ -1,21 +1,27 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { Clock, Shield, Goal, Footprints, CheckCircle2 } from 'lucide-react';
 import { corDaNota, getPrimaryName } from '../../utils/formatters';
 
 /**
- * Contador regressivo do prazo de avaliação de 12 horas.
+ * Contador regressivo do prazo de avaliação.
  */
 export function ContadorPrazo({ terminaEm, agoraServidor }) {
-  const desvio = agoraServidor ? Date.now() - new Date(agoraServidor).getTime() : 0;
-  const restanteAgora = () => new Date(terminaEm).getTime() - (Date.now() - desvio);
+  // Diferença entre o relógio do celular e o do servidor, medida uma única vez quando
+  // a partida chega. Recalculada a cada render, ela anulava o tempo passado e o
+  // contador ficava parado.
+  const desvio = useMemo(
+    () => (agoraServidor ? Date.now() - new Date(agoraServidor).getTime() : 0),
+    [agoraServidor]
+  );
 
-  const [restante, setRestante] = useState(restanteAgora);
+  const [restante, setRestante] = useState(() => new Date(terminaEm).getTime() - (Date.now() - desvio));
 
   useEffect(() => {
-    const timer = setInterval(() => {
-      setRestante(new Date(terminaEm).getTime() - (Date.now() - desvio));
-    }, 1000);
+    const calcular = () => new Date(terminaEm).getTime() - (Date.now() - desvio);
+    // Prazo novo (o administrador mudou a duração) aparece na hora, sem esperar o tick
+    setRestante(calcular());
+    const timer = setInterval(() => setRestante(calcular()), 1000);
     return () => clearInterval(timer);
   }, [terminaEm, desvio]);
 

@@ -3,9 +3,9 @@ import { useParams, Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
 import { 
   Users, Shuffle, Star, Shield, ArrowLeft, ArrowRight, Share2, Goal, 
-  Award, Trash2, RefreshCw, UserPlus, X, CheckCircle2, 
-  Clipboard, LayoutList, MapPin, Plus, 
-  Footprints, Lightbulb, Clock, Edit2, Swords 
+  Award, Trash2, RefreshCw, UserPlus, UserMinus, X, CheckCircle2,
+  Clipboard, LayoutList, MapPin, Plus,
+  Footprints, Lightbulb, Clock, Edit2, Swords
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
@@ -18,6 +18,8 @@ import DraftAnimation from './match/DraftAnimation';
 import { playDraftSound, playCelebrationSound } from '../utils/soundEffects';
 import WhatsAppImportModal from './match/WhatsAppImportModal';
 import RatingModal, { ContadorPrazo } from './match/RatingModal';
+import RatingWindowAdmin from './match/RatingWindowAdmin';
+import ManualTeamsModal from './match/ManualTeamsModal';
 import TacticalPitch from './match/TacticalPitch';
 import PlayerDetailsModal from './player/PlayerDetailsModal';
 
@@ -55,6 +57,10 @@ export default function MatchDetails() {
 
   // Cinematic Team Draft Animation state
   const [draftAnim, setDraftAnim] = useState(null);
+
+  // Times montados à mão, sem sorteio
+  const [showManualTeams, setShowManualTeams] = useState(false);
+  const [savingManualTeams, setSavingManualTeams] = useState(false);
 
   // Match Edit & Add Player
   const [editMatchModal, setEditMatchModal] = useState(false);
@@ -270,6 +276,59 @@ export default function MatchDetails() {
     }, 1000);
   };
 
+  // Times montados à mão: grava no mesmo formato do sorteio
+  const saveManualTeams = async (teamAIds, teamBIds) => {
+    setSavingManualTeams(true);
+    try {
+      const res = await fetch(`${API_URL}/matches/${id}/teams`, {
+        method: 'POST',
+        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
+        body: JSON.stringify({
+          teams: [
+            { name: 'COM COLETE', playerIds: teamAIds },
+            { name: 'SEM COLETE', playerIds: teamBIds }
+          ]
+        })
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Não foi possível salvar os times.');
+        return;
+      }
+      setShowManualTeams(false);
+      loadMatch();
+    } catch (err) {
+      console.error('Falha ao salvar os times:', err);
+      alert('Falha de conexão ao salvar os times.');
+    } finally {
+      setSavingManualTeams(false);
+    }
+  };
+
+  // Tira o atleta da partida, junto com os gols, assistências e notas dele nela
+  const handleRemovePlayer = async (player) => {
+    const confirmado = window.confirm(
+      `Tirar ${getPrimaryName(player)} desta partida? Os gols, assistências e notas dele nesta partida também serão apagados.`
+    );
+    if (!confirmado) return;
+
+    try {
+      const res = await fetch(`${API_URL}/matches/${id}/players/${player.id}`, {
+        method: 'DELETE',
+        headers: authHeaders(user)
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        alert(data.error || 'Não foi possível tirar o atleta da partida.');
+        return;
+      }
+      loadMatch();
+    } catch (err) {
+      console.error('Falha ao tirar atleta da partida:', err);
+      alert('Falha de conexão ao tirar o atleta da partida.');
+    }
+  };
+
   // Direct score update for a team (without needing to assign goals to players)
   const handleUpdateTeamScore = async (teamId, val, inputEl) => {
     const num = parseInt(val, 10);
@@ -478,7 +537,7 @@ export default function MatchDetails() {
   // Encerrar é o que abre o prazo de 12 horas para o pessoal avaliar
   const handleFinishMatch = async () => {
     const confirmado = window.confirm(
-      'Encerrar a partida? A partir de agora quem jogou tem 12 horas para dar as notas, e a escalação fica travada para os demais.'
+      'Encerrar a partida? A partir de agora quem jogou tem 12 horas para dar as notas (dá para mudar o prazo depois), e a escalação fica travada para os demais.'
     );
     if (!confirmado) return;
 
@@ -890,6 +949,18 @@ export default function MatchDetails() {
             <button className="btn py-4 text-base font-extrabold w-full" onClick={isRival ? saveRivalLineup : generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
               {isRival ? <><Swords size={20} /> Confirmar Escalação ({selectedPlayers.length} Atletas)</> : <><Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)</>}
             </button>
+
+            {/* Alternativa ao sorteio: escolher o time de cada convocado */}
+            {!isRival && (
+              <button
+                className="btn btn-secondary w-full"
+                onClick={() => setShowManualTeams(true)}
+                disabled={selectedPlayers.length < 2 || !podeMexerNaEscalacao}
+                style={{ marginTop: '10px', padding: '12px 14px', borderRadius: '16px', fontSize: '0.88rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+              >
+                <Users size={18} /> Montar Times Manualmente
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1220,8 +1291,9 @@ export default function MatchDetails() {
                                 </div>
                               </div>
 
-                              {/* Botões de Ação Rápida: Trocar de Time & Substituir */}
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
+                              {/* Botões de Ação Rápida: Trocar de Time, Substituir e Tirar da partida.
+                                  Ficam fora da arte exportada para o WhatsApp. */}
+                              <div className="no-export" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
                                 <button 
                                   className="btn btn-secondary" 
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
@@ -1241,6 +1313,16 @@ export default function MatchDetails() {
                                   disabled={!podeMexerNaEscalacao}
                                 >
                                   <UserPlus size={14} />
+                                </button>
+
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.35)', borderRadius: '9px' }}
+                                  title="Tirar da partida"
+                                  onClick={(e) => { e.stopPropagation(); handleRemovePlayer(p); }}
+                                  disabled={!podeMexerNaEscalacao}
+                                >
+                                  <UserMinus size={14} />
                                 </button>
                               </div>
                             </div>
@@ -1495,12 +1577,17 @@ export default function MatchDetails() {
                 </div>
               )}
 
-              {/* Partida encerrada e prazo vencido */}
+              {/* Partida encerrada e votação fechada (prazo vencido ou finalizada pelo admin) */}
               {partidaEncerrada && !janelaAberta && (
                 <div className="text-center text-muted" style={{ fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                  <CheckCircle2 size={15} /> Partida encerrada. O prazo de avaliação já passou
+                  <CheckCircle2 size={15} /> Partida encerrada. A votação já foi encerrada
                   {quantosAvaliaram > 0 && ` — ${quantosAvaliaram} atleta(s) avaliaram`}.
                 </div>
+              )}
+
+              {/* Finalizar a votação antes do prazo ou mudar a duração */}
+              {isAdmin && partidaEncerrada && (
+                <RatingWindowAdmin match={match} user={user} onChanged={loadMatch} />
               )}
 
               {/* Desfazer um encerramento por engano */}
@@ -1692,6 +1779,16 @@ export default function MatchDetails() {
         user={user}
         getPlayerEventCount={getPlayerEventCount}
       />
+
+      {/* Montagem manual dos times (alternativa ao sorteio) */}
+      {showManualTeams && (
+        <ManualTeamsModal
+          players={allPlayers.filter(p => selectedPlayers.includes(p.id))}
+          onClose={() => setShowManualTeams(false)}
+          onSave={saveManualTeams}
+          isSaving={savingManualTeams}
+        />
+      )}
 
       {/* Cinematic Draft Animation Modal */}
       <DraftAnimation
