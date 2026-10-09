@@ -36,6 +36,28 @@
   --shadow-lg: 0 20px 50px rgba(0, 0, 0, 0.85);
 }
 
+/* O atributo hidden precisa vencer o display dos botões (.btn usa inline-flex).
+   Sem isto, botões marcados com hidden (excluir partida, trocar de time em jogo
+   rival...) continuavam aparecendo para quem não podia usá-los. */
+[hidden] {
+  display: none !important;
+}
+
+/* Ícone girando enquanto algo carrega (RefreshCw, Loader) */
+.animate-spin {
+  animation: radarSpin 0.9s linear infinite;
+}
+
+/* Quem pediu ao sistema para reduzir movimento não recebe animações longas */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 * {
   box-sizing: border-box;
 }

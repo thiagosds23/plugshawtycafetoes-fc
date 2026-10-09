@@ -1,14 +1,29 @@
-import React, { useContext } from 'react';
+import React, { useContext, lazy, Suspense } from 'react';
 import { BrowserRouter, Routes, Route, Navigate, NavLink, useNavigate } from 'react-router-dom';
+import { MotionConfig } from 'framer-motion';
 import { AuthProvider, AuthContext } from './AuthContext';
 import { LogOut, Trophy, Calendar, Users } from 'lucide-react';
 
 import Login from './components/Login';
-import Dashboard from './components/Dashboard';
-import Matches from './components/Matches';
-import Players from './components/Players';
-import MatchDetails from './components/MatchDetails';
 import { formatPhotoUrl } from './config';
+import { getPrimaryName } from './utils/formatters';
+
+// Cada tela só é baixada quando o usuário entra nela: a de login abre sem carregar
+// partidas, elenco, exportação de imagem e animações do sorteio
+const Dashboard = lazy(() => import('./components/Dashboard'));
+const Matches = lazy(() => import('./components/Matches'));
+const Players = lazy(() => import('./components/Players'));
+const MatchDetails = lazy(() => import('./components/MatchDetails'));
+
+const TEMPORADA = new Date().getFullYear();
+
+// Enter ou Espaço num elemento com role="button" age como clique
+const aoTeclar = (acao) => (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    acao();
+  }
+};
 
 const PrivateRoute = ({ children }) => {
   const { user } = useContext(AuthContext);
@@ -28,8 +43,12 @@ const Navigation = () => {
 
   return (
     <header className="header">
-      <div 
-        onClick={() => navigate('/')} 
+      <div
+        onClick={() => navigate('/')}
+        onKeyDown={aoTeclar(() => navigate('/'))}
+        role="button"
+        tabIndex={0}
+        aria-label="Ir para Início e Ranking"
         style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0, cursor: 'pointer' }}
         title="Ir para Início & Ranking"
       >
@@ -54,17 +73,19 @@ const Navigation = () => {
             <span className="mobile-only">plugshawty FC</span>
           </h1>
           <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', fontWeight: '600', letterSpacing: '0.4px', textTransform: 'uppercase' }}>
-            Temporada 2026
+            Temporada {TEMPORADA}
           </div>
         </div>
       </div>
 
       <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
         {/* User Pill: Clicar leva para /players e abre a edição da carta */}
-        <div 
-          onClick={() => navigate('/players', { state: { autoEdit: true } })}
+        <div
+          onClick={() => navigate('/players', { state: { autoEdit: true, playerId: user.id } })}
+          onKeyDown={aoTeclar(() => navigate('/players', { state: { autoEdit: true, playerId: user.id } }))}
           role="button"
           tabIndex={0}
+          aria-label="Editar minha carta e perfil"
           style={{ 
             display: 'flex', 
             alignItems: 'center', 
@@ -90,7 +111,7 @@ const Navigation = () => {
           </div>
           <div style={{ maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             <div style={{ fontSize: '0.8rem', fontWeight: '800', color: '#fff', lineHeight: 1.1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {user.nickname ? user.nickname.split(',')[0].trim() : user.username}
+              {getPrimaryName(user)}
             </div>
             <div style={{ fontSize: '0.62rem', color: 'var(--primary)', fontWeight: '700' }}>
               {user.position || 'MEI'}
@@ -103,6 +124,7 @@ const Navigation = () => {
           style={{ padding: '8px 10px', fontSize: '0.75rem', width: 'auto', borderRadius: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center' }} 
           onClick={logout}
           title="Encerrar sessão"
+          aria-label="Encerrar sessão"
         >
           <LogOut size={16} />
         </button>
@@ -208,14 +230,16 @@ function AppContent() {
       <Navigation />
       <MainNav />
       <ErrorBoundary>
-        <Routes>
-          <Route path="/login" element={<Navigate to="/" />} />
-          <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
-          <Route path="/matches" element={<PrivateRoute><Matches /></PrivateRoute>} />
-          <Route path="/matches/:id" element={<PrivateRoute><MatchDetails /></PrivateRoute>} />
-          <Route path="/players" element={<PrivateRoute><Players /></PrivateRoute>} />
-          <Route path="*" element={<Navigate to="/" />} />
-        </Routes>
+        <Suspense fallback={<div className="text-center text-muted" style={{ marginTop: '40px' }}>Carregando...</div>}>
+          <Routes>
+            <Route path="/login" element={<Navigate to="/" />} />
+            <Route path="/" element={<PrivateRoute><Dashboard /></PrivateRoute>} />
+            <Route path="/matches" element={<PrivateRoute><Matches /></PrivateRoute>} />
+            <Route path="/matches/:id" element={<PrivateRoute><MatchDetails /></PrivateRoute>} />
+            <Route path="/players" element={<PrivateRoute><Players /></PrivateRoute>} />
+            <Route path="*" element={<Navigate to="/" />} />
+          </Routes>
+        </Suspense>
       </ErrorBoundary>
       <MobileBottomNav />
     </div>
@@ -226,7 +250,10 @@ function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <AppContent />
+        {/* Quem pediu ao sistema para reduzir movimento recebe as animações simplificadas */}
+        <MotionConfig reducedMotion="user">
+          <AppContent />
+        </MotionConfig>
       </BrowserRouter>
     </AuthProvider>
   );
