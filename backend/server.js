@@ -153,8 +153,17 @@ async function calcularFormas() {
            JOIN team_players tp ON tp.user_id = g.user_id
            JOIN teams t ON t.id = tp.team_id AND t.match_id = g.match_id
            GROUP BY tp.team_id
+         ),
+         -- Placar de cada time pela mesma regra da tela: o digitado pelo admin ou a soma
+         -- dos gols lançados para os atletas do time
+         placar_time AS (
+           SELECT t.id AS team_id, t.match_id, COALESCE(t.manual_score, COALESCE(gt2.n, 0)) AS gols
+           FROM teams t
+           LEFT JOIN gols_do_time gt2 ON gt2.team_id = t.id
          )
-    SELECT tp.user_id, m.finished_at, m.rating_deadline,
+    SELECT tp.user_id, m.id AS match_id, m.date, m.finished_at, m.rating_deadline,
+           t.id AS team_id, adv.team_id AS time_adversario,
+           pro.gols AS placar_pro, COALESCE(adv.gols, 0) AS placar_contra,
            u.position, u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical,
            COALESCE(gp.n, 0) AS gols,
            COALESCE(ap.n, 0) AS assists,
@@ -164,6 +173,9 @@ async function calcularFormas() {
     JOIN teams t ON tp.team_id = t.id
     JOIN matches m ON t.match_id = m.id
     JOIN users u ON u.id = tp.user_id
+    JOIN placar_time pro ON pro.team_id = t.id
+    -- O outro time da partida (no jogo contra rival, o adversário sem atletas)
+    LEFT JOIN placar_time adv ON adv.match_id = m.id AND adv.team_id != t.id
     LEFT JOIN gols_partida gp ON gp.match_id = m.id AND gp.user_id = tp.user_id
     LEFT JOIN assists_partida ap ON ap.match_id = m.id AND ap.user_id = tp.user_id
     LEFT JOIN notas_partida np ON np.match_id = m.id AND np.user_id = tp.user_id
