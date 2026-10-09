@@ -179,6 +179,14 @@ async function runMigrations() {
     console.log(`🔐 ${aConverter.length} PIN(s) convertidos para hash`);
   });
 
+  // Quem escolheu "entrar sem PIN" antes do login novo nunca mais veria a pergunta.
+  // Agora que o PIN é a única proteção da conta, o app pergunta de novo, uma única vez,
+  // a todos que ainda não têm PIN (continua dando para pular).
+  await aplicarUmaVez('perguntar_pin_de_novo', async () => {
+    const r = await db.run("UPDATE users SET pin_prompted = 0 WHERE pin IS NULL OR pin = ''");
+    if (r.changes) console.log(`🔑 ${r.changes} atleta(s) sem PIN vão ver a sugestão de PIN de novo`);
+  });
+
   // Limpa registros órfãos de gols e assistências nulos caso tenham ocorrido
   await db.run('DELETE FROM goals WHERE match_id IS NULL OR user_id IS NULL').catch(() => {});
   await db.run('DELETE FROM assists WHERE match_id IS NULL OR user_id IS NULL').catch(() => {});
