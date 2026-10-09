@@ -137,7 +137,12 @@ body {
   box-shadow: var(--glow), var(--shadow-lg);
 }
 
-/* Premium Header (Fixo/Sticky no Topo com Glassmorphism) */
+/* Premium Header (Fixo/Sticky no Topo)
+   Ao rolar, as abas e os botões da página passavam por baixo do cabeçalho e
+   apareciam em dois lugares: através do fundo translúcido e na faixa entre o topo
+   da tela e o cabeçalho (o "top: 12px"). Agora o cartão é opaco (::after) e uma
+   camada com o mesmo fundo da página (::before) cobre a faixa de cima e o que fica
+   atrás dos cantos arredondados. As duas camadas ficam atrás do conteúdo do cabeçalho. */
 .header {
   position: -webkit-sticky;
   position: sticky;
@@ -148,12 +153,36 @@ body {
   align-items: center;
   padding: 14px 22px;
   margin-bottom: 24px;
-  background: rgba(12, 14, 21, 0.90);
-  backdrop-filter: blur(24px);
-  -webkit-backdrop-filter: blur(24px);
-  border: 1px solid var(--border);
   border-radius: 20px;
+}
+
+.header::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: #0c0e15;
+  border: 1px solid var(--border);
   box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+}
+
+.header::before {
+  content: '';
+  position: absolute;
+  z-index: -2;
+  /* Do topo da tela até o meio do cabeçalho, ocupando também o recuo lateral do container */
+  top: -12px;
+  bottom: 50%;
+  left: -20px;
+  right: -20px;
+  /* Mesmo fundo do body, preso à tela, para a emenda não aparecer */
+  background-color: var(--bg-base);
+  background-image:
+    radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0, 245, 155, 0.12), transparent 70%),
+    radial-gradient(ellipse 60% 40% at 100% 80%, rgba(0, 229, 255, 0.06), transparent 60%),
+    radial-gradient(circle at 10% 30%, rgba(255, 215, 0, 0.04), transparent 50%);
+  background-attachment: fixed;
 }
 
 .header h1 {
@@ -431,10 +460,18 @@ body {
     border-radius: 16px;
     margin-bottom: 16px;
     gap: 8px;
-    background: rgba(10, 12, 18, 0.94);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
+  }
+
+  .header::after {
+    background: #0a0c12;
     box-shadow: 0 8px 24px rgba(0,0,0,0.85);
+  }
+
+  /* No celular o cabeçalho fica a 6px do topo e o container tem 12px de recuo */
+  .header::before {
+    top: -6px;
+    left: -12px;
+    right: -12px;
   }
 
   .desktop-nav {
