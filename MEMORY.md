@@ -23,10 +23,23 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 - **Design das Cartas:** Fundo real (`fut-bg.png` em `frontend/public/`) com enquadramento percentual em `fut-card.css`.
 - **Edição & Exclusão Limpa:** Formato de card em vidro com upload de foto e exclusão com limpeza de estado em cascata.
 
-### 2. Sorteio Inteligente de Equipes por OVR (Snake Draft Ponderado)
-- **Força usada:** só o `calcOVR` do atleta, que já vem evoluído pelo desempenho (ver
-  "Evolução das Cartas"). Somar a nota média de novo contaria o desempenho duas vezes.
-- **Snake Draft:** Distribuição balanceada dos convocados entre COM COLETE e SEM COLETE.
+### 2. Sorteio Equilibrado e Variado (`frontend/src/utils/sorteio.js`, com testes)
+O antigo zigue-zague por OVR (snake draft) era determinístico: com os mesmos convocados
+saíam sempre os mesmos times. Agora `sortearTimes(jogadores, { historico })`:
+- **Equilíbrio primeiro:** testa todas as divisões (até 22 atletas; acima, busca local) e
+  só considera as que ficam até 4 pontos de soma de OVR da mais equilibrada possível.
+  **Força usada:** só o `calcOVR` (já evoluído pelo desempenho; somar a nota de novo
+  contaria o desempenho duas vezes).
+- **Posições:** custo para cada atleta a mais numa linha (defesa = ZAG+LAT, meio =
+  VOL+MEI, ataque) e custo alto para dois goleiros no mesmo time.
+- **Variedade:** cada dupla que jogou junta nos últimos 4 rachas custa pontos (o último
+  pesa mais; `GET /lineups/recent` traz as escalações, sem jogos contra rival). O
+  resultado é sorteado ao acaso entre as divisões até 3 pontos da melhor nota, e a
+  divisão idêntica à do último racha fica de fora quando existe outra opção.
+- **Sortear de novo:** botão na escalação, só no racha aberto e antes de lançar gols ou
+  placar; a divisão atual entra como histórico mais recente, então sai outra.
+- A animação revela os times alternando (`ordemDeRevelacao`) e mostra o resumo (OVR
+  médio, duplas repetidas do último racha, quantas divisões equilibradas havia).
 - **Alternativa manual:** `ManualTeamsModal` deixa escolher o time de cada convocado.
 - **Indicador em Tempo Real:** Exibe o OVR médio de cada equipe (`calcTeamOVR`) e placar da partida.
 

@@ -16,6 +16,7 @@ import { api, fetchAcompanhado } from '../utils/api';
 import { waitForImages } from '../utils/exportImage';
 import { getPrimaryName, formatShortTeamName } from '../utils/formatters';
 import { prepararAudio } from '../utils/soundEffects';
+import { sortearTimes, ordemDeRevelacao } from '../utils/sorteio';
 import DraftAnimation from './match/DraftAnimation';
 import WhatsAppImportModal from './match/WhatsAppImportModal';
 import RatingModal, { ContadorPrazo } from './match/RatingModal';
@@ -348,6 +349,21 @@ export default function MatchDetails() {
   const podeEditarPlacar = isAdmin;
   // A escalação fica livre para o grupo montar até o apito final.
   const podeMexerNaEscalacao = isAdmin || !partidaEncerrada;
+  // Sortear de novo: só no racha ainda aberto e antes de lançar gols ou placar, porque
+  // refazer os times depois disso embaralharia o que já foi lançado
+  const temLancesNaPartida = (match.goals || []).length > 0
+    || (match.assists || []).length > 0
+    || (match.teams || []).some(t => t.manual_score !== null && t.manual_score !== undefined);
+  const podeSortearDeNovo = teamsReady && !isRival && !partidaEncerrada && podeMexerNaEscalacao && !temLancesNaPartida;
+
+  const handleSortearDeNovo = () => {
+    const escalados = (match.teams || []).flatMap(t => t.players);
+    const confirmado = window.confirm(
+      `Sortear os times de novo com os ${escalados.length} atletas escalados? O novo sorteio evita repetir a divisão atual.`
+    );
+    if (!confirmado) return;
+    generateTeamsAuto(escalados, match.teams.map(t => t.players.map(p => p.id)));
+  };
 
   const euJoguei = !!(user && jogadoresDaPartida.some(p => p.id === user.id));
   const janelaAberta = !!match.rating_open;
@@ -428,36 +444,29 @@ export default function MatchDetails() {
     }
   };
 
-  const generateTeamsAuto = () => {
-    const selected = allPlayers.filter(p => selectedPlayers.includes(p.id));
-    if (selected.length === 0) return;
+  // Escalações dos últimos rachas, para o sorteio variar as duplas. Não espera mais de
+  // 2,5s (servidor acordando): sem histórico o sorteio segue pelo equilíbrio e posições.
+  const historicoParaOSorteio = async (escalacaoAtual) => {
+    const limite = new Promise(resolve => setTimeout(() => resolve([]), 2500));
+    const recentes = api('/lineups/recent?limit=4').catch(err => {
+      console.error('Sem histórico para o sorteio:', err);
+      return [];
+    });
+    const historico = await Promise.race([recentes, limite]);
+    const lista = Array.isArray(historico) ? historico.filter(h => h.match_id !== Number(id)) : [];
+    // No "sortear de novo" a divisão atual vira a mais recente: o sorteio foge dela
+    return escalacaoAtual ? [{ teams: escalacaoAtual }, ...lista] : lista;
+  };
+
+  // Sorteio equilibrado (utils/sorteio.js): força parecida, posições divididas e duplas
+  // diferentes dos últimos rachas, escolhido ao acaso entre as melhores divisões. Sem
+  // argumentos usa os convocados; o "sortear de novo" passa quem já está escalado.
+  const generateTeamsAuto = async (jogadores = allPlayers.filter(p => selectedPlayers.includes(p.id)), escalacaoAtual = null) => {
+    if (jogadores.length < 2) return;
 
     // O iPhone só libera o áudio dentro de um toque: o contexto de áudio nasce aqui,
     // no clique, para os bipes do sorteio conseguirem tocar depois
     prepararAudio();
-
-    // Ordena pelo OVR. Ele já chega evoluído pelo desempenho nas partidas (nota,
-    // gols e assistências), então somar a nota média de novo aqui contaria o mesmo
-    // desempenho duas vezes no equilíbrio dos times.
-    selected.sort((a, b) => calcOVR(b) - calcOVR(a));
-
-    const teamAIds = [];
-    const teamBIds = [];
-    const sequence = [];
-
-    // Snake draft distribution
-    selected.forEach((p, idx) => {
-      const round = Math.floor(idx / 2);
-      const isTeamA = round % 2 === 0 ? (idx % 2 === 0) : (idx % 2 !== 0);
-      if (isTeamA) teamAIds.push(p.id);
-      else teamBIds.push(p.id);
-
-      sequence.push({
-        player: p,
-        teamName: isTeamA ? 'COM COLETE' : 'SEM COLETE',
-        isTeamA
-      });
-    });
 
     const timers = timersDoSorteioRef.current;
     const pararSorteio = () => {
@@ -466,6 +475,24 @@ export default function MatchDetails() {
     };
     pararSorteio();
 
+    // A animação começa na hora; o histórico carrega enquanto as cartas embaralham
+    setDraftAnim({
+      stage: 'shuffling',
+      sequence: [],
+      teamA: [],
+      teamB: [],
+      revealedCount: 0,
+      total: jogadores.length,
+      resumo: null
+    });
+
+    const historico = await historicoParaOSorteio(escalacaoAtual);
+    if (!montadoRef.current) return;
+
+    const { timeA, timeB, resumo } = sortearTimes(jogadores, { historico });
+    const sequence = ordemDeRevelacao(timeA, timeB);
+    setDraftAnim(prev => (prev ? { ...prev, sequence, resumo } : null));
+
     // Grava enquanto a animação roda. A promessa nunca rejeita: devolve o erro (ou
     // null), e o fim da animação decide entre comemorar e não fazer nada
     const gravacao = api(`/matches/${id}/teams`, {
@@ -473,8 +500,8 @@ export default function MatchDetails() {
       user,
       body: {
         teams: [
-          { name: 'COM COLETE', playerIds: teamAIds },
-          { name: 'SEM COLETE', playerIds: teamBIds }
+          { name: 'COM COLETE', playerIds: timeA.map(p => p.id) },
+          { name: 'SEM COLETE', playerIds: timeB.map(p => p.id) }
         ]
       }
     }).then(() => null, err => err);
@@ -486,16 +513,6 @@ export default function MatchDetails() {
       pararSorteio();
       setDraftAnim(null);
       avisarErro('Erro ao salvar o sorteio', erro);
-    });
-
-    // Start Phase 1: Shuffling
-    setDraftAnim({
-      stage: 'shuffling',
-      sequence,
-      teamA: [],
-      teamB: [],
-      revealedCount: 0,
-      total: sequence.length
     });
 
     // Phase 1 -> Phase 2: Sequential Draft Reveal (after 1000ms).
@@ -1144,7 +1161,7 @@ export default function MatchDetails() {
             <p className="text-muted mb-4">
               {isRival ? 'Todos os convocados formam o time do plugshawty FC. Dá para ajustar a escalação depois.' : 'O algoritmo equilibra automaticamente os dois times pelo OVR de cada atleta, que já reflete o desempenho nas partidas.'}
             </p>
-            <button className="btn font-extrabold w-full" onClick={isRival ? saveRivalLineup : generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao || salvandoEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+            <button className="btn font-extrabold w-full" onClick={isRival ? saveRivalLineup : () => generateTeamsAuto()} disabled={(isRival ? selectedPlayers.length === 0 : selectedPlayers.length < 2) || !podeMexerNaEscalacao || salvandoEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
               {isRival
                 ? <><Swords size={20} /> {salvandoEscalacao ? 'Salvando escalação...' : `Confirmar Escalação (${selectedPlayers.length} Atletas)`}</>
                 : <><Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)</>}
@@ -1318,6 +1335,20 @@ export default function MatchDetails() {
                 <Share2 size={18} /> {isExporting ? 'Baixando Imagem...' : 'Exportar Escalação (WhatsApp)'}
               </button>
             </div>
+
+            {/* Linha 4: refazer o sorteio com os mesmos atletas (antes de lançar gols) */}
+            {podeSortearDeNovo && (
+              <div style={{ display: 'flex', justifyContent: 'center' }}>
+                <button
+                  className="btn btn-secondary"
+                  style={{ width: '100%', maxWidth: '440px', padding: '10px 18px', fontSize: '0.82rem', fontWeight: 700, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px', borderRadius: '14px' }}
+                  onClick={handleSortearDeNovo}
+                  disabled={Boolean(draftAnim)}
+                >
+                  <Shuffle size={16} /> Sortear de novo
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Tudo aqui dentro vira a arte em PNG. Controles que só existem na tela levam a

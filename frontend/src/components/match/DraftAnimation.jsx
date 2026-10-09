@@ -70,6 +70,28 @@ function ColunaDoSorteio({ tema, atletas }) {
  * Sorteio cinemático. Os efeitos sonoros tocam só aqui, conforme o estágio: quem
  * dispara o sorteio não toca som nenhum (antes cada bipe saía duas vezes).
  */
+const umaCasa = (v) => Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+
+/** Números do sorteio: equilíbrio entre os times e quanto ele variou do último racha. */
+function ResumoDoSorteio({ resumo }) {
+  const itens = [
+    `OVR médio ${umaCasa(resumo.ovrMedioA)} x ${umaCasa(resumo.ovrMedioB)}`
+  ];
+  if (resumo.duplasRepetidas !== null && resumo.duplasRepetidas !== undefined) {
+    itens.push(resumo.duplasRepetidas === 0
+      ? 'nenhuma dupla repetida do último racha'
+      : `${resumo.duplasRepetidas} dupla(s) repetida(s) do último racha`);
+  }
+  if (resumo.opcoesEquilibradas > 1) {
+    itens.push(`sorteado entre ${resumo.opcoesEquilibradas} divisões equilibradas`);
+  }
+  return (
+    <p style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.8rem', margin: '0 0 16px', lineHeight: 1.5 }}>
+      {itens.join(' · ')}
+    </p>
+  );
+}
+
 export default function DraftAnimation({ draftAnim, onClose }) {
   const tituloId = useId();
   const estagio = draftAnim?.stage;
@@ -138,7 +160,7 @@ export default function DraftAnimation({ draftAnim, onClose }) {
                 <Sparkles size={24} color="#00f59b" /> BALANCEANDO EQUIPES...
               </h2>
               <p style={{ color: 'var(--text-muted)', fontSize: '0.95rem', margin: 0, lineHeight: 1.5 }}>
-                Analisando os <strong style={{ color: '#00f59b' }}>{draftAnim.total} atletas convocados</strong> pelo OVR de cada um, que já reflete o desempenho nas partidas, para gerar o confronto perfeito!
+                Testando todas as divisões dos <strong style={{ color: '#00f59b' }}>{draftAnim.total} atletas convocados</strong>: força equilibrada pelo OVR atual, posições divididas e duplas diferentes dos últimos rachas.
               </p>
             </motion.div>
           )}
@@ -163,10 +185,10 @@ export default function DraftAnimation({ draftAnim, onClose }) {
               {/* Header Status */}
               <div style={{ textAlign: 'center', marginBottom: '20px' }}>
                 <div style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '6px 16px', borderRadius: '20px', background: draftAnim.stage === 'done' ? 'rgba(0, 245, 155, 0.15)' : 'rgba(255, 255, 255, 0.08)', color: draftAnim.stage === 'done' ? 'var(--primary)' : 'var(--text-muted)', fontWeight: 800, fontSize: '0.75rem', letterSpacing: '0.5px', marginBottom: '8px' }}>
-                  {draftAnim.stage === 'done' ? <><Sparkles size={16} /> SORTEIO FINALIZADO COM SUCESSO</> : <><RefreshCw size={16} className="radar-spinner" /> SNAKE DRAFT ({draftAnim.revealedCount} / {draftAnim.total})</>}
+                  {draftAnim.stage === 'done' ? <><Sparkles size={16} /> SORTEIO FINALIZADO COM SUCESSO</> : <><RefreshCw size={16} className="radar-spinner" /> SORTEIO ({draftAnim.revealedCount} / {draftAnim.total})</>}
                 </div>
                 <h3 id={tituloId} style={{ fontSize: '1.4rem', fontWeight: 900, color: '#fff', margin: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-                  {draftAnim.stage === 'done' ? <><Sparkles size={22} color="var(--primary)" /> Times Prontos para o Jogo!</> : 'Sorteando Jogador a Jogador...'}
+                  {draftAnim.stage === 'done' ? <><Sparkles size={22} color="var(--primary)" /> Times Prontos para o Jogo!</> : 'Revelando os times...'}
                 </h3>
               </div>
 
@@ -175,6 +197,11 @@ export default function DraftAnimation({ draftAnim, onClose }) {
                 <ColunaDoSorteio tema={TEMAS.A} atletas={draftAnim.teamA} />
                 <ColunaDoSorteio tema={TEMAS.B} atletas={draftAnim.teamB} />
               </div>
+
+              {/* Por que esses times: equilíbrio e quanto mudou em relação ao último racha */}
+              {draftAnim.stage === 'done' && draftAnim.resumo && (
+                <ResumoDoSorteio resumo={draftAnim.resumo} />
+              )}
 
               {/* Action Button */}
               {draftAnim.stage === 'done' && (

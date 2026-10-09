@@ -5,6 +5,9 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Confete precisa de canvas, que o jsdom não tem
+vi.mock('canvas-confetti', () => ({ default: () => {} }));
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
@@ -83,7 +86,7 @@ function mockApi(rotas = {}) {
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, opcoes = {}) => {
     const caminho = String(url).replace(/^https?:\/\/[^/]+/, '');
     const metodo = opcoes.method || 'GET';
-    chamadas.push({ metodo, caminho, auth: opcoes.headers && opcoes.headers.Authorization });
+    chamadas.push({ metodo, caminho, auth: opcoes.headers && opcoes.headers.Authorization, corpo: typeof opcoes.body === 'string' ? JSON.parse(opcoes.body) : undefined });
     const chave = `${metodo} ${caminho.split('?')[0]}`;
     const resposta = rotas[chave] !== undefined ? rotas[chave] : padrao(metodo, caminho);
     const [status, corpo] = Array.isArray(resposta) && typeof resposta[0] === 'number' ? resposta : [200, resposta];
@@ -268,5 +271,54 @@ describe('Servidor acordando', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('Sorteio na tela da partida', () => {
+  it('consulta o histórico, grava dois times equilibrados e mostra o resumo', async () => {
+    mockApi({ 'GET /lineups/recent': [{ match_id: 30, teams: [[1, 2], [3, 4]] }] });
+    telaDaPartida(32);
+    for (const nome of ['Fela', 'Elias', 'Stocco', 'Luvluv']) fireEvent.click(await screen.findByText(nome));
+    fireEvent.click(screen.getByRole('button', { name: /Sortear Equipes Equilibradas \(4/ }));
+
+    expect(await screen.findByText(/SORTEIO FINALIZADO/, {}, { timeout: 6000 })).toBeTruthy();
+    expect(screen.getByText(/OVR médio/)).toBeTruthy();
+    expect(chamadas.some(c => c.caminho.startsWith('/lineups/recent'))).toBe(true);
+
+    const gravacao = chamadas.find(c => c.metodo === 'POST' && c.caminho === '/matches/32/teams');
+    expect(gravacao.auth).toBe('Bearer token-admin');
+    const [a, b] = gravacao.corpo.teams;
+    expect(a.playerIds).toHaveLength(2);
+    expect(b.playerIds).toHaveLength(2);
+    expect([...a.playerIds, ...b.playerIds].sort()).toEqual([1, 2, 3, 4]);
+    // O último racha teve 1+2 e 3+4 juntos: o sorteio não repete essa divisão
+    expect([a.playerIds, b.playerIds].map(t => [...t].sort().join(',')).sort()).not.toEqual(['1,2', '3,4']);
+  }, 10000);
+});
+
+describe('Sortear de novo', () => {
+  const comTimes = (extra = {}) => partida(34, {
+    teams: [
+      { id: 40, name: 'COM COLETE', manual_score: null, is_opponent: false, score: 0, players: [ELENCO[0], ELENCO[1]] },
+      { id: 41, name: 'SEM COLETE', manual_score: null, is_opponent: false, score: 0, players: [ELENCO[2], ELENCO[3]] }
+    ],
+    ...extra
+  });
+
+  it('aparece no racha aberto sem gols e sorteia fugindo da divisão atual', async () => {
+    mockApi({ 'GET /matches/34': comTimes(), 'GET /lineups/recent': [] });
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    telaDaPartida(34);
+    fireEvent.click(await screen.findByRole('button', { name: /Sortear de novo/ }));
+    expect(await screen.findByText(/SORTEIO FINALIZADO/, {}, { timeout: 6000 })).toBeTruthy();
+    const { teams } = chamadas.find(c => c.metodo === 'POST' && c.caminho === '/matches/34/teams').corpo;
+    expect(teams.map(t => [...t.playerIds].sort().join(',')).sort()).not.toEqual(['1,2', '3,4']);
+  }, 10000);
+
+  it('some depois que algum gol foi lançado', async () => {
+    mockApi({ 'GET /matches/34': comTimes({ goals: [{ id: 1, user_id: 1, username: 'Fela', nickname: 'Fela', team_id: 40 }] }) });
+    telaDaPartida(34);
+    await screen.findAllByText('Stocco');
+    expect(screen.queryByRole('button', { name: /Sortear de novo/ })).toBeNull();
   });
 });

@@ -1004,6 +1004,37 @@ app.put('/matches/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// Escalações dos últimos rachas encerrados (sem os jogos contra rival, que não têm
+// sorteio), do mais recente ao mais antigo. O sorteio usa para não repetir sempre as
+// mesmas duplas: [{ match_id, date, teams: [[ids], [ids]] }]
+app.get('/lineups/recent', async (req, res) => {
+  const limite = Math.min(10, Math.max(1, parseInt(req.query.limit, 10) || 4));
+  try {
+    const partidas = await db.all(
+      "SELECT id, date FROM matches WHERE status = 'completed' AND COALESCE(type, 'internal') = 'internal' ORDER BY date DESC, id DESC LIMIT ?",
+      [limite]
+    );
+    if (partidas.length === 0) return res.json([]);
+
+    const ids = partidas.map(p => p.id);
+    const linhas = await db.all(
+      `SELECT t.match_id, t.id AS team_id, tp.user_id FROM teams t JOIN team_players tp ON tp.team_id = t.id
+       WHERE t.match_id IN (${ids.map(() => '?').join(', ')}) AND COALESCE(t.is_opponent, 0) = 0 ORDER BY t.id`,
+      ids
+    );
+    res.json(partidas.map(p => {
+      const times = new Map();
+      linhas.filter(l => l.match_id === p.id).forEach(l => {
+        if (!times.has(l.team_id)) times.set(l.team_id, []);
+        times.get(l.team_id).push(Number(l.user_id));
+      });
+      return { match_id: p.id, date: p.date, teams: [...times.values()] };
+    }));
+  } catch (err) {
+    erroInterno(res, 'carregar as escalações recentes', err);
+  }
+});
+
 app.get('/matches', async (req, res) => {
   try {
     res.json(await db.all('SELECT * FROM matches ORDER BY date DESC, id DESC'));
