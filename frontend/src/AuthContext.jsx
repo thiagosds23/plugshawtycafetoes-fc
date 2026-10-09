@@ -1,55 +1,77 @@
-import React, { createContext, useState, useEffect } from 'react';
-import { API_URL } from './config';
+import React, { createContext, useState, useEffect, useCallback } from 'react';
+import { API_URL, authHeaders } from './config';
 
+// eslint-disable-next-line react-refresh/only-export-components -- o contexto é usado em todo o app
 export const AuthContext = createContext();
 
+const CHAVE = 'pelada_user';
+
+function salvar(user) {
+  try {
+    if (user) localStorage.setItem(CHAVE, JSON.stringify(user));
+    else localStorage.removeItem(CHAVE);
+  } catch (err) {
+    console.error('Não foi possível guardar a sessão no navegador:', err);
+  }
+}
+
 export const AuthProvider = ({ children }) => {
-  // Inicialização síncrona do localStorage
+  // Inicialização síncrona do localStorage. Sessões antigas, de antes do token
+  // assinado, não valem mais: o atleta entra de novo uma vez.
   const [user, setUser] = useState(() => {
     try {
-      const savedUser = localStorage.getItem('pelada_user');
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch (e) {
+      const salvo = JSON.parse(localStorage.getItem(CHAVE) || 'null');
+      return salvo && salvo.token ? salvo : null;
+    } catch {
       return null;
     }
   });
 
-  // Sincroniza os dados mais recentes do atleta (foto, notas, apelido) a partir do
-  // banco na nuvem. Antes isso baixava a lista completa de jogadores só para achar
-  // uma linha; agora busca apenas o próprio usuário.
+  const logout = useCallback(() => {
+    setUser(null);
+    salvar(null);
+  }, []);
+
+  // Uma chamada à API recusada por sessão expirada (401) desloga o usuário
   useEffect(() => {
-    if (!user || !user.id) return;
-    fetch(`${API_URL}/users/${user.id}`)
+    window.addEventListener('sessao-expirada', logout);
+    return () => window.removeEventListener('sessao-expirada', logout);
+  }, [logout]);
+
+  // Sincroniza os dados mais recentes do atleta (foto, notas, apelido) a partir do
+  // banco na nuvem, só do próprio usuário
+  const userId = user?.id;
+  const token = user?.token;
+  useEffect(() => {
+    if (!userId || !token) return;
+    fetch(`${API_URL}/users/${userId}`, { headers: authHeaders({ token }) })
       .then(res => (res.ok ? res.json() : null))
       .then(freshUser => {
         if (freshUser && freshUser.id) {
           setUser(prev => {
-            const updated = { ...prev, ...freshUser };
-            localStorage.setItem('pelada_user', JSON.stringify(updated));
+            if (!prev) return prev;
+            // O token continua o da sessão: a resposta não traz um novo
+            const updated = { ...prev, ...freshUser, token: prev.token };
+            salvar(updated);
             return updated;
           });
         }
       })
       .catch(err => console.error('Erro ao sincronizar dados do usuário:', err));
-  }, [user?.id]);
+  }, [userId, token]);
 
   const login = (userData) => {
     setUser(userData);
-    localStorage.setItem('pelada_user', JSON.stringify(userData));
+    salvar(userData);
   };
 
   const updateUser = (newFields) => {
     setUser(prev => {
       if (!prev) return prev;
       const updated = { ...prev, ...newFields };
-      localStorage.setItem('pelada_user', JSON.stringify(updated));
+      salvar(updated);
       return updated;
     });
-  };
-
-  const logout = () => {
-    setUser(null);
-    localStorage.removeItem('pelada_user');
   };
 
   return (

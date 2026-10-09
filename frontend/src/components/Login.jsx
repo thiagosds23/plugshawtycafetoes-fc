@@ -3,7 +3,13 @@ import { useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
 import { LogIn, UserPlus, Phone, Mail, User, KeyRound, Trophy, ShieldCheck, ArrowLeft, Shield } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { API_URL, formatPhotoUrl } from '../config';
+import { formatPhotoUrl } from '../config';
+import { api } from '../utils/api';
+import { getPrimaryName } from '../utils/formatters';
+
+const PIN_VALIDO = /^\d{4}$/;
+// Só números, no máximo 4
+const limparPin = (valor) => valor.replace(/\D/g, '').slice(0, 4);
 
 export default function Login() {
   const [username, setUsername] = useState('');
@@ -16,6 +22,8 @@ export default function Login() {
   const [pinStep, setPinStep] = useState('initial');
   const [matchedUser, setMatchedUser] = useState(null);
   const [pendingUser, setPendingUser] = useState(null);
+  // Administrador sem PIN precisa criar um antes de entrar
+  const [pinRequired, setPinRequired] = useState(false);
 
   const [isRegistering, setIsRegistering] = useState(false);
   const [error, setError] = useState('');
@@ -30,30 +38,18 @@ export default function Login() {
     
     try {
       if (isRegistering) {
-        const res = await fetch(`${API_URL}/register`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username, phone, email, inviteCode })
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.error || 'Erro ao cadastrar atleta');
-        
-        // Após cadastrar, oferece definir PIN opcional
+        // O cadastro já devolve a sessão (com token); em seguida oferece criar o PIN
+        const data = await api('/register', { method: 'POST', body: { username, phone, email, inviteCode } });
         setPendingUser(data);
+        setPinRequired(false);
         setPinStep('ask_define_pin');
+        setPinInput('');
         return;
       }
 
       // Login regular
-      const res = await fetch(`${API_URL}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username })
-      });
-      
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao autenticar');
-      
+      const data = await api('/login', { method: 'POST', body: { username } });
+
       if (data.requiresPin) {
         // Usuário já possui um PIN cadastrado: pede o PIN
         setMatchedUser(data);
@@ -63,8 +59,9 @@ export default function Login() {
       }
 
       if (data.askInitialPin) {
-        // Primeiro login sem PIN: pergunta se quer definir
+        // Primeiro login sem PIN: pergunta se quer definir (obrigatório para o admin)
         setPendingUser(data.user);
+        setPinRequired(!!data.pinRequired);
         setPinStep('ask_define_pin');
         setPinInput('');
         return;
@@ -85,15 +82,14 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const res = await fetch(`${API_URL}/login`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: matchedUser.username, pin: pinInput })
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'PIN incorreto');
-
+      const data = await api('/login', { method: 'POST', body: { username: matchedUser.username, pin: pinInput } });
+      if (data.askInitialPin) {
+        setPendingUser(data.user);
+        setPinRequired(!!data.pinRequired);
+        setPinStep('ask_define_pin');
+        setPinInput('');
+        return;
+      }
       login(data);
       navigate('/');
     } catch (err) {
@@ -105,50 +101,39 @@ export default function Login() {
 
   const handleSavePinAndEnter = async () => {
     if (!pendingUser) return;
+    if (!PIN_VALIDO.test(pinInput)) {
+      setError('O PIN precisa ter exatamente 4 números.');
+      return;
+    }
     setError('');
     setIsLoading(true);
 
     try {
-      if (pinInput.trim()) {
-        await fetch(`${API_URL}/users/${pendingUser.id}/pin`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-user-id': String(pendingUser.id)
-          },
-          body: JSON.stringify({ pin: pinInput.trim() })
-        });
-        login({ ...pendingUser, has_pin: true });
-      } else {
-        login(pendingUser);
-      }
+      // Criar o PIN invalida o token anterior: a resposta traz um novo
+      const data = await api(`/users/${pendingUser.id}/pin`, { method: 'POST', body: { pin: pinInput }, user: pendingUser });
+      login({ ...pendingUser, has_pin: true, token: data.token || pendingUser.token });
       navigate('/');
     } catch (err) {
-      console.error(err);
-      // Mesmo se der erro ao salvar pin, deixa entrar
-      login(pendingUser);
-      navigate('/');
+      setError(err.message);
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleEnterWithoutPin = async () => {
-    if (pendingUser) {
-      try {
-        await fetch(`${API_URL}/users/${pendingUser.id}/skip-pin`, {
-          method: 'POST',
-          headers: { 
-            'Content-Type': 'application/json',
-            'x-user-id': String(pendingUser.id)
-          }
-        });
-      } catch (e) {
-        console.error('Erro ao registrar skip pin:', e);
-      }
-      login(pendingUser);
-      navigate('/');
+    if (!pendingUser || pinRequired) return;
+    setError('');
+    setIsLoading(true);
+    try {
+      await api(`/users/${pendingUser.id}/skip-pin`, { method: 'POST', user: pendingUser });
+    } catch (err) {
+      // Só deixa de lembrar a escolha; a pergunta volta no próximo login
+      console.error('Erro ao registrar skip pin:', err);
+    } finally {
+      setIsLoading(false);
     }
+    login(pendingUser);
+    navigate('/');
   };
 
   return (
@@ -241,12 +226,14 @@ export default function Login() {
               {!isRegistering ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
                   <div>
-                    <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px', fontSize: '0.74rem' }}>
+                    <label htmlFor="login-usuario" className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px', fontSize: '0.74rem' }}>
                       <User size={14} color="var(--primary)" /> USUÁRIO, E-MAIL OU CELULAR
                     </label>
-                    <input 
-                      type="text" 
-                      className="input" 
+                    <input
+                      id="login-usuario"
+                      type="text"
+                      autoComplete="username"
+                      className="input"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       required 
@@ -262,11 +249,12 @@ export default function Login() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '9px' }}>
                   <div>
-                    <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
+                    <label htmlFor="cadastro-nome" className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
                       <User size={13} color="var(--primary)" /> Nome de Jogador
                     </label>
-                    <input 
-                      type="text" 
+                    <input
+                      id="cadastro-nome"
+                      type="text"
                       className="input" 
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
@@ -277,11 +265,14 @@ export default function Login() {
                   </div>
 
                   <div>
-                    <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
+                    <label htmlFor="cadastro-celular" className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
                       <Phone size={13} color="var(--primary)" /> Celular / WhatsApp
                     </label>
-                    <input 
-                      type="text" 
+                    <input
+                      id="cadastro-celular"
+                      type="tel"
+                      inputMode="tel"
+                      autoComplete="tel"
                       className="input" 
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
@@ -292,11 +283,13 @@ export default function Login() {
                   </div>
 
                   <div>
-                    <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
+                    <label htmlFor="cadastro-email" className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
                       <Mail size={13} color="var(--primary)" /> E-mail de Login
                     </label>
-                    <input 
-                      type="email" 
+                    <input
+                      id="cadastro-email"
+                      type="email"
+                      autoComplete="email"
                       className="input" 
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
@@ -307,16 +300,18 @@ export default function Login() {
                   </div>
 
                   <div>
-                    <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
+                    <label htmlFor="cadastro-convite" className="label" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '3px', fontSize: '0.70rem' }}>
                       <KeyRound size={13} color="var(--primary)" /> Código de Convite
                     </label>
-                    <input 
-                      type="text" 
-                      className="input" 
+                    <input
+                      id="cadastro-convite"
+                      type="text"
+                      className="input"
                       value={inviteCode}
                       onChange={(e) => setInviteCode(e.target.value)}
-                      required 
-                      placeholder="Ex: JOGO2026"
+                      required
+                      autoComplete="off"
+                      placeholder="Peça o código ao administrador"
                       style={{ padding: '8px 12px', fontSize: '0.82rem', marginBottom: 0, borderRadius: '9px' }}
                     />
                   </div>
@@ -342,22 +337,27 @@ export default function Login() {
                 )}
               </div>
               <div className="font-extrabold text-main" style={{ fontSize: '1rem' }}>
-                Olá, {matchedUser.nickname ? matchedUser.nickname.split(',')[0].trim() : matchedUser.username}!
+                Olá, {getPrimaryName(matchedUser)}!
               </div>
-              <p className="text-muted text-xs" style={{ margin: '4px 0 0' }}>
+              <p id="login-pin-ajuda" className="text-muted text-xs" style={{ margin: '4px 0 0' }}>
                 Digite seu PIN de 4 dígitos para acessar sua conta
               </p>
             </div>
 
             <div>
-              <input 
+              {/* PINs antigos podem ter até 6 dígitos; os novos têm 4 */}
+              <input
                 type="password"
+                inputMode="numeric"
+                autoComplete="current-password"
+                aria-label="PIN"
+                aria-describedby="login-pin-ajuda"
                 maxLength={6}
                 autoFocus
-                className="input" 
+                className="input"
                 value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                required 
+                onChange={(e) => setPinInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                required
                 placeholder="••••"
                 style={{ 
                   textAlign: 'center', 
@@ -386,7 +386,7 @@ export default function Login() {
 
             <div style={{ textAlign: 'center', marginTop: '4px' }}>
               <span className="text-muted" style={{ fontSize: '0.72rem' }}>
-                Esqueceu seu PIN? Peça ao Thiago para resetar.
+                Esqueceu seu PIN? Peça ao administrador para resetar.
               </span>
             </div>
           </form>
@@ -398,25 +398,30 @@ export default function Login() {
             <div style={{ textAlign: 'center', background: 'rgba(0, 245, 155, 0.05)', padding: '16px 14px', borderRadius: '16px', border: '1px solid rgba(0, 245, 155, 0.25)' }}>
               <ShieldCheck color="var(--primary)" size={32} style={{ margin: '0 auto 8px' }} />
               <h3 className="font-extrabold text-main" style={{ fontSize: '1rem', margin: '0 0 6px' }}>
-                Deseja definir um PIN de segurança?
+                {pinRequired ? 'Crie seu PIN de administrador' : 'Deseja definir um PIN de segurança?'}
               </h3>
               <p className="text-muted text-xs" style={{ margin: 0, lineHeight: 1.4 }}>
-                Com um PIN simples de 4 números (ex: <strong>1234</strong>), apenas você poderá editar sua foto, dados e atributos da sua Carta FUT.
+                {pinRequired
+                  ? 'A conta de administrador precisa de um PIN de 4 números. Sem ele, qualquer pessoa entraria na sua conta só digitando o seu nome.'
+                  : <>Com um PIN de 4 números, só você entra na sua conta e mexe na sua foto, nos seus dados e na sua Carta FUT. Sem PIN, qualquer pessoa entra digitando o seu nome.</>}
               </p>
             </div>
 
             <div>
-              <label className="label text-xs font-bold" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px' }}>
-                <KeyRound size={14} color="var(--primary)" /> PIN DE 4 DÍGITOS (OPCIONAL)
+              <label htmlFor="definir-pin" className="label text-xs font-bold" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '5px' }}>
+                <KeyRound size={14} color="var(--primary)" /> PIN DE 4 DÍGITOS {pinRequired ? '' : '(OPCIONAL)'}
               </label>
-              <input 
+              <input
+                id="definir-pin"
                 type="password"
-                maxLength={6}
+                inputMode="numeric"
+                autoComplete="new-password"
+                maxLength={4}
                 autoFocus
-                className="input" 
+                className="input"
                 value={pinInput}
-                onChange={(e) => setPinInput(e.target.value)}
-                placeholder="Ex: 1234 (Opcional)"
+                onChange={(e) => setPinInput(limparPin(e.target.value))}
+                placeholder={pinRequired ? 'Ex: 1234' : 'Ex: 1234 (Opcional)'}
                 style={{ 
                   textAlign: 'center', 
                   fontSize: pinInput ? '1.4rem' : '0.92rem', 
@@ -430,15 +435,15 @@ export default function Login() {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {pinInput.trim() ? (
-                <button 
-                  type="button" 
-                  className="btn w-full" 
-                  style={{ padding: '12px', fontSize: '0.90rem', fontWeight: '800', borderRadius: '11px' }} 
+              {pinInput || pinRequired ? (
+                <button
+                  type="button"
+                  className="btn w-full"
+                  style={{ padding: '12px', fontSize: '0.90rem', fontWeight: '800', borderRadius: '11px' }}
                   onClick={handleSavePinAndEnter}
-                  disabled={isLoading}
+                  disabled={isLoading || !PIN_VALIDO.test(pinInput)}
                 >
-                  <Shield size={16} /> Salvar PIN & Entrar
+                  <Shield size={16} /> {isLoading ? 'Salvando...' : 'Salvar PIN & Entrar'}
                 </button>
               ) : (
                 <button 
@@ -452,8 +457,8 @@ export default function Login() {
                 </button>
               )}
 
-              {pinInput.trim() && (
-                <button 
+              {pinInput && !pinRequired && (
+                <button
                   type="button" 
                   className="btn btn-secondary w-full" 
                   style={{ padding: '10px', fontSize: '0.82rem', borderRadius: '10px' }} 

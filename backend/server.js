@@ -1,34 +1,48 @@
+const path = require('path');
+// Variáveis locais em backend/.env (nunca versionado). No Render vêm do painel.
+require('dotenv').config({ path: path.join(__dirname, '.env'), quiet: true });
+
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const multer = require('multer');
-const path = require('path');
 const fs = require('fs');
 const XLSX = require('xlsx');
 const db = require('./db');
+const auth = require('./auth');
+const { runMigrations } = require('./schema');
+const {
+  HORAS_PARA_AVALIAR,
+  DURACAO_MAXIMA_DA_AVALIACAO,
+  janelaDeAvaliacao,
+  calcularFormasDe,
+  aplicarForma
+} = require('./evolucao');
 
 const app = express();
+// Comprime JSON e o bundle do frontend (o JS principal cai de ~620KB para ~180KB)
+app.use(compression());
+// A identidade vai no cabeçalho Authorization (não em cookie), então liberar outras
+// origens não expõe a sessão de ninguém: um site de fora não tem como ler o token.
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', (req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept');
-  next();
-}, express.static(path.join(__dirname, 'uploads'), { dotfiles: 'ignore', index: false }));
+
+// Fotos antigas, gravadas em disco antes de irem para o banco
+app.use('/uploads', express.static(path.join(__dirname, 'uploads'), { dotfiles: 'ignore', index: false }));
 
 // Servir frontend compilado estaticamente (Modo Fullstack Unificado na Nuvem)
 const frontendDist = path.join(__dirname, '../frontend/dist');
 if (fs.existsSync(frontendDist)) {
   app.use(express.static(frontendDist));
 
-  // Interceptador SPA: Toda navegação do browser (GET com accept: text/html)
-  // que não seja um arquivo físico e não seja /uploads serve sempre o index.html.
-  // Isso previne erros de "Cannot GET /login" ou exibição de JSON puro ao puxar para atualizar no celular!
+  // Interceptador SPA: toda navegação do browser (GET com accept: text/html) que não
+  // seja um arquivo físico serve o index.html. Isso evita "Cannot GET /login" ao
+  // puxar para atualizar no celular.
   app.use((req, res, next) => {
     if (req.method === 'GET') {
       const acceptsHtml = req.headers.accept && req.headers.accept.includes('text/html');
       const hasExt = path.extname(req.path) !== '';
-      // Fotos de atleta nao tem extensao no caminho: sem esta excecao o
+      // Fotos de atleta não têm extensão no caminho: sem esta exceção o
       // interceptador devolveria o index.html no lugar da imagem
       const isAsset = req.path.startsWith('/uploads') || (req.path.startsWith('/users/') && req.path.endsWith('/photo'));
 
@@ -40,79 +54,58 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
-// Ensure uploads directory exists
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
-}
-
-// Multer seguro para fotos de atletas
+// Uploads ficam só em memória: a foto vira data URI no banco e a planilha é lida
+// direto do buffer. Nada é gravado em disco, então não sobra arquivo temporário.
 const allowedImageMimes = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
 const upload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      const safeExt = allowedImageMimes.includes(file.mimetype) ? ext : '.png';
-      cb(null, `${Date.now()}-${Math.random().toString(36).substring(2, 9)}${safeExt}`);
-    }
-  }),
-  limits: { fileSize: 10 * 1024 * 1024 }, // Limite de 10MB para prevenir DoS
+  storage: multer.memoryStorage(),
+  // A foto recortada pelo app tem 400x480 (bem menos de 1MB); o limite cobre a original
+  limits: { fileSize: 4 * 1024 * 1024, files: 2 },
   fileFilter: (req, file, cb) => {
-    if (allowedImageMimes.includes(file.mimetype)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Apenas imagens válidas (JPEG, PNG, WebP, GIF) são permitidas.'));
-    }
+    if (allowedImageMimes.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('Apenas imagens válidas (JPEG, PNG, WebP, GIF) são permitidas.'));
   }
 });
 
-// Multer seguro para planilhas (.xlsx, .xls, .csv)
 const allowedDocExts = ['.xlsx', '.xls', '.csv'];
 const docUpload = multer({
-  storage: multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase();
-      cb(null, `import-${Date.now()}-${Math.random().toString(36).substring(2, 9)}${ext}`);
-    }
-  }),
-  limits: { fileSize: 15 * 1024 * 1024 }, // Limite de 15MB
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 15 * 1024 * 1024, files: 1 },
   fileFilter: (req, file, cb) => {
     const ext = path.extname(file.originalname).toLowerCase();
-    if (allowedDocExts.includes(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error('Apenas arquivos de planilha (.xlsx, .xls, .csv) são permitidos.'));
-    }
+    if (allowedDocExts.includes(ext)) cb(null, true);
+    else cb(new Error('Apenas arquivos de planilha (.xlsx, .xls, .csv) são permitidos.'));
   }
 });
 
-// Versoes em Promise do driver (que so expoe callbacks), para conseguir disparar
-// consultas independentes em paralelo em vez de uma dentro do callback da outra.
-const dbAll = (sql, args = []) => new Promise((resolve, reject) =>
-  db.all(sql, args, (err, rows) => err ? reject(err) : resolve(rows || [])));
-const dbGet = (sql, args = []) => new Promise((resolve, reject) =>
-  db.get(sql, args, (err, row) => err ? reject(err) : resolve(row)));
-const dbRun = (sql, args = []) => new Promise((resolve, reject) =>
-  db.run(sql, args, function (err) { err ? reject(err) : resolve(this || {}); }));
+// Responde 500 sem vazar detalhes internos (SQL, nomes de tabela) para o cliente
+function erroInterno(res, contexto, err, mensagem = 'Erro interno do servidor.') {
+  console.error(`Erro ao ${contexto}:`, err && err.message ? err.message : err);
+  res.status(500).json({ error: mensagem });
+}
 
-// Colunas de um atleta que sempre podem trafegar sem custo.
-const USER_COLS = 'id, username, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, phone, email, is_admin';
+// ---------------------------------------------------------------------------
+// Fotos
+// ---------------------------------------------------------------------------
 
-// As fotos ficam guardadas como data URI Base64 (ate 400KB cada). Trazer isso em
-// toda listagem colocava ~7MB na memoria do servidor por request e era o que
-// estourava o limite do Render. Aqui o banco devolve apenas o cabecalho, o tamanho
+// Colunas de um atleta que podem trafegar em qualquer listagem. Telefone e e-mail
+// ficam de fora: só o próprio atleta e o administrador os veem (GET /users/:id).
+const USER_COLS = 'id, username, position, nickname, height, weight, pace, shooting, passing, dribbling, defending, physical, is_admin';
+const HAS_PIN_COL = "(CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) AS has_pin";
+
+// As fotos ficam guardadas como data URI Base64 (até 400KB cada). Trazer isso em
+// toda listagem colocava ~7MB na memória do servidor por request e era o que
+// estourava o limite do Render. Aqui o banco devolve apenas o cabeçalho, o tamanho
 // e o final da string: o suficiente para montar uma URL versionada, sem carregar a
-// imagem. O navegador entao busca cada foto uma unica vez e cacheia.
+// imagem. O navegador então busca cada foto uma única vez e cacheia.
 function photoCols(prefix) {
   const t = prefix ? prefix + '.' : '';
   return `SUBSTR(${t}photo, 1, 96) AS photo_head, LENGTH(${t}photo) AS photo_len, SUBSTR(${t}photo, -12) AS photo_tail, ` +
          `SUBSTR(${t}original_photo, 1, 96) AS orig_head, LENGTH(${t}original_photo) AS orig_len, SUBSTR(${t}original_photo, -12) AS orig_tail`;
 }
 
-// Monta a URL curta da foto. A versao vem do proprio conteudo (tamanho + ultimos
-// caracteres), entao trocar a foto muda a URL e derruba o cache do navegador.
+// Monta a URL curta da foto. A versão vem do próprio conteúdo (tamanho + últimos
+// caracteres), então trocar a foto muda a URL e derruba o cache do navegador.
 function buildPhotoRef(userId, head, len, tail, isOriginal) {
   if (!len || !head) return null;
   const h = String(head);
@@ -135,229 +128,8 @@ function withPhotoUrls(row, userId) {
 }
 
 // ---------------------------------------------------------------------------
-// Migrações. Rodam a cada boot e ignoram o erro de "coluna já existe", então
-// podem ser aplicadas quantas vezes for.
+// Evolução das cartas (com cache)
 // ---------------------------------------------------------------------------
-/**
- * Executa uma migração de dados no máximo uma vez na vida do banco.
- *
- * O marcador é gravado ANTES do trabalho: se outra instância do servidor subir ao
- * mesmo tempo, a chave primária rejeita a segunda e o dado não é convertido duas
- * vezes — o que, no caso das notas, dobraria valores já dobrados.
- */
-async function aplicarUmaVez(nome, executar) {
-  try {
-    await dbRun('INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)', [nome, new Date().toISOString()]);
-  } catch (err) {
-    return false; // já aplicada anteriormente
-  }
-
-  try {
-    await executar();
-    return true;
-  } catch (err) {
-    // Desfaz o marcador para a migração poder ser tentada de novo no próximo boot
-    await dbRun('DELETE FROM schema_migrations WHERE name = ?', [nome]).catch(() => {});
-    console.error(`⚠️  Migração "${nome}" falhou:`, err.message);
-    return false;
-  }
-}
-
-async function runMigrations() {
-  const passos = [
-    // Momento em que a partida foi encerrada: é daqui que conta o prazo de avaliação
-    'ALTER TABLE matches ADD COLUMN finished_at TEXT',
-    // Administrador de verdade, em vez de deduzir pelo nome do usuário
-    'ALTER TABLE users ADD COLUMN is_admin INTEGER DEFAULT 0',
-    // Cada atleta dá no máximo uma nota por companheiro em cada partida
-    'CREATE UNIQUE INDEX IF NOT EXISTS ux_ratings_unicas ON ratings (match_id, rater_id, rated_id)',
-    // Tipo da partida: 'internal' (racha entre o próprio elenco) ou 'rival' (contra outro time)
-    "ALTER TABLE matches ADD COLUMN type TEXT DEFAULT 'internal'",
-    // Nome do adversário, só nas partidas contra rival
-    'ALTER TABLE matches ADD COLUMN opponent TEXT',
-    // O adversário vira um time sem jogadores. Assim placar, vitórias e derrotas do
-    // ranking funcionam igual ao racha, sem lógica paralela.
-    'ALTER TABLE teams ADD COLUMN is_opponent INTEGER DEFAULT 0',
-    // Prazo da votação definido pelo administrador (finalizar antes ou mudar a
-    // duração). Vazio, vale o padrão de 12 horas depois do encerramento.
-    'ALTER TABLE matches ADD COLUMN rating_deadline TEXT',
-    // Índices de alta performance para acelerar ranking, histórico e listagens
-    'CREATE INDEX IF NOT EXISTS idx_team_players_team ON team_players (team_id)',
-    'CREATE INDEX IF NOT EXISTS idx_team_players_user ON team_players (user_id)',
-    'CREATE INDEX IF NOT EXISTS idx_goals_match_user ON goals (match_id, user_id)',
-    'CREATE INDEX IF NOT EXISTS idx_assists_match_user ON assists (match_id, user_id)',
-    'CREATE INDEX IF NOT EXISTS idx_ratings_match_rater ON ratings (match_id, rater_id)',
-    'CREATE INDEX IF NOT EXISTS idx_matches_date_status ON matches (date, status)',
-    'CREATE INDEX IF NOT EXISTS idx_teams_match ON teams (match_id)'
-  ];
-
-  for (const sql of passos) {
-    try {
-      await dbRun(sql);
-      console.log('🛠️  Migração aplicada:', sql.slice(0, 60));
-    } catch (err) {
-      if (!/duplicate column|already exists/i.test(err.message || '')) {
-        console.error('⚠️  Migração falhou:', sql, '->', err.message);
-      }
-    }
-  }
-
-  // Migrações que alteram DADOS (e não o formato) não podem simplesmente rodar de
-  // novo a cada boot, então ficam registradas nesta tabela.
-  await dbRun('CREATE TABLE IF NOT EXISTS schema_migrations (name TEXT PRIMARY KEY, applied_at TEXT)').catch(() => {});
-
-  // Converte as notas antigas, dadas em estrelas de 1 a 5, para a escala de 0 a 10.
-  // Uma nota 4 vira 8, mantendo a proporção.
-  await aplicarUmaVez('notas_escala_0_a_10', async () => {
-    const r = await dbRun('UPDATE ratings SET score = score * 2');
-    console.log(`⭐ ${r.changes || 0} nota(s) convertidas de 0-5 para 0-10`);
-  });
-
-  // Promove uma única vez quem a regra antiga (comparação por nome) reconhecia
-  // como administrador, para o app parar de depender dessa comparação frágil.
-  try {
-    const atual = await dbGet('SELECT COUNT(*) AS n FROM users WHERE is_admin = 1');
-    if (atual && Number(atual.n) === 0) {
-      const r = await dbRun(
-        "UPDATE users SET is_admin = 1 WHERE LOWER(username) LIKE '%thiago%' OR LOWER(COALESCE(nickname, '')) LIKE '%fela%'"
-      );
-      console.log(`✅ Administrador migrado para a coluna is_admin (${r.changes || 0} atleta(s))`);
-    }
-  } catch (err) {
-    console.error('⚠️  Não foi possível migrar o administrador:', err.message);
-  }
-
-  // Limpa registros orfaos de gols e assistencias nulos caso tenham ocorrido
-  try {
-    await dbRun('DELETE FROM goals WHERE match_id IS NULL OR user_id IS NULL');
-    await dbRun('DELETE FROM assists WHERE match_id IS NULL OR user_id IS NULL');
-  } catch (_) {}
-}
-runMigrations();
-
-// ---------------------------------------------------------------------------
-// Autorização
-// ---------------------------------------------------------------------------
-
-// Quem está fazendo a requisição. O app manda o próprio id no cabeçalho
-// x-user-id, mesmo mecanismo já usado pelo backup e pelos logs de auditoria.
-function getRequester(req) {
-  const id = req.headers['x-user-id'] || (req.body && req.body.requester_id);
-  if (!id) return Promise.resolve(null);
-  return dbGet('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [id]).catch(() => null);
-}
-
-function isAdminUser(user) {
-  return !!(user && Number(user.is_admin) === 1);
-}
-
-// Placar, gols, assistências, agenda e encerramento são exclusivos do administrador
-function requireAdmin(req, res, next) {
-  getRequester(req).then(user => {
-    if (!isAdminUser(user)) {
-      return res.status(403).json({ error: 'Apenas o administrador pode fazer isso.' });
-    }
-    req.requester = user;
-    next();
-  });
-}
-
-// Montar e ajustar os times fica livre enquanto a pelada não foi encerrada;
-// depois do apito só o administrador mexe, para o resultado não mudar depois.
-function requireOpenMatchOrAdmin(req, res, next) {
-  Promise.all([
-    getRequester(req),
-    dbGet('SELECT id, status FROM matches WHERE id = ?', [req.params.id])
-  ]).then(([user, match]) => {
-    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
-    req.requester = user;
-    if (isAdminUser(user)) return next();
-    if (match.status === 'completed') {
-      return res.status(403).json({ error: 'Partida encerrada: apenas o administrador pode alterá-la.' });
-    }
-    next();
-  }).catch(() => res.status(500).json({ error: 'Erro ao verificar a partida' }));
-}
-
-// Janela de avaliação: abre quando o administrador encerra a partida e dura 12 horas,
-// a não ser que ele tenha finalizado a votação antes ou mudado a duração. Esse prazo
-// definido à mão fica em matches.rating_deadline.
-const HORAS_PARA_AVALIAR = 12;
-const DURACAO_MAXIMA_DA_AVALIACAO = 7 * 24; // horas
-
-/** Momento (em ms) em que a votação da partida fecha, ou NaN se ela nunca abriu. */
-function fimDaAvaliacao(match) {
-  if (!match || !match.finished_at) return NaN;
-  if (match.rating_deadline) return new Date(match.rating_deadline).getTime();
-  return new Date(match.finished_at).getTime() + HORAS_PARA_AVALIAR * 60 * 60 * 1000;
-}
-
-function janelaDeAvaliacao(match) {
-  if (!match || match.status !== 'completed' || !match.finished_at) {
-    return { aberta: false, terminaEm: null, horas: null };
-  }
-  const fim = fimDaAvaliacao(match);
-  if (isNaN(fim)) return { aberta: false, terminaEm: null, horas: null };
-  // Duração total contada do apito final, com uma casa decimal
-  const horas = Math.round(((fim - new Date(match.finished_at).getTime()) / 3600000) * 10) / 10;
-  return { aberta: Date.now() < fim, terminaEm: new Date(fim).toISOString(), horas };
-}
-
-// ---------------------------------------------------------------------------
-// Evolução das cartas
-//
-// Os atributos gravados em users (vindos da planilha de avaliação do elenco) são a
-// BASE e nunca são alterados pelos jogos. A cada leitura calculamos a "forma" do
-// atleta a partir das partidas encerradas e devolvemos os atributos já evoluídos.
-// Por ser derivado, dá para recalibrar a fórmula sem estragar nenhum dado, e
-// reabrir ou corrigir uma partida reflete sozinho na carta.
-//
-// Cada atuação é comparada com o que se espera do NÍVEL e da POSIÇÃO do atleta, e
-// não com uma régua única. Nota 7 é ótima para um 60 e abaixo do esperado para um
-// 81; fazer 2 gols é muito numa partida de 4 gols e pouco numa de 25. Assim um OVR
-// alto só se sustenta com atuação alta, e quem joga acima do próprio nível sobe.
-//
-// Constantes calibradas com as partidas reais do clube (setembro/2026).
-// ---------------------------------------------------------------------------
-const EVOLUCAO = {
-  // Nota esperada para cada nível. Nas partidas reais o grupo já dá notas maiores a
-  // quem tem OVR maior (correlação de 0,64): cerca de +0,9 de nota a cada 10 de OVR.
-  // Um atleta de OVR 62 costuma tirar 6,2; um de 81, perto de 7,9.
-  NOTA_MEDIA_DO_GRUPO: 6.2,
-  OVR_MEDIO_DO_GRUPO: 62,
-  NOTA_A_MAIS_POR_PONTO_DE_OVR: 0.09,
-  // Cada ponto de nota acima (ou abaixo) do esperado move todos os atributos em 3
-  PONTOS_POR_PONTO_DE_NOTA: 3,
-
-  // Parcela dos gols do time que se espera de cada posição, em gols e em assistências.
-  // Medir a parcela, e não o número de gols, faz o placar do jogo não importar: numa
-  // pelada de 15 gols, marcar 2 é pouco. Ficar abaixo do esperado não tira ponto —
-  // zagueiro que não marca não perde nada —, só ficar acima soma.
-  PARCELA_DE_GOLS_ESPERADA:   { ATA: 0.28, MEI: 0.18, VOL: 0.14, LAT: 0.14, ZAG: 0.03, GOL: 0.01 },
-  PARCELA_DE_ASSIST_ESPERADA: { ATA: 0.10, MEI: 0.15, VOL: 0.12, LAT: 0.10, ZAG: 0.03, GOL: 0.01 },
-  // Participar de 10% a mais dos gols do time do que o esperado vale 2 pontos
-  PONTOS_POR_PARCELA_EXTRA: 20,
-  TETO_BONUS_OFENSIVO: 8,
-
-  // Peso de cada partida do atleta, da mais recente para a mais antiga: 1, 0.85,
-  // 0.72, 0.61... Todas contam, mas a fase atual pesa mais.
-  DECAIMENTO: 0.85,
-
-  // Com poucas partidas o efeito é parcial: 1 jogo = 50%, 2 = 71%, 3 = 87%, 4 ou mais
-  // = 100%. Antes era linear e 1 jogo valia só 25%, o que apagava atuações de destaque.
-  JOGOS_PARA_CONFIANCA_TOTAL: 4,
-
-  // Acima de 75 subir fica gradualmente mais lento (um 85 sobe a 80% do ritmo, um 95
-  // a 60%). Abaixo disso não há freio extra: a nota esperada maior já cobra o nível.
-  OVR_ONDE_SUBIR_FICA_MAIS_LENTO: 75,
-  RITMO_MINIMO_DE_SUBIDA: 0.6,
-
-  // Quanto cada atributo pode se afastar da base, para cima ou para baixo
-  VARIACAO_MAXIMA: 10
-};
-
-const ATRIBUTOS = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physical'];
-const limitar = (valor, minimo, maximo) => Math.max(minimo, Math.min(maximo, valor));
 
 // A fórmula de OVR por posição vive no frontend (utils/ovr.js) e é carregada daqui
 // também, para servidor e tela usarem exatamente a mesma conta. O arquivo não
@@ -367,14 +139,9 @@ const carregandoCalcOVR = import(
 ).then(modulo => modulo.calcOVR);
 carregandoCalcOVR.catch(err => console.error('⚠️  Não foi possível carregar a fórmula de OVR:', err.message));
 
-/**
- * Calcula a variação de cada atributo de todos os atletas que já jogaram.
- * Devolve um Map de user_id -> { delta, partidas, nota }.
- */
 async function calcularFormas() {
   const calcOVR = await carregandoCalcOVR;
-
-  const linhas = await dbAll(`
+  const linhas = await db.all(`
     -- Os nomes dos CTEs não podem repetir os das tabelas: "assists AS (... FROM assists)"
     -- vira uma referência circular no SQLite
     WITH gols_partida AS (SELECT match_id, user_id, COUNT(*) AS n FROM goals GROUP BY match_id, user_id),
@@ -404,430 +171,438 @@ async function calcularFormas() {
     WHERE m.status = 'completed'
     ORDER BY m.date DESC, m.id DESC
   `);
+  return calcularFormasDe(linhas, calcOVR);
+}
 
-  // A nota só entra depois que o prazo de avaliação fecha. Enquanto ele corre, a média
-  // oscila a cada voto e a carta de alguém poderia despencar só porque a primeira
-  // pessoa a votar deu nota baixa. Gols e assistências são fatos e contam na hora.
-  const agora = Date.now();
-  const notaFechada = (jogo) => {
-    if (!jogo.finished_at) return true; // partida antiga, de antes do prazo existir
-    const fim = fimDaAvaliacao(jogo);
-    return isNaN(fim) || fim <= agora;
-  };
+// A evolução varre todas as partidas e era recalculada a cada /users, /stats e
+// /matches/:id. Agora fica guardada por até 1 minuto e é descartada a cada escrita.
+// O minuto cobre o único caso sem escrita: o prazo de uma votação vencer sozinho.
+const VALIDADE_DO_CACHE_MS = 60 * 1000;
+let cacheFormas = null; // { promessa, criadoEm }
 
-  const porAtleta = new Map();
-  linhas.forEach(l => {
-    const id = Number(l.user_id);
-    if (!porAtleta.has(id)) porAtleta.set(id, []);
-    porAtleta.get(id).push(l);
-  });
+function obterFormas() {
+  if (cacheFormas && Date.now() - cacheFormas.criadoEm < VALIDADE_DO_CACHE_MS) return cacheFormas.promessa;
+  const promessa = calcularFormas();
+  cacheFormas = { promessa, criadoEm: Date.now() };
+  promessa.catch(() => { if (cacheFormas && cacheFormas.promessa === promessa) cacheFormas = null; });
+  return promessa;
+}
 
-  const E = EVOLUCAO;
-  const formas = new Map();
+const invalidarFormas = () => { cacheFormas = null; };
 
-  porAtleta.forEach((jogos, id) => {
-    const atleta = jogos[0];
-    const base = {};
-    ATRIBUTOS.forEach(k => { base[k] = Number(atleta[k]) || 50; });
+// Qualquer escrita (fora GET) pode mudar gols, notas, escalações ou atributos
+app.use((req, res, next) => {
+  if (req.method !== 'GET' && req.method !== 'HEAD' && req.method !== 'OPTIONS') {
+    res.on('finish', invalidarFormas);
+  }
+  next();
+});
 
-    // O nível do atleta é o OVR da planilha, nunca o já evoluído: comparar com o
-    // evoluído realimentaria a fórmula a cada leitura
-    const ovrBase = calcOVR({ ...atleta, ...base });
-    const posicao = String(atleta.position || 'MEI').toUpperCase().trim();
-    const parcelaGolEsperada = E.PARCELA_DE_GOLS_ESPERADA[posicao] ?? E.PARCELA_DE_GOLS_ESPERADA.MEI;
-    const parcelaAssistEsperada = E.PARCELA_DE_ASSIST_ESPERADA[posicao] ?? E.PARCELA_DE_ASSIST_ESPERADA.MEI;
-    const notaEsperada = E.NOTA_MEDIA_DO_GRUPO + (ovrBase - E.OVR_MEDIO_DO_GRUPO) * E.NOTA_A_MAIS_POR_PONTO_DE_OVR;
+// ---------------------------------------------------------------------------
+// Autorização
+// ---------------------------------------------------------------------------
 
-    let somaPesos = 0, somaPesosNota = 0, somaDesvioNota = 0, somaExtraGol = 0, somaExtraAssist = 0, somaNotas = 0;
-
-    jogos.forEach((jogo, indice) => {
-      const peso = Math.pow(E.DECAIMENTO, indice);
-      somaPesos += peso;
-
-      // Avaliado jogo a jogo: uma partida sem gol não apaga o bônus de outra com 5
-      const golsDoTime = Math.max(Number(jogo.gols_time), 1);
-      somaExtraGol += peso * Math.max(0, Number(jogo.gols) / golsDoTime - parcelaGolEsperada);
-      somaExtraAssist += peso * Math.max(0, Number(jogo.assists) / golsDoTime - parcelaAssistEsperada);
-
-      if (jogo.nota !== null && jogo.nota !== undefined && notaFechada(jogo)) {
-        somaPesosNota += peso;
-        somaDesvioNota += peso * (Number(jogo.nota) - notaEsperada);
-        somaNotas += peso * Number(jogo.nota);
-      }
+/**
+ * Atleta dono do token da requisição, ou null. O resultado fica guardado na própria
+ * requisição para os middlewares não consultarem o banco duas vezes.
+ */
+function getRequester(req) {
+  if (!req._requester) {
+    req._requester = (async () => {
+      const dados = auth.lerToken(auth.tokenDaRequisicao(req));
+      if (!dados) return null;
+      const user = await db.get('SELECT id, username, nickname, is_admin, pin FROM users WHERE id = ?', [dados.uid]);
+      // PIN trocado ou resetado derruba os tokens antigos
+      if (!user || auth.versaoDoPin(user.pin) !== dados.pv) return null;
+      const temPin = !!(user.pin && String(user.pin).trim());
+      delete user.pin;
+      return { ...user, has_pin: temPin };
+    })().catch(err => {
+      console.error('Erro ao identificar o atleta:', err.message);
+      return null;
     });
-
-    const desvioNota = somaPesosNota > 0 ? somaDesvioNota / somaPesosNota : 0;
-    const efeitoNota = desvioNota * E.PONTOS_POR_PONTO_DE_NOTA;
-    const bonusGol = Math.min((somaExtraGol / somaPesos) * E.PONTOS_POR_PARCELA_EXTRA, E.TETO_BONUS_OFENSIVO);
-    const bonusAssist = Math.min((somaExtraAssist / somaPesos) * E.PONTOS_POR_PARCELA_EXTRA, E.TETO_BONUS_OFENSIVO);
-
-    const confianca = Math.sqrt(Math.min(jogos.length / E.JOGOS_PARA_CONFIANCA_TOTAL, 1));
-    const ritmoDeSubida = limitar(1 - (ovrBase - E.OVR_ONDE_SUBIR_FICA_MAIS_LENTO) / 50, E.RITMO_MINIMO_DE_SUBIDA, 1);
-
-    // A nota mexe em tudo; participação em gols puxa finalização, em assistências
-    // puxa passe, e o drible fica com metade de cada
-    const bruto = {
-      pace: efeitoNota,
-      defending: efeitoNota,
-      physical: efeitoNota,
-      shooting: efeitoNota + bonusGol,
-      passing: efeitoNota + bonusAssist,
-      dribbling: efeitoNota + (bonusGol + bonusAssist) / 2
-    };
-
-    const delta = {};
-    ATRIBUTOS.forEach(k => {
-      const ajustado = bruto[k] >= 0 ? bruto[k] * ritmoDeSubida : bruto[k];
-      delta[k] = Math.round(limitar(ajustado * confianca, -E.VARIACAO_MAXIMA, E.VARIACAO_MAXIMA));
-    });
-
-    formas.set(id, {
-      delta,
-      partidas: jogos.length,
-      nota: somaPesosNota > 0 ? Math.round((somaNotas / somaPesosNota) * 10) / 10 : null,
-      nota_esperada: Math.round(notaEsperada * 10) / 10
-    });
-  });
-
-  return formas;
+  }
+  return req._requester;
 }
 
 /**
- * Devolve o atleta com os atributos evoluídos. Os valores originais da planilha
- * seguem em base_attrs, e form traz quanto cada atributo mudou.
+ * Administrador de verdade: is_admin E com PIN. Sem PIN, qualquer um entraria na
+ * conta só digitando o nome; por isso os poderes de admin só valem com PIN definido.
  */
-function aplicarForma(atleta, formas) {
-  if (!atleta) return atleta;
-
-  const base = {};
-  ATRIBUTOS.forEach(k => { base[k] = Number(atleta[k]) || 50; });
-
-  const saida = { ...atleta, base_attrs: base, form: null };
-  const forma = formas && formas.get(Number(atleta.id));
-  if (!forma) return saida;
-
-  const variacao = {};
-  ATRIBUTOS.forEach(k => {
-    saida[k] = limitar(base[k] + forma.delta[k], 25, 99);
-    // Variação real: o teto de 99 pode ter comido parte do bônus
-    variacao[k] = saida[k] - base[k];
-  });
-
-  saida.form = { ...variacao, partidas: forma.partidas, nota: forma.nota, nota_esperada: forma.nota_esperada };
-  return saida;
+function isAdminUser(user) {
+  return !!(user && Number(user.is_admin) === 1 && user.has_pin);
 }
 
-// Nome do time do clube nas partidas contra adversários
-const NOME_DO_CLUBE = 'plugshawty FC';
+const nomeDoAtleta = (u) => (u.nickname ? `${u.username} (${String(u.nickname).split(',')[0].trim()})` : u.username);
 
-const INVITE_CODE = 'JOGO2026';
+function requireAuth(req, res, next) {
+  getRequester(req).then(user => {
+    if (!user) return res.status(401).json({ error: 'Sua sessão expirou. Entre de novo no app.' });
+    req.requester = user;
+    next();
+  });
+}
 
-// Sistema de Auditoria em Tempo Real (Horário de Brasília)
+// Placar, gols, assistências, agenda e encerramento são exclusivos do administrador
+function requireAdmin(req, res, next) {
+  getRequester(req).then(user => {
+    if (!user) return res.status(401).json({ error: 'Sua sessão expirou. Entre de novo no app.' });
+    if (!isAdminUser(user)) {
+      const motivo = Number(user.is_admin) === 1 ? ' Defina seu PIN para liberar as funções de administrador.' : '';
+      return res.status(403).json({ error: 'Apenas o administrador pode fazer isso.' + motivo });
+    }
+    req.requester = user;
+    next();
+  });
+}
+
+// O próprio atleta ou o administrador (fotos, perfil, PIN)
+function requireSelfOrAdmin(req, res, next) {
+  getRequester(req).then(user => {
+    if (!user) return res.status(401).json({ error: 'Sua sessão expirou. Entre de novo no app.' });
+    if (String(user.id) !== String(req.params.id) && !isAdminUser(user)) {
+      return res.status(403).json({ error: 'Acesso negado: apenas o administrador pode alterar outros jogadores.' });
+    }
+    req.requester = user;
+    next();
+  });
+}
+
+// Montar e ajustar os times fica livre (para quem está logado) enquanto a pelada não
+// foi encerrada; depois do apito só o administrador mexe, para o resultado não mudar.
+function requireOpenMatchOrAdmin(req, res, next) {
+  Promise.all([
+    getRequester(req),
+    db.get('SELECT id, status, type FROM matches WHERE id = ?', [req.params.id])
+  ]).then(([user, match]) => {
+    if (!user) return res.status(401).json({ error: 'Sua sessão expirou. Entre de novo no app.' });
+    if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
+    req.requester = user;
+    req.match = match;
+    if (isAdminUser(user)) return next();
+    if (match.status === 'completed') {
+      return res.status(403).json({ error: 'Partida encerrada: apenas o administrador pode alterá-la.' });
+    }
+    next();
+  }).catch(err => erroInterno(res, 'verificar a partida', err));
+}
+
+// ---------------------------------------------------------------------------
+// Auditoria
+// ---------------------------------------------------------------------------
+
+// Sistema de Auditoria em Tempo Real (Horário de Brasília). Não bloqueia a resposta.
 function logAudit(userId, username, action, details) {
-  try {
-    const brTime = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
-    db.run(
-      'INSERT INTO audit_logs (user_id, username, action, details, created_at) VALUES (?, ?, ?, ?, ?)',
-      [userId || null, username || 'Desconhecido', action, details, brTime],
-      (err) => {
-        if (err) console.error('Erro ao gravar log de auditoria:', err.message);
-      }
-    );
-  } catch (e) {
-    console.error('Audit error:', e);
-  }
+  const brTime = new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' });
+  db.run(
+    'INSERT INTO audit_logs (user_id, username, action, details, created_at) VALUES (?, ?, ?, ?, ?)',
+    [userId || null, username || 'Desconhecido', action, details, brTime]
+  ).catch(err => console.error('Erro ao gravar log de auditoria:', err.message));
 }
 
-// Obter histórico de auditoria (Exclusivo para o Administrador)
-app.get('/audit-logs', (req, res) => {
-  const requesterId = req.headers['x-user-id'];
-  if (!requesterId) return res.status(403).json({ error: 'Acesso não autorizado.' });
+const auditar = (req, action, details) => {
+  const quem = req.requester;
+  logAudit(quem ? quem.id : null, quem ? nomeDoAtleta(quem) : 'Atleta', action, details);
+};
 
-  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
-    if (err || !user) return res.status(403).json({ error: 'Usuário não encontrado.' });
-    if (!isAdminUser(user)) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
-
-    db.all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300', [], (err2, rows) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      res.json({ logs: rows || [] });
-    });
-  });
-});
-
-// Limpar logs de auditoria (Apenas Admin)
-app.delete('/audit-logs', (req, res) => {
-  const requesterId = req.headers['x-user-id'];
-  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
-    if (!isAdminUser(user)) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
-
-    db.run('DELETE FROM audit_logs', [], (err2) => {
-      if (err2) return res.status(500).json({ error: err2.message });
-      logAudit(user.id, user.username, 'ADMIN', 'Limpou o histórico de auditoria');
-      res.json({ success: true, message: 'Histórico de auditoria limpo com sucesso!' });
-    });
-  });
-});
-
-// Registrar log de evento vindo do frontend (ex: avaliação de elenco preenchida)
-app.post('/audit-logs', (req, res) => {
-  const { action, details } = req.body;
-  const requesterId = req.headers['x-user-id'];
-  if (requesterId) {
-    db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
-      const name = user ? (user.nickname ? `${user.username} (${user.nickname.split(',')[0].trim()})` : user.username) : 'Atleta';
-      logAudit(requesterId, name, action || 'GERAL', details || 'Ação registrada');
-      res.json({ success: true });
-    });
-  } else {
-    logAudit(null, 'Visitante', action || 'GERAL', details || 'Ação anônima');
-    res.json({ success: true });
+app.get('/audit-logs', requireAdmin, async (req, res) => {
+  try {
+    res.json({ logs: await db.all('SELECT * FROM audit_logs ORDER BY id DESC LIMIT 300') });
+  } catch (err) {
+    erroInterno(res, 'listar a auditoria', err);
   }
+});
+
+app.delete('/audit-logs', requireAdmin, async (req, res) => {
+  try {
+    await db.run('DELETE FROM audit_logs');
+    auditar(req, 'ADMIN', 'Limpou o histórico de auditoria');
+    res.json({ success: true, message: 'Histórico de auditoria limpo com sucesso!' });
+  } catch (err) {
+    erroInterno(res, 'limpar a auditoria', err);
+  }
+});
+
+// Registrar evento vindo do frontend (ex: avaliação de elenco preenchida)
+app.post('/audit-logs', requireAuth, (req, res) => {
+  const action = String(req.body.action || 'GERAL').slice(0, 40);
+  const details = String(req.body.details || 'Ação registrada').slice(0, 300);
+  auditar(req, action, details);
+  res.json({ success: true });
 });
 
 // Exportar Backup Completo do Clube em JSON (Apenas Administrador)
-app.get('/admin/backup', (req, res) => {
-  const requesterId = req.headers['x-user-id'];
-  if (!requesterId) return res.status(403).json({ error: 'Acesso não autorizado.' });
+app.get('/admin/backup', requireAdmin, async (req, res) => {
+  try {
+    const tables = ['users', 'matches', 'teams', 'team_players', 'goals', 'assists', 'ratings', 'audit_logs'];
+    const linhas = await Promise.all(tables.map(t => db.all(`SELECT * FROM ${t}`)));
 
-  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
-    if (err || !user) return res.status(403).json({ error: 'Usuário não encontrado.' });
-    if (!isAdminUser(user)) return res.status(403).json({ error: 'Acesso restrito ao administrador.' });
+    const database = {};
+    tables.forEach((t, i) => {
+      // O hash do PIN nunca sai do servidor
+      database[t] = t === 'users' ? linhas[i].map(({ pin, ...resto }) => resto) : linhas[i];
+    });
 
-    const backupData = {
+    auditar(req, 'ADMIN', 'Baixou backup completo do banco de dados');
+    res.setHeader('Content-Disposition', `attachment; filename=backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`);
+    res.json({
       app: 'plugshawtycafetoes FC',
       version: '1.0.0',
       exported_at: new Date().toISOString(),
-      exported_by: user.username,
-      database: {}
-    };
-
-    const tables = ['users', 'matches', 'teams', 'team_players', 'goals', 'assists', 'ratings', 'audit_logs'];
-    let completed = 0;
-
-    tables.forEach(tableName => {
-      db.all(`SELECT * FROM ${tableName}`, [], (tblErr, rows) => {
-        if (!tblErr && rows) {
-          if (tableName === 'users') {
-            backupData.database[tableName] = rows.map(r => {
-              const copy = { ...r };
-              delete copy.pin;
-              return copy;
-            });
-          } else {
-            backupData.database[tableName] = rows;
-          }
-        } else {
-          backupData.database[tableName] = [];
-        }
-
-        completed++;
-        if (completed === tables.length) {
-          logAudit(user.id, user.username, 'ADMIN', 'Baixou backup completo do banco de dados');
-          res.setHeader('Content-Type', 'application/json');
-          res.setHeader('Content-Disposition', `attachment; filename=backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`);
-          res.json(backupData);
-        }
-      });
+      exported_by: req.requester.username,
+      database
     });
-  });
+  } catch (err) {
+    erroInterno(res, 'gerar o backup', err);
+  }
 });
 
-// -- AUTH --
-app.post('/register', (req, res) => {
+// ---------------------------------------------------------------------------
+// Cadastro, login e PIN
+// ---------------------------------------------------------------------------
+
+// Códigos de convite vêm do ambiente (INVITE_CODES=COD1,COD2). Os antigos ficaram
+// públicos no repositório, então só valem enquanto a variável não for configurada.
+const INVITE_CODES = (process.env.INVITE_CODES || 'JOGO2026,PELADA2026')
+  .split(',').map(c => c.trim().toUpperCase()).filter(Boolean);
+if (!process.env.INVITE_CODES) {
+  console.warn('⚠️  INVITE_CODES não definido: usando os códigos de convite antigos, que são públicos.');
+}
+
+/** Dados que o próprio atleta recebe ao entrar (inclui telefone, e-mail e token). */
+async function sessaoDoAtleta(userId) {
+  const row = await db.get(`SELECT ${USER_COLS}, phone, email, pin, ${photoCols()} FROM users WHERE id = ?`, [userId]);
+  if (!row) return null;
+  const formas = await obterFormas();
+  const token = auth.criarToken(row);
+  const temPin = !!(row.pin && String(row.pin).trim());
+  delete row.pin;
+  return { ...aplicarForma(withPhotoUrls(row), formas), has_pin: temPin, token };
+}
+
+app.post('/register', async (req, res) => {
   const { username, email, phone, inviteCode } = req.body;
-  const upperCode = (inviteCode || '').trim().toUpperCase();
-  if (upperCode !== 'JOGO2026' && upperCode !== 'PELADA2026') {
+  if (!INVITE_CODES.includes(String(inviteCode || '').trim().toUpperCase())) {
     return res.status(400).json({ error: 'Código de convite inválido' });
   }
-  if (!username || !username.trim() || !email || !email.trim() || !phone || !phone.trim()) {
+  if (!String(username || '').trim() || !String(email || '').trim() || !String(phone || '').trim()) {
     return res.status(400).json({ error: 'Preencha o Nome de Usuário, Celular e E-mail' });
   }
 
   const uName = username.trim();
   const uEmail = email.trim().toLowerCase();
   const uPhone = phone.trim();
-  const rawDigitsPhone = uPhone.replace(/\D/g, '');
 
-  // Check all users to prevent duplicate username, email, or phone
-  db.all('SELECT id, username, email, phone FROM users', [], (err, rows) => {
-    if (err) return res.status(500).json({ error: 'Erro no banco de dados' });
-
-    for (const row of (rows || [])) {
-      if (row.username && row.username.trim().toLowerCase() === uName.toLowerCase()) {
-        return res.status(400).json({ error: 'Este nome de usuário já está cadastrado.' });
-      }
-      if (row.email && row.email.trim().toLowerCase() === uEmail) {
-        return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
-      }
-      if (rawDigitsPhone.length >= 8 && row.phone) {
-        const existingDigits = String(row.phone).replace(/\D/g, '');
-        if (existingDigits === rawDigitsPhone || row.phone.trim() === uPhone) {
-          return res.status(400).json({ error: 'Este telefone já está cadastrado.' });
-        }
-      }
+  try {
+    const atletas = await db.all('SELECT id, username, nickname, email, phone FROM users');
+    const norm = auth.normalizar;
+    if (atletas.some(a => norm(a.username) === norm(uName))) {
+      return res.status(400).json({ error: 'Este nome de usuário já está cadastrado.' });
+    }
+    if (atletas.some(a => a.email && norm(a.email) === norm(uEmail))) {
+      return res.status(400).json({ error: 'Este e-mail já está cadastrado.' });
+    }
+    if (auth.encontrarAtletas(uPhone, atletas.map(a => ({ ...a, username: '', email: '', nickname: '' }))).length > 0) {
+      return res.status(400).json({ error: 'Este telefone já está cadastrado.' });
     }
 
-    db.run('INSERT INTO users (username, email, phone) VALUES (?, ?, ?)', [uName, uEmail, uPhone], function(err) {
-      if (err) return res.status(400).json({ error: 'Erro ao cadastrar usuário' });
-      res.json({ id: this.lastID, username: uName, email: uEmail, phone: uPhone });
-    });
-  });
+    const criado = await db.run('INSERT INTO users (username, email, phone) VALUES (?, ?, ?)', [uName, uEmail, uPhone]);
+    logAudit(criado.lastID, uName, 'CADASTRO', 'Criou a conta no app');
+    res.json(await sessaoDoAtleta(criado.lastID));
+  } catch (err) {
+    erroInterno(res, 'cadastrar usuário', err, 'Erro ao cadastrar usuário');
+  }
 });
 
-app.post('/users', (req, res) => {
-  const { username, nickname, position } = req.body;
-  const name = (username || '').trim();
-  const nick = (nickname || name).trim();
-  const pos = position || 'MEI';
-
+// Cadastro rápido de atleta pelo elenco ou pela convocação (qualquer atleta logado)
+app.post('/users', requireAuth, async (req, res) => {
+  const name = String(req.body.username || '').trim();
+  const nick = String(req.body.nickname || name).trim();
+  const pos = req.body.position || 'MEI';
   if (!name) return res.status(400).json({ error: 'Nome é obrigatório' });
 
-  // Check if athlete already exists by username or nickname
-  db.get(`SELECT ${USER_COLS}, ${photoCols()} FROM users WHERE LOWER(username) = LOWER(?) OR (nickname IS NOT NULL AND LOWER(nickname) = LOWER(?))`, [name, nick], (err, existing) => {
-    if (existing) {
-      return res.json(withPhotoUrls(existing));
-    }
-    db.run(
+  try {
+    // Se o atleta já existe pelo nome ou apelido, devolve o existente
+    const existentes = await db.all(`SELECT ${USER_COLS}, ${photoCols()} FROM users`);
+    const [existente] = auth.encontrarAtletas(name, existentes).concat(auth.encontrarAtletas(nick, existentes));
+    if (existente) return res.json(withPhotoUrls(existente));
+
+    const criado = await db.run(
       'INSERT INTO users (username, nickname, position, pace, shooting, passing, dribbling, defending, physical) VALUES (?, ?, ?, 50, 50, 50, 50, 50, 50)',
-      [name, nick, pos],
-      function (err) {
-        if (err) return res.status(400).json({ error: 'Erro ao cadastrar atleta: ' + err.message });
-        res.json({ id: this.lastID, username: name, nickname: nick, position: pos, ovr: 50 });
-      }
+      [name, nick, pos]
     );
-  });
+    auditar(req, 'ELENCO', `Cadastrou o atleta ${name}`);
+    res.json({ id: criado.lastID, username: name, nickname: nick, position: pos, ovr: 50 });
+  } catch (err) {
+    erroInterno(res, 'cadastrar atleta', err, 'Erro ao cadastrar atleta');
+  }
 });
 
-app.post('/login', (req, res) => {
-  const { username, pin } = req.body; // Can be username, email, or phone number!
-  if (!username) return res.status(400).json({ error: 'Informe seu usuário, e-mail ou telefone' });
+app.post('/login', async (req, res) => {
+  const { username, pin } = req.body; // nome de usuário, apelido, e-mail ou celular
+  if (!String(username || '').trim()) return res.status(400).json({ error: 'Informe seu usuário, e-mail ou telefone' });
 
-  const queryTerm = username.trim();
+  try {
+    const atletas = await db.all('SELECT id, username, nickname, email, phone, is_admin, pin, pin_prompted FROM users');
+    const encontrados = auth.encontrarAtletas(username, atletas);
 
-  db.get(`
-    SELECT ${USER_COLS}, pin, pin_prompted, ${photoCols()} FROM users 
-    WHERE LOWER(username) = LOWER(?) 
-       OR LOWER(email) = LOWER(?) 
-       OR phone = ? 
-       OR REPLACE(REPLACE(REPLACE(phone, ' ', ''), '-', ''), '(', '') = REPLACE(REPLACE(REPLACE(?, ' ', ''), '-', ''), '(', '')
-       OR (nickname IS NOT NULL AND INSTR(LOWER(nickname), LOWER(?)) > 0)
-  `, [queryTerm, queryTerm, queryTerm, queryTerm, queryTerm], (err, row) => {
-    if (err || !row) return res.status(401).json({ error: 'Usuário, e-mail, telefone ou apelido não encontrado' });
+    if (encontrados.length === 0) {
+      return res.status(401).json({ error: 'Usuário, e-mail, telefone ou apelido não encontrado' });
+    }
+    if (encontrados.length > 1) {
+      return res.status(409).json({ error: 'Mais de um atleta tem esse nome ou apelido. Entre com seu e-mail ou celular.' });
+    }
 
-    // Se o usuário tem PIN cadastrado
-    const userHasPin = !!(row.pin && String(row.pin).trim() !== '');
-    const photoRef = buildPhotoRef(row.id, row.photo_head, row.photo_len, row.photo_tail, false);
+    const atleta = encontrados[0];
+    const temPin = !!(atleta.pin && String(atleta.pin).trim());
+    const pinInformado = pin !== undefined && pin !== null && String(pin).trim() !== '';
 
-    if (userHasPin) {
-      // Se não enviou o PIN na requisição, pede o PIN
-      if (pin === undefined || pin === null || String(pin).trim() === '') {
-        return res.json({ 
-          requiresPin: true, 
-          id: row.id, 
-          username: row.username, 
-          nickname: row.nickname,
-          photo: photoRef 
+    if (temPin) {
+      if (!pinInformado) {
+        const foto = await db.get(`SELECT ${photoCols()} FROM users WHERE id = ?`, [atleta.id]);
+        return res.json({
+          requiresPin: true,
+          username: atleta.username,
+          nickname: atleta.nickname,
+          photo: buildPhotoRef(atleta.id, foto.photo_head, foto.photo_len, foto.photo_tail, false)
         });
       }
-      // Se enviou o PIN, valida
-      if (String(row.pin).trim() !== String(pin).trim()) {
-        return res.status(401).json({ error: 'PIN incorreto. Tente novamente ou peça ao administrador para resetar.' });
+      if (auth.pinBloqueado(atleta.id)) {
+        return res.status(429).json({ error: 'Muitas tentativas erradas. Espere 15 minutos ou peça ao administrador para resetar o PIN.' });
       }
+      if (!auth.conferePin(pin, atleta.pin)) {
+        const bloqueou = auth.registrarErroDePin(atleta.id);
+        return res.status(401).json({
+          error: bloqueou
+            ? 'Muitas tentativas erradas. O PIN ficou bloqueado por 15 minutos.'
+            : 'PIN incorreto. Tente novamente ou peça ao administrador para resetar.'
+        });
+      }
+      auth.limparErrosDePin(atleta.id);
     }
 
-    const safeUser = withPhotoUrls(row);
-    delete safeUser.pin;
-    delete safeUser.pin_prompted;
-    safeUser.has_pin = userHasPin;
+    const sessao = await sessaoDoAtleta(atleta.id);
 
-    // Se o usuário NÃO tem PIN cadastrado e NUNCA foi perguntado antes (primeiro login):
-    const isFirstTimePrompt = !userHasPin && !row.pin_prompted && (pin === undefined || pin === null);
-
-    if (isFirstTimePrompt) {
-      return res.json({
-        askInitialPin: true,
-        user: safeUser
-      });
+    // Administrador sem PIN precisa criar um antes de usar o app: sem PIN, qualquer um
+    // entraria na conta dele só digitando o nome
+    const adminSemPin = Number(atleta.is_admin) === 1 && !temPin;
+    // Primeiro login de quem não tem PIN: oferece criar um
+    if (adminSemPin || (!temPin && !atleta.pin_prompted)) {
+      return res.json({ askInitialPin: true, pinRequired: adminSemPin, user: sessao });
     }
 
-    logAudit(safeUser.id, safeUser.nickname ? `${safeUser.username} (${safeUser.nickname.split(',')[0].trim()})` : safeUser.username, 'LOGIN', 'Entrou no aplicativo');
-    res.json(safeUser);
-  });
+    logAudit(atleta.id, nomeDoAtleta(atleta), 'LOGIN', 'Entrou no aplicativo');
+    res.json(sessao);
+  } catch (err) {
+    erroInterno(res, 'entrar no app', err, 'Erro ao entrar. Tente de novo.');
+  }
 });
 
-// Definir ou Alterar PIN do próprio usuário
-app.post('/users/:id/pin', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, (user) => {
-    const { pin } = req.body; // string de dígitos ou null para remover
-    const cleanPin = pin && String(pin).trim() ? String(pin).trim() : null;
+/** Depois de mudar o PIN do próprio atleta, o token antigo deixa de valer: manda um novo. */
+async function tokenNovoSeForOProprio(req, userId) {
+  if (String(req.requester.id) !== String(userId)) return undefined;
+  const row = await db.get('SELECT id, pin FROM users WHERE id = ?', [userId]);
+  return row ? auth.criarToken(row) : undefined;
+}
 
-    db.run('UPDATE users SET pin = ?, pin_prompted = 1 WHERE id = ?', [cleanPin, req.params.id], function(err) {
-      if (err) return res.status(500).json({ error: 'Erro ao salvar PIN' });
-      logAudit(user.id, user.username, 'PIN', cleanPin ? 'Definiu ou atualizou PIN de 4 dígitos' : 'Removeu o PIN');
-      res.json({ success: true, has_pin: !!cleanPin });
-    });
-  });
+// Definir, alterar ou remover o PIN (o próprio atleta ou o administrador)
+app.post('/users/:id/pin', requireSelfOrAdmin, async (req, res) => {
+  const { pin } = req.body; // 4 dígitos, ou null para remover
+  const remover = pin === null || pin === undefined || String(pin).trim() === '';
+
+  try {
+    const alvo = await db.get('SELECT id, username, is_admin FROM users WHERE id = ?', [req.params.id]);
+    if (!alvo) return res.status(404).json({ error: 'Atleta não encontrado' });
+    if (!remover && !auth.pinValido(String(pin).trim())) {
+      return res.status(400).json({ error: 'O PIN precisa ter exatamente 4 números.' });
+    }
+    if (remover && Number(alvo.is_admin) === 1) {
+      return res.status(400).json({ error: 'O administrador precisa ter um PIN.' });
+    }
+
+    const guardado = remover ? null : auth.hashPin(String(pin).trim());
+    await db.run('UPDATE users SET pin = ?, pin_prompted = 1 WHERE id = ?', [guardado, alvo.id]);
+    auth.limparErrosDePin(alvo.id);
+    auditar(req, 'PIN', remover ? `Removeu o PIN de ${alvo.username}` : `Definiu o PIN de ${alvo.username}`);
+
+    res.json({ success: true, has_pin: !remover, token: await tokenNovoSeForOProprio(req, alvo.id) });
+  } catch (err) {
+    erroInterno(res, 'salvar o PIN', err, 'Erro ao salvar PIN');
+  }
 });
 
 // Usuário optou por entrar sem PIN no primeiro login (não perguntar mais)
-app.post('/users/:id/skip-pin', (req, res) => {
-  db.run('UPDATE users SET pin_prompted = 1 WHERE id = ?', [req.params.id], function(err) {
-    if (err) return res.status(500).json({ error: 'Erro ao registrar preferência' });
-    logAudit(req.params.id, 'Atleta', 'PIN', 'Optou por entrar sem PIN');
+app.post('/users/:id/skip-pin', requireAuth, async (req, res) => {
+  if (String(req.requester.id) !== String(req.params.id)) {
+    return res.status(403).json({ error: 'Acesso negado.' });
+  }
+  if (Number(req.requester.is_admin) === 1) {
+    return res.status(400).json({ error: 'O administrador precisa definir um PIN.' });
+  }
+  try {
+    await db.run('UPDATE users SET pin_prompted = 1 WHERE id = ?', [req.params.id]);
+    auditar(req, 'PIN', 'Optou por entrar sem PIN');
     res.json({ success: true });
-  });
+  } catch (err) {
+    erroInterno(res, 'registrar a preferência', err, 'Erro ao registrar preferência');
+  }
 });
 
-// Resetar PIN de um usuário (Apenas Administrador / Thiago)
-app.post('/users/:id/reset-pin', (req, res) => {
-  const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
-  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, adminUser) => {
-    if (!isAdminUser(adminUser) && String(requesterId) !== String(req.params.id)) {
-      return res.status(403).json({ error: 'Apenas administradores podem resetar o PIN de outros jogadores.' });
-    }
-
-    db.run('UPDATE users SET pin = NULL, pin_prompted = 0 WHERE id = ?', [req.params.id], function(err2) {
-      if (err2) return res.status(500).json({ error: 'Erro ao resetar PIN' });
-      logAudit(adminUser.id, adminUser.username, 'ADMIN', `Resetou o PIN do atleta ID ${req.params.id}`);
-      res.json({ success: true, message: 'PIN resetado com sucesso!' });
-    });
-  });
+// Resetar o PIN (o administrador para qualquer atleta, ou o próprio atleta logado)
+app.post('/users/:id/reset-pin', requireSelfOrAdmin, async (req, res) => {
+  try {
+    const r = await db.run('UPDATE users SET pin = NULL, pin_prompted = 0 WHERE id = ?', [req.params.id]);
+    if (!r.changes) return res.status(404).json({ error: 'Atleta não encontrado' });
+    auth.limparErrosDePin(req.params.id);
+    auditar(req, 'ADMIN', `Resetou o PIN do atleta ID ${req.params.id}`);
+    res.json({ success: true, message: 'PIN resetado com sucesso!', token: await tokenNovoSeForOProprio(req, req.params.id) });
+  } catch (err) {
+    erroInterno(res, 'resetar o PIN', err, 'Erro ao resetar PIN');
+  }
 });
 
-// -- USERS --
+// ---------------------------------------------------------------------------
+// Atletas
+// ---------------------------------------------------------------------------
+
 app.get('/users', async (req, res) => {
   try {
     const [rows, formas] = await Promise.all([
-      dbAll(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`),
-      calcularFormas()
+      db.all(`SELECT ${USER_COLS}, ${HAS_PIN_COL}, ${photoCols()} FROM users`),
+      obterFormas()
     ]);
     res.json(rows.map(r => aplicarForma(withPhotoUrls(r), formas)));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    erroInterno(res, 'listar atletas', err);
   }
 });
 
-// Dados de um unico atleta. Usado pela sincronizacao do app na abertura, que antes
-// baixava a lista inteira (com todas as fotos) so para reler o proprio usuario.
+// Dados de um único atleta. Telefone e e-mail só para o próprio atleta e o admin.
 app.get('/users/:id', async (req, res) => {
   try {
-    const [row, formas] = await Promise.all([
-      dbGet(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users WHERE id = ?`, [req.params.id]),
-      calcularFormas()
+    const [row, formas, quem] = await Promise.all([
+      db.get(`SELECT ${USER_COLS}, phone, email, ${HAS_PIN_COL}, ${photoCols()} FROM users WHERE id = ?`, [req.params.id]),
+      obterFormas(),
+      getRequester(req)
     ]);
     if (!row) return res.status(404).json({ error: 'Atleta não encontrado' });
+    const podeVerContato = quem && (String(quem.id) === String(row.id) || isAdminUser(quem));
+    if (!podeVerContato) {
+      delete row.phone;
+      delete row.email;
+    }
     res.json(aplicarForma(withPhotoUrls(row), formas));
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    erroInterno(res, 'carregar o atleta', err);
   }
 });
 
-// Serve a foto do atleta como imagem binaria. Como a URL carrega a versao do
-// conteudo, a resposta pode ser cacheada de forma agressiva pelo navegador.
-app.get('/users/:id/photo', (req, res) => {
+// Serve a foto do atleta como imagem binária. Como a URL carrega a versão do
+// conteúdo, a resposta pode ser cacheada de forma agressiva pelo navegador.
+app.get('/users/:id/photo', async (req, res) => {
   const column = req.query.original === '1' ? 'original_photo' : 'photo';
-  db.get(`SELECT ${column} AS img FROM users WHERE id = ?`, [req.params.id], (err, row) => {
-    if (err) return res.status(500).json({ error: err.message });
+  try {
+    const row = await db.get(`SELECT ${column} AS img FROM users WHERE id = ?`, [req.params.id]);
     if (!row || !row.img) return res.status(404).json({ error: 'Foto não encontrada' });
 
     const img = String(row.img);
@@ -836,394 +611,310 @@ app.get('/users/:id/photo', (req, res) => {
     const comma = img.indexOf(',');
     if (comma === -1) return res.status(404).json({ error: 'Foto inválida' });
     const mime = img.slice(5, comma).split(';')[0] || 'image/png';
-    const buffer = Buffer.from(img.slice(comma + 1), 'base64');
 
     res.set({
       'Content-Type': mime,
-      'Cache-Control': 'public, max-age=31536000, immutable',
+      // Sem ?v= a URL não identifica a versão, então não pode ficar presa no cache
+      'Cache-Control': req.query.v ? 'public, max-age=31536000, immutable' : 'no-cache',
       'Access-Control-Allow-Origin': '*',
-      'ETag': `"${img.length}"`
+      'ETag': `"${img.length}-${img.slice(-12).replace(/[^a-zA-Z0-9]/g, '')}"`
     });
-    // res.send (e nao res.end) deixa o Express responder 304 quando o navegador
+    // res.send (e não res.end) deixa o Express responder 304 quando o navegador
     // revalida a imagem com If-None-Match
-    res.send(buffer);
-  });
-});
-
-// Validação estrita de titularidade: Admin pode alterar qualquer jogador; demais atletas alteram apenas a si mesmos
-function verifyUserOwnership(req, res, targetPlayerId, callback) {
-  const requesterId = req.headers['x-user-id'] || req.body?.requester_id;
-  if (!requesterId) {
-    res.status(403).json({ error: 'Acesso negado: Usuário não identificado.' });
-    return;
+    res.send(Buffer.from(img.slice(comma + 1), 'base64'));
+  } catch (err) {
+    erroInterno(res, 'carregar a foto', err);
   }
-
-  db.get('SELECT id, username, nickname, is_admin FROM users WHERE id = ?', [requesterId], (err, user) => {
-    if (err || !user) {
-      res.status(403).json({ error: 'Acesso negado: Usuário solicitante não encontrado.' });
-      return;
-    }
-
-    const isAdmin = isAdminUser(user);
-
-    if (isAdmin || String(requesterId) === String(targetPlayerId)) {
-      return callback(user, isAdmin);
-    }
-
-    res.status(403).json({ error: 'Acesso negado: Apenas o Administrador pode editar outros jogadores.' });
-  });
-}
-
-app.post('/users/:id/photo', upload.fields([{ name: 'photo' }, { name: 'original_photo' }]), (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, (user) => {
-    const photoFile = req.files && req.files['photo'] && req.files['photo'][0];
-    const origFile = req.files && req.files['original_photo'] && req.files['original_photo'][0];
-
-    if (!photoFile) return res.status(400).json({ error: 'Nenhuma foto enviada' });
-
-    try {
-      const photoBuf = fs.readFileSync(photoFile.path);
-      const photoMime = photoFile.mimetype || 'image/png';
-      const photoUrl = `data:${photoMime};base64,${photoBuf.toString('base64')}`;
-
-      let origUrl = null;
-      if (origFile) {
-        const origBuf = fs.readFileSync(origFile.path);
-        const origMime = origFile.mimetype || 'image/jpeg';
-        origUrl = `data:${origMime};base64,${origBuf.toString('base64')}`;
-      }
-
-      // Limpar arquivos temporários do disco
-      try { fs.unlinkSync(photoFile.path); } catch (e) {}
-      if (origFile) { try { fs.unlinkSync(origFile.path); } catch (e) {} }
-
-      // O cliente recebe a URL curta e versionada, nunca o data URI inteiro
-      const ref = (dataUri, isOriginal) => dataUri
-        ? buildPhotoRef(req.params.id, dataUri.slice(0, 96), dataUri.length, dataUri.slice(-12), isOriginal)
-        : null;
-
-      if (origUrl) {
-        db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id], (err) => {
-          if (err) return res.status(500).json({ error: err.message });
-          logAudit(user.id, user.username, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
-          res.json({ photoUrl: ref(photoUrl, false), origUrl: ref(origUrl, true) });
-        });
-      } else {
-        db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id], (err) => {
-          if (err) return res.status(500).json({ error: err.message });
-          logAudit(user.id, user.username, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
-          res.json({ photoUrl: ref(photoUrl, false) });
-        });
-      }
-    } catch (err) {
-      console.error('Erro ao processar imagem:', err);
-      res.status(500).json({ error: 'Erro ao processar imagem' });
-    }
-  });
 });
 
-app.delete('/users/:id/photo', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, (user) => {
-    db.run('UPDATE users SET photo = NULL, original_photo = NULL WHERE id = ?', [req.params.id], (err) => {
-      logAudit(user.id, user.username, 'FOTO', 'Removeu a foto da carta FUT');
-      res.json({ success: true });
-    });
-  });
+const paraDataUri = (arquivo) => `data:${arquivo.mimetype || 'image/png'};base64,${arquivo.buffer.toString('base64')}`;
+
+// A autorização vem antes do multer: quem não pode trocar a foto nem chega a enviar o arquivo
+app.post('/users/:id/photo', requireSelfOrAdmin, upload.fields([{ name: 'photo', maxCount: 1 }, { name: 'original_photo', maxCount: 1 }]), async (req, res) => {
+  const photoFile = req.files && req.files.photo && req.files.photo[0];
+  const origFile = req.files && req.files.original_photo && req.files.original_photo[0];
+  if (!photoFile) return res.status(400).json({ error: 'Nenhuma foto enviada' });
+
+  try {
+    const photoUrl = paraDataUri(photoFile);
+    const origUrl = origFile ? paraDataUri(origFile) : null;
+
+    const r = origUrl
+      ? await db.run('UPDATE users SET photo = ?, original_photo = ? WHERE id = ?', [photoUrl, origUrl, req.params.id])
+      : await db.run('UPDATE users SET photo = ? WHERE id = ?', [photoUrl, req.params.id]);
+    if (!r.changes) return res.status(404).json({ error: 'Atleta não encontrado' });
+
+    auditar(req, 'FOTO', 'Atualizou a foto de perfil da carta FUT');
+
+    // O cliente recebe a URL curta e versionada, nunca o data URI inteiro
+    const ref = (dataUri, isOriginal) => buildPhotoRef(req.params.id, dataUri.slice(0, 96), dataUri.length, dataUri.slice(-12), isOriginal);
+    res.json({ photoUrl: ref(photoUrl, false), origUrl: origUrl ? ref(origUrl, true) : undefined });
+  } catch (err) {
+    erroInterno(res, 'salvar a foto', err, 'Erro ao processar imagem');
+  }
 });
 
-app.put('/users/:id/position', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, (user) => {
-    const { position } = req.body;
-    db.run('UPDATE users SET position = ? WHERE id = ?', [position, req.params.id], (err) => {
-      logAudit(user.id, user.username, 'POSIÇÃO', `Alterou a posição para ${position}`);
-      res.json({ success: true });
-    });
-  });
+app.delete('/users/:id/photo', requireSelfOrAdmin, async (req, res) => {
+  try {
+    await db.run('UPDATE users SET photo = NULL, original_photo = NULL WHERE id = ?', [req.params.id]);
+    auditar(req, 'FOTO', 'Removeu a foto da carta FUT');
+    res.json({ success: true });
+  } catch (err) {
+    erroInterno(res, 'remover a foto', err, 'Erro ao remover foto.');
+  }
 });
 
 function formatHeight(val) {
   if (val === null || val === undefined || val === '') return '';
-  let str = String(val).trim().replace(',', '.');
-  const num = parseFloat(str);
+  const num = parseFloat(String(val).trim().replace(',', '.'));
   if (isNaN(num)) return val;
-  if (num > 10) {
-    return (num / 100).toFixed(2);
-  }
-  return num.toFixed(2);
+  return (num > 10 ? num / 100 : num).toFixed(2);
 }
 
-app.put('/users/:id/profile', (req, res) => {
-  verifyUserOwnership(req, res, req.params.id, (user) => {
-    const { username, nickname, position, height, weight, phone, email } = req.body;
-    const formattedHeight = formatHeight(height);
-    
-    const detailsList = [];
-    if (position) detailsList.push(`Posição: ${position}`);
-    if (nickname) detailsList.push(`Apelido: ${nickname}`);
-    if (username) detailsList.push(`Nome: ${username}`);
-    const detailsStr = detailsList.join(', ') || 'dados cadastrais';
+// Atualiza só os campos enviados: um formulário sem telefone ou e-mail não os apaga
+app.put('/users/:id/profile', requireSelfOrAdmin, async (req, res) => {
+  const campos = [];
+  const args = [];
+  const definir = (coluna, valor) => { campos.push(`${coluna} = ?`); args.push(valor); };
+  const { username, nickname, position, height, weight, phone, email } = req.body;
 
-    if (username && username.trim()) {
-      db.run(`UPDATE users SET username = ?, nickname = ?, position = ?, height = ?, weight = ?,
-              phone = ?, email = ?
-              WHERE id = ?`, 
-        [username.trim(), nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
-          if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
-          logAudit(user.id, user.username, 'PERFIL', `Atualizou perfil (${detailsStr})`);
-          res.json({ success: true, height: formattedHeight });
-      });
-    } else {
-      db.run(`UPDATE users SET nickname = ?, position = ?, height = ?, weight = ?,
-              phone = ?, email = ?
-              WHERE id = ?`, 
-        [nickname, position, formattedHeight, weight, phone, email, req.params.id], (err) => {
-          if (err) return res.status(500).json({ error: 'Erro ao atualizar perfil' });
-          logAudit(user.id, user.username, 'PERFIL', `Atualizou perfil (${detailsStr})`);
-          res.json({ success: true, height: formattedHeight });
-      });
-    }
-  });
-});
-
-// Import evaluations from Excel (.xlsx) spreadsheet
-app.post('/users/import-ratings-excel', docUpload.single('file'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo de planilha enviado' });
+  if (username !== undefined) {
+    if (!String(username).trim()) return res.status(400).json({ error: 'O nome não pode ficar vazio.' });
+    definir('username', String(username).trim());
+  }
+  if (nickname !== undefined) definir('nickname', nickname);
+  if (position !== undefined) definir('position', position);
+  if (height !== undefined) definir('height', formatHeight(height));
+  if (weight !== undefined) definir('weight', weight);
+  // Telefone e e-mail não aparecem nas listagens: em branco aqui quer dizer que a tela
+  // não os tinha carregado, e não que o atleta quer apagá-los
+  if (phone !== undefined && String(phone).trim() !== '') definir('phone', String(phone).trim());
+  if (email !== undefined && String(email).trim() !== '') definir('email', String(email).trim().toLowerCase());
+  if (campos.length === 0) return res.json({ success: true });
 
   try {
-    const workbook = XLSX.readFile(req.file.path);
-    const normalize = str => (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+    args.push(req.params.id);
+    await db.run(`UPDATE users SET ${campos.join(', ')} WHERE id = ?`, args);
 
-    db.all('SELECT id, username, nickname FROM users', (err, users) => {
-      if (err) return res.status(500).json({ error: err.message });
-
-      let parsedStats = [];
-
-      for (const sName of workbook.SheetNames) {
-        const sheet = workbook.Sheets[sName];
-        const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-        if (!rows || rows.length < 2) continue;
-
-        for (let rIdx = 0; rIdx < Math.min(rows.length, 10); rIdx++) {
-          const row = rows[rIdx];
-          if (!row || !Array.isArray(row)) continue;
-          
-          const rowStr = Array.from(row || [], c => (c ? normalize(c) : ''));
-          
-          const pacIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('pac') || c.includes('ritmo') || c.includes('velocidade')));
-          const shoIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('sho') || c.includes('chute') || c.includes('finalizacao')));
-          const pasIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('pas') || c.includes('passe')));
-          const driIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('dri') || c.includes('drible') || c.includes('controle')));
-          const defIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('def') || c.includes('defesa') || c.includes('marcacao')));
-          const phyIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('phy') || c.includes('fisico') || c.includes('resistencia')));
-          const nameIdx = rowStr.findIndex(c => typeof c === 'string' && (c.includes('nome') || c.includes('jogador') || c.includes('atleta')));
-
-          if (pacIdx !== -1 && shoIdx !== -1 && nameIdx !== -1) {
-            const playerMap = new Map();
-
-            for (let i = rIdx + 1; i < rows.length; i++) {
-              const dataRow = rows[i];
-              if (!dataRow || !dataRow[nameIdx]) continue;
-              
-              const rawName = dataRow[nameIdx].toString().trim();
-              const normName = normalize(rawName);
-              if (normName.length < 2) continue;
-
-              const toScore = val => {
-                if (val === undefined || val === null || String(val).trim() === '') return null;
-                const num = parseFloat(String(val).replace(',', '.'));
-                if (isNaN(num) || num <= 0) return null;
-                const scaled = num <= 10 ? Math.round(num * 10) : Math.round(num);
-                return Math.max(15, Math.min(99, scaled));
-              };
-
-              const pac = toScore(dataRow[pacIdx]);
-              const sho = toScore(dataRow[shoIdx]);
-              const pas = pasIdx !== -1 ? toScore(dataRow[pasIdx]) : null;
-              const dri = driIdx !== -1 ? toScore(dataRow[driIdx]) : null;
-              const def = defIdx !== -1 ? toScore(dataRow[defIdx]) : null;
-              const phy = phyIdx !== -1 ? toScore(dataRow[phyIdx]) : null;
-
-              if (pac !== null || sho !== null) {
-                if (!playerMap.has(normName)) {
-                  playerMap.set(normName, { rawName, normName, pac: [], sho: [], pas: [], dri: [], def: [], phy: [] });
-                }
-                const entry = playerMap.get(normName);
-                if (pac !== null) entry.pac.push(pac);
-                if (sho !== null) entry.sho.push(sho);
-                if (pas !== null) entry.pas.push(pas);
-                if (dri !== null) entry.dri.push(dri);
-                if (def !== null) entry.def.push(def);
-                if (phy !== null) entry.phy.push(phy);
-              }
-            }
-
-            const calcAvg = arr => arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
-
-            for (const [normName, data] of playerMap.entries()) {
-              parsedStats.push({
-                rawName: data.rawName,
-                normName,
-                pac: calcAvg(data.pac),
-                sho: calcAvg(data.sho),
-                pas: calcAvg(data.pas),
-                dri: calcAvg(data.dri),
-                def: calcAvg(data.def),
-                phy: calcAvg(data.phy)
-              });
-            }
-            break;
-          }
-        }
-        if (parsedStats.length > 0) break;
-      }
-
-      // Pattern 2: Google Forms Response Grid (e.g. "1. Thiago Silva (Fela) [PAC (Velocidade)]")
-      if (parsedStats.length === 0) {
-        for (const sName of workbook.SheetNames) {
-          const sheet = workbook.Sheets[sName];
-          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1 });
-          if (!rows || rows.length < 2) continue;
-
-          const headerRow = Array.from(rows[0] || [], c => (c ? c.toString() : ''));
-          if (headerRow.length === 0) continue;
-
-          const colMap = [];
-          headerRow.forEach((colTitle, cIdx) => {
-            if (!colTitle) return;
-            const str = colTitle.toString();
-            const match = str.match(/^(?:\d+[\.\-\s]*)?([^\[\-]+)[\[\-]([^\]\)]+)/);
-            if (match) {
-              const playerName = match[1].replace(/\([^\)]*\)/g, '').trim();
-              const statName = normalize(match[2]);
-              let statType = null;
-              if (statName.includes('pac') || statName.includes('ritmo') || statName.includes('velocidade')) statType = 'pac';
-              else if (statName.includes('sho') || statName.includes('chute') || statName.includes('finalizacao')) statType = 'sho';
-              else if (statName.includes('pas') || statName.includes('passe')) statType = 'pas';
-              else if (statName.includes('dri') || statName.includes('drible') || statName.includes('controle')) statType = 'dri';
-              else if (statName.includes('def') || statName.includes('defesa') || statName.includes('marcacao')) statType = 'def';
-              else if (statName.includes('phy') || statName.includes('fisico') || statName.includes('resistencia')) statType = 'phy';
-
-              if (statType && playerName.length >= 2) {
-                colMap.push({ cIdx, normName: normalize(playerName), rawName: playerName, statType });
-              }
-            }
-          });
-
-          if (colMap.length >= 6) {
-            const playerMap = new Map();
-            for (let r = 1; r < rows.length; r++) {
-              const row = rows[r];
-              if (!row) continue;
-              colMap.forEach(({ cIdx, normName, rawName, statType }) => {
-                const val = row[cIdx];
-                if (val === undefined || val === null || String(val).trim() === '') return;
-                
-                const num = parseFloat(String(val).replace(',', '.'));
-                if (!isNaN(num) && num > 0) {
-                  const scaled = num <= 10 ? Math.round(num * 10) : Math.round(num);
-                  const score = Math.max(15, Math.min(99, scaled));
-                  if (!playerMap.has(normName)) {
-                    playerMap.set(normName, { rawName, normName, pac: [], sho: [], pas: [], dri: [], def: [], phy: [] });
-                  }
-                  playerMap.get(normName)[statType].push(score);
-                }
-              });
-            }
-
-            const calcAvg = arr => arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null;
-            for (const [normName, data] of playerMap.entries()) {
-              parsedStats.push({
-                rawName: data.rawName,
-                normName,
-                pac: calcAvg(data.pac),
-                sho: calcAvg(data.sho),
-                pas: calcAvg(data.pas),
-                dri: calcAvg(data.dri),
-                def: calcAvg(data.def),
-                phy: calcAvg(data.phy)
-              });
-            }
-            break;
-          }
-        }
-      }
-
-      if (parsedStats.length === 0) {
-        return res.status(400).json({ error: 'Não foi possível encontrar colunas de atributos de jogadores (PAC, SHO, PAS, DRI, DEF, PHY ou Velocidade, Finalização...) na planilha enviada.' });
-      }
-
-      const updated = [];
-      const updatePromises = [];
-
-      for (const stat of parsedStats) {
-        const matchedUser = users.find(u => {
-          const uNorm = normalize(u.username);
-          const nNorms = (u.nickname || '').split(',').map(n => normalize(n));
-          return uNorm === stat.normName || nNorms.includes(stat.normName) ||
-                 stat.normName.includes(uNorm) || uNorm.includes(stat.normName);
-        });
-
-        if (matchedUser) {
-          updatePromises.push(new Promise((resolve) => {
-            db.run(`
-              UPDATE users 
-              SET pace = COALESCE(?, pace),
-                  shooting = COALESCE(?, shooting),
-                  passing = COALESCE(?, passing),
-                  dribbling = COALESCE(?, dribbling),
-                  defending = COALESCE(?, defending),
-                  physical = COALESCE(?, physical)
-              WHERE id = ?
-            `, [stat.pac, stat.sho, stat.pas, stat.dri, stat.def, stat.phy, matchedUser.id], (err) => {
-              if (!err) {
-                updated.push({ id: matchedUser.id, name: matchedUser.username, stat });
-              }
-              resolve();
-            });
-          }));
-        }
-      }
-
-      Promise.all(updatePromises).then(() => {
-        try { fs.unlinkSync(req.file.path); } catch (e) {}
-        res.json({ success: true, updatedCount: updated.length, updatedPlayers: updated });
-      }).catch(err => {
-        try { fs.unlinkSync(req.file.path); } catch (e) {}
-        res.status(500).json({ error: 'Erro ao salvar notas no banco de dados: ' + err.message });
-      });
-    });
+    const detalhes = [position && `Posição: ${position}`, nickname && `Apelido: ${nickname}`, username && `Nome: ${username}`]
+      .filter(Boolean).join(', ') || 'dados cadastrais';
+    auditar(req, 'PERFIL', `Atualizou perfil (${detalhes})`);
+    res.json({ success: true, height: height !== undefined ? formatHeight(height) : undefined });
   } catch (err) {
-    console.error('Erro ao processar planilha Excel:', err);
-    res.status(500).json({ error: 'Erro ao processar arquivo: ' + err.message });
+    erroInterno(res, 'atualizar o perfil', err, 'Erro ao atualizar perfil');
+  }
+});
+
+/**
+ * Lê as notas de atributos da planilha de avaliação. Aceita dois formatos:
+ * 1) tabela com colunas Nome / PAC / SHO / PAS / DRI / DEF / PHY (ou os nomes em português);
+ * 2) respostas do Google Forms ("1. Thiago Silva (Fela) [PAC (Velocidade)]").
+ * Notas de 0 a 10 viram 0 a 100. Devolve [{ rawName, normName, pac, sho, ... }].
+ */
+function lerPlanilhaDeAvaliacao(workbook) {
+  const normalize = auth.normalizar;
+  const tipoDoAtributo = (s) => {
+    if (s.includes('pac') || s.includes('ritmo') || s.includes('velocidade')) return 'pac';
+    if (s.includes('sho') || s.includes('chute') || s.includes('finalizacao')) return 'sho';
+    if (s.includes('pas') || s.includes('passe')) return 'pas';
+    if (s.includes('dri') || s.includes('drible') || s.includes('controle')) return 'dri';
+    if (s.includes('def') || s.includes('defesa') || s.includes('marcacao')) return 'def';
+    if (s.includes('phy') || s.includes('fisico') || s.includes('resistencia')) return 'phy';
+    return null;
+  };
+  const toScore = (val) => {
+    if (val === undefined || val === null || String(val).trim() === '') return null;
+    const num = parseFloat(String(val).replace(',', '.'));
+    if (isNaN(num) || num <= 0) return null;
+    const scaled = num <= 10 ? Math.round(num * 10) : Math.round(num);
+    return Math.max(15, Math.min(99, scaled));
+  };
+  const media = (arr) => (arr.length > 0 ? Math.round(arr.reduce((a, b) => a + b, 0) / arr.length) : null);
+  const novoAtleta = (rawName, normName) => ({ rawName, normName, pac: [], sho: [], pas: [], dri: [], def: [], phy: [] });
+  const resumir = (mapa) => [...mapa.values()].map(d => ({
+    rawName: d.rawName, normName: d.normName,
+    pac: media(d.pac), sho: media(d.sho), pas: media(d.pas), dri: media(d.dri), def: media(d.def), phy: media(d.phy)
+  }));
+
+  const planilhas = workbook.SheetNames.map(n => XLSX.utils.sheet_to_json(workbook.Sheets[n], { header: 1 }));
+
+  // Formato 1: tabela com cabeçalho nas 10 primeiras linhas
+  for (const rows of planilhas) {
+    if (!rows || rows.length < 2) continue;
+    for (let rIdx = 0; rIdx < Math.min(rows.length, 10); rIdx++) {
+      const row = rows[rIdx];
+      if (!Array.isArray(row)) continue;
+      const cab = Array.from(row, c => (c ? normalize(c) : ''));
+      const coluna = (tipo) => cab.findIndex(c => c && tipoDoAtributo(c) === tipo);
+      const nameIdx = cab.findIndex(c => c && (c.includes('nome') || c.includes('jogador') || c.includes('atleta')));
+      const cols = { pac: coluna('pac'), sho: coluna('sho'), pas: coluna('pas'), dri: coluna('dri'), def: coluna('def'), phy: coluna('phy') };
+      if (cols.pac === -1 || cols.sho === -1 || nameIdx === -1) continue;
+
+      const mapa = new Map();
+      for (let i = rIdx + 1; i < rows.length; i++) {
+        const dataRow = rows[i];
+        if (!dataRow || !dataRow[nameIdx]) continue;
+        const rawName = dataRow[nameIdx].toString().trim();
+        const normName = normalize(rawName);
+        if (normName.length < 2) continue;
+
+        const notas = {};
+        Object.entries(cols).forEach(([tipo, idx]) => { notas[tipo] = idx !== -1 ? toScore(dataRow[idx]) : null; });
+        if (notas.pac === null && notas.sho === null) continue;
+
+        if (!mapa.has(normName)) mapa.set(normName, novoAtleta(rawName, normName));
+        const entry = mapa.get(normName);
+        Object.entries(notas).forEach(([tipo, n]) => { if (n !== null) entry[tipo].push(n); });
+      }
+      return resumir(mapa);
+    }
+  }
+
+  // Formato 2: respostas do Google Forms, uma coluna por atleta e atributo
+  for (const rows of planilhas) {
+    if (!rows || rows.length < 2) continue;
+    const colMap = [];
+    Array.from(rows[0] || [], c => (c ? c.toString() : '')).forEach((titulo, cIdx) => {
+      const m = titulo.match(/^(?:\d+[.\-\s]*)?([^[-]+)[[-]([^\])]+)/);
+      if (!m) return;
+      const playerName = m[1].replace(/\([^)]*\)/g, '').trim();
+      const statType = tipoDoAtributo(normalize(m[2]));
+      if (statType && playerName.length >= 2) colMap.push({ cIdx, normName: normalize(playerName), rawName: playerName, statType });
+    });
+    if (colMap.length < 6) continue;
+
+    const mapa = new Map();
+    for (let r = 1; r < rows.length; r++) {
+      const row = rows[r];
+      if (!row) continue;
+      colMap.forEach(({ cIdx, normName, rawName, statType }) => {
+        const score = toScore(row[cIdx]);
+        if (score === null) return;
+        if (!mapa.has(normName)) mapa.set(normName, novoAtleta(rawName, normName));
+        mapa.get(normName)[statType].push(score);
+      });
+    }
+    return resumir(mapa);
+  }
+
+  return [];
+}
+
+// Importa os atributos BASE do elenco a partir da planilha de avaliação (só admin)
+app.post('/users/import-ratings-excel', requireAdmin, docUpload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo de planilha enviado' });
+
+  let parsedStats;
+  try {
+    parsedStats = lerPlanilhaDeAvaliacao(XLSX.read(req.file.buffer, { type: 'buffer' }));
+  } catch (err) {
+    console.error('Erro ao ler planilha:', err.message);
+    return res.status(400).json({ error: 'Não foi possível ler a planilha enviada.' });
+  }
+  if (parsedStats.length === 0) {
+    return res.status(400).json({ error: 'Não foi possível encontrar colunas de atributos de jogadores (PAC, SHO, PAS, DRI, DEF, PHY ou Velocidade, Finalização...) na planilha enviada.' });
+  }
+
+  try {
+    const users = await db.all('SELECT id, username, nickname FROM users');
+    const norm = auth.normalizar;
+    const updated = [];
+    const comandos = [];
+
+    for (const stat of parsedStats) {
+      // Nome exato ou apelido exato primeiro; só então um nome contido no outro
+      const exato = users.find(u => norm(u.username) === stat.normName || String(u.nickname || '').split(',').some(n => norm(n) === stat.normName));
+      const parecido = users.filter(u => {
+        const uNorm = norm(u.username);
+        return uNorm.length >= 3 && (stat.normName.includes(uNorm) || uNorm.includes(stat.normName));
+      });
+      const matchedUser = exato || (parecido.length === 1 ? parecido[0] : null);
+      if (!matchedUser) continue;
+
+      comandos.push({
+        sql: `UPDATE users SET pace = COALESCE(?, pace), shooting = COALESCE(?, shooting), passing = COALESCE(?, passing),
+              dribbling = COALESCE(?, dribbling), defending = COALESCE(?, defending), physical = COALESCE(?, physical) WHERE id = ?`,
+        args: [stat.pac, stat.sho, stat.pas, stat.dri, stat.def, stat.phy, matchedUser.id]
+      });
+      updated.push({ id: matchedUser.id, name: matchedUser.username, stat });
+    }
+
+    if (comandos.length > 0) await db.batch(comandos);
+    auditar(req, 'ADMIN', `Importou a planilha de avaliação (${updated.length} atletas)`);
+    res.json({ success: true, updatedCount: updated.length, updatedPlayers: updated });
+  } catch (err) {
+    erroInterno(res, 'importar a planilha', err, 'Erro ao salvar notas no banco de dados.');
   }
 });
 
 app.delete('/users/:id', requireAdmin, async (req, res) => {
   const id = req.params.id;
   try {
-    // Ordem estrita de deleção: Turso e SQLite validam foreign keys, então
-    // registros dependentes devem ser apagados antes do atleta.
-    await dbRun('DELETE FROM team_players WHERE user_id = ?', [id]);
-    await dbRun('DELETE FROM goals WHERE user_id = ?', [id]);
-    await dbRun('DELETE FROM assists WHERE user_id = ?', [id]);
-    await dbRun('DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', [id, id]);
-    await dbRun('DELETE FROM users WHERE id = ?', [id]);
-
-    logAudit(req.requester.id, req.requester.username, 'ADMIN', `Excluiu o atleta ID ${id}`);
+    // Numa transação e na ordem certa: os registros dependentes saem antes do atleta
+    await db.batch([
+      { sql: 'DELETE FROM team_players WHERE user_id = ?', args: [id] },
+      { sql: 'DELETE FROM goals WHERE user_id = ?', args: [id] },
+      { sql: 'DELETE FROM assists WHERE user_id = ?', args: [id] },
+      { sql: 'DELETE FROM ratings WHERE rater_id = ? OR rated_id = ?', args: [id, id] },
+      { sql: 'DELETE FROM users WHERE id = ?', args: [id] }
+    ]);
+    auditar(req, 'ADMIN', `Excluiu o atleta ID ${id}`);
     res.json({ success: true, message: 'Jogador excluído com sucesso!' });
   } catch (err) {
-    console.error('Erro ao excluir atleta:', err.message);
-    res.status(500).json({ error: 'Erro ao excluir atleta: ' + err.message });
+    erroInterno(res, 'excluir atleta', err, 'Erro ao excluir atleta.');
   }
 });
 
-// -- MATCHES --
+// Histórico detalhado de partidas e desempenho do atleta
+app.get('/users/:id/history', async (req, res) => {
+  const userId = req.params.id;
+  try {
+    const [partidas, gols, assists, notas] = await Promise.all([
+      db.all(`
+        SELECT m.id as match_id, m.date, m.status, t.name as team_name
+        FROM matches m
+        JOIN teams t ON t.match_id = m.id
+        JOIN team_players tp ON tp.team_id = t.id
+        WHERE tp.user_id = ?
+        ORDER BY m.date DESC, m.id DESC
+      `, [userId]),
+      db.all('SELECT match_id, COUNT(*) as n FROM goals WHERE user_id = ? GROUP BY match_id', [userId]),
+      db.all('SELECT match_id, COUNT(*) as n FROM assists WHERE user_id = ? GROUP BY match_id', [userId]),
+      db.all('SELECT match_id, AVG(score) as media FROM ratings WHERE rated_id = ? GROUP BY match_id', [userId])
+    ]);
+
+    const porPartida = (linhas, campo) => Object.fromEntries(linhas.map(l => [l.match_id, l[campo]]));
+    const golsMap = porPartida(gols, 'n');
+    const assistsMap = porPartida(assists, 'n');
+    const notasMap = porPartida(notas, 'media');
+
+    res.json(partidas.map(m => ({
+      match_id: m.match_id,
+      date: m.date,
+      status: m.status,
+      team_name: m.team_name,
+      goals: golsMap[m.match_id] || 0,
+      assists: assistsMap[m.match_id] || 0,
+      rating: notasMap[m.match_id] ? Number(notasMap[m.match_id]).toFixed(1) : null
+    })));
+  } catch (err) {
+    erroInterno(res, 'carregar o histórico', err);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Partidas
+// ---------------------------------------------------------------------------
+
+// Nome do time do clube nas partidas contra adversários
+const NOME_DO_CLUBE = 'plugshawty FC';
+
 app.post('/matches', requireAdmin, async (req, res) => {
   const { date, time, location, type, opponent } = req.body;
-  const matchTime = (time && time.trim()) ? time.trim() : '15h';
-  const matchLocation = (location && location.trim()) ? location.trim() : 'Arena Petrópolis';
+  const matchTime = String(time || '').trim() || '15h';
+  const matchLocation = String(location || '').trim() || 'Arena Petrópolis';
   const contraRival = type === 'rival';
-  const adversario = (opponent || '').trim();
+  const adversario = String(opponent || '').trim();
 
   if (!date) return res.status(400).json({ error: 'Informe a data da partida.' });
   if (contraRival && !adversario) {
@@ -1231,132 +922,97 @@ app.post('/matches', requireAdmin, async (req, res) => {
   }
 
   try {
-    const criada = await dbRun(
-      'INSERT INTO matches (date, time, location, type, opponent) VALUES (?, ?, ?, ?, ?)',
-      [date, matchTime, matchLocation, contraRival ? 'rival' : 'internal', contraRival ? adversario : null]
-    );
-    const matchId = criada.lastID;
-
-    // Contra rival os dois times já nascem prontos: o nosso, que recebe a escalação,
-    // e o adversário, que nunca tem jogadores e só serve para o placar.
+    // Contra rival os dois times já nascem prontos, na mesma transação da partida: o
+    // nosso, que recebe a escalação, e o adversário, que só serve para o placar.
+    const comandos = [{
+      sql: 'INSERT INTO matches (date, time, location, type, opponent) VALUES (?, ?, ?, ?, ?)',
+      args: [date, matchTime, matchLocation, contraRival ? 'rival' : 'internal', contraRival ? adversario : null]
+    }];
     if (contraRival) {
-      await dbRun('INSERT INTO teams (match_id, name, is_opponent) VALUES (?, ?, 0)', [matchId, NOME_DO_CLUBE]);
-      await dbRun('INSERT INTO teams (match_id, name, is_opponent) VALUES (?, ?, 1)', [matchId, adversario]);
+      comandos.push(
+        { sql: 'INSERT INTO teams (match_id, name, is_opponent) VALUES ((SELECT MAX(id) FROM matches), ?, 0)', args: [NOME_DO_CLUBE] },
+        { sql: 'INSERT INTO teams (match_id, name, is_opponent) VALUES ((SELECT MAX(id) FROM matches), ?, 1)', args: [adversario] }
+      );
     }
+    const [criada] = await db.batch(comandos);
 
-    logAudit(req.requester.id, req.requester.username, 'PARTIDA',
-      contraRival ? `Criou jogo contra ${adversario} em ${date}` : `Criou racha em ${date}`);
-
+    auditar(req, 'PARTIDA', contraRival ? `Criou jogo contra ${adversario} em ${date}` : `Criou racha em ${date}`);
     res.json({
-      id: matchId, date, time: matchTime, location: matchLocation, status: 'scheduled',
+      id: criada.lastID, date, time: matchTime, location: matchLocation, status: 'scheduled',
       type: contraRival ? 'rival' : 'internal', opponent: contraRival ? adversario : null
     });
   } catch (err) {
-    console.error('Erro ao criar partida:', err.message);
-    res.status(500).json({ error: 'Não foi possível criar a partida.' });
+    erroInterno(res, 'criar partida', err, 'Não foi possível criar a partida.');
   }
 });
 
-app.put('/matches/:id', requireAdmin, (req, res) => {
+app.put('/matches/:id', requireAdmin, async (req, res) => {
   const { status, date, time, location, opponent } = req.body;
   const fields = [];
   const args = [];
   const novoAdversario = typeof opponent === 'string' ? opponent.trim() : null;
-  if (novoAdversario) {
-    fields.push('opponent = ?');
-    args.push(novoAdversario);
-  }
+
+  if (novoAdversario) { fields.push('opponent = ?'); args.push(novoAdversario); }
   if (status !== undefined) {
+    if (status !== 'completed' && status !== 'scheduled') return res.status(400).json({ error: 'Status inválido.' });
     fields.push('status = ?');
     args.push(status);
     if (status === 'completed') {
-      // Marca o apito final: é daqui que contam as 12 horas de avaliação.
+      // Marca o apito final: é daqui que conta o prazo de avaliação.
       // COALESCE preserva o horário original caso já estivesse encerrada.
       fields.push('finished_at = COALESCE(finished_at, ?)');
       args.push(new Date().toISOString());
     } else {
       // Reabrir a partida zera o prazo, que recomeça no próximo encerramento, e
       // descarta a duração que o administrador tinha ajustado
-      fields.push('finished_at = NULL');
-      fields.push('rating_deadline = NULL');
+      fields.push('finished_at = NULL', 'rating_deadline = NULL');
     }
   }
   if (date !== undefined) { fields.push('date = ?'); args.push(date); }
   if (time !== undefined) { fields.push('time = ?'); args.push(time); }
   if (location !== undefined) { fields.push('location = ?'); args.push(location); }
 
-  if (fields.length === 0) {
-    return res.json({ success: false });
-  }
+  if (fields.length === 0) return res.json({ success: false });
 
-  args.push(req.params.id);
-  db.run(`UPDATE matches SET ${fields.join(', ')} WHERE id = ?`, args, function(err) {
-    if (err) return res.status(500).json({ error: err.message });
-    if (!novoAdversario) return res.json({ success: true });
-
+  try {
+    const comandos = [{ sql: `UPDATE matches SET ${fields.join(', ')} WHERE id = ?`, args: [...args, req.params.id] }];
     // O nome do adversário também é o nome do time dele no placar
-    db.run('UPDATE teams SET name = ? WHERE match_id = ? AND is_opponent = 1', [novoAdversario, req.params.id], () => {
-      res.json({ success: true });
-    });
-  });
+    if (novoAdversario) {
+      comandos.push({ sql: 'UPDATE teams SET name = ? WHERE match_id = ? AND is_opponent = 1', args: [novoAdversario, req.params.id] });
+    }
+    const [r] = await db.batch(comandos);
+    if (!r.changes) return res.status(404).json({ error: 'Partida não encontrada' });
+
+    if (status === 'completed') auditar(req, 'PARTIDA', `Encerrou a partida ${req.params.id}`);
+    else if (status === 'scheduled') auditar(req, 'PARTIDA', `Reabriu a partida ${req.params.id}`);
+    res.json({ success: true });
+  } catch (err) {
+    erroInterno(res, 'atualizar a partida', err, 'Não foi possível atualizar a partida.');
+  }
 });
 
-// Histórico detalhado de partidas e desempenho do atleta
-app.get('/users/:id/history', (req, res) => {
-  const userId = req.params.id;
-  db.all(`
-    SELECT m.id as match_id, m.date, m.status, t.id as team_id, t.name as team_name, t.manual_score
-    FROM matches m
-    JOIN teams t ON t.match_id = m.id
-    JOIN team_players tp ON tp.team_id = t.id
-    WHERE tp.user_id = ?
-    ORDER BY m.date DESC, m.id DESC
-  `, [userId], (err, userMatchRows) => {
-    if (err) return res.status(500).json({ error: err.message });
-    
-    db.all('SELECT match_id, COUNT(*) as goals_count FROM goals WHERE user_id = ? GROUP BY match_id', [userId], (errG, userGoals) => {
-      db.all('SELECT match_id, COUNT(*) as assists_count FROM assists WHERE user_id = ? GROUP BY match_id', [userId], (errA, userAssists) => {
-        db.all('SELECT match_id, AVG(score) as avg_rating FROM ratings WHERE rated_id = ? GROUP BY match_id', [userId], (errR, userRatings) => {
-          const goalsMap = Object.fromEntries((userGoals || []).map(g => [g.match_id, g.goals_count]));
-          const assistsMap = Object.fromEntries((userAssists || []).map(a => [a.match_id, a.assists_count]));
-          const ratingsMap = Object.fromEntries((userRatings || []).map(r => [r.match_id, r.avg_rating]));
-
-          const history = (userMatchRows || []).map(m => ({
-            match_id: m.match_id,
-            date: m.date,
-            status: m.status,
-            team_name: m.team_name,
-            goals: goalsMap[m.match_id] || 0,
-            assists: assistsMap[m.match_id] || 0,
-            rating: ratingsMap[m.match_id] ? Number(ratingsMap[m.match_id]).toFixed(1) : null
-          }));
-
-          res.json(history);
-        });
-      });
-    });
-  });
-});
-
-app.get('/matches', (req, res) => {
-  db.all('SELECT * FROM matches ORDER BY date DESC, id DESC', [], (err, rows) => {
-    res.json(rows || []);
-  });
+app.get('/matches', async (req, res) => {
+  try {
+    res.json(await db.all('SELECT * FROM matches ORDER BY date DESC, id DESC'));
+  } catch (err) {
+    erroInterno(res, 'listar partidas', err);
+  }
 });
 
 app.get('/matches/:id', async (req, res) => {
   const matchId = req.params.id;
-  const requesterId = req.headers['x-user-id'] || null;
 
   try {
-    const match = await dbGet('SELECT * FROM matches WHERE id = ?', [matchId]);
+    const [match, quem] = await Promise.all([
+      db.get('SELECT * FROM matches WHERE id = ?', [matchId]),
+      getRequester(req)
+    ]);
     if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
 
-    // As quatro consultas abaixo nao dependem umas das outras. Antes cada uma
-    // esperava o callback da anterior, somando quatro idas e voltas ate o banco
-    // na nuvem; em paralelo o custo passa a ser o da consulta mais lenta.
+    // As consultas abaixo não dependem umas das outras: em paralelo o custo passa a
+    // ser o da consulta mais lenta, e não a soma das idas e voltas até o banco
     const [teamRows, goalRows, assistRows, ratingRows, raterRows, myRatingRows, formas] = await Promise.all([
-      dbAll(`
+      db.all(`
         SELECT t.id as team_id, t.name as team_name, t.manual_score, t.is_opponent, u.id as user_id, u.username, u.nickname, u.position,
                u.pace, u.shooting, u.passing, u.dribbling, u.defending, u.physical, ${photoCols('u')}
         FROM teams t
@@ -1365,7 +1021,7 @@ app.get('/matches/:id', async (req, res) => {
         WHERE t.match_id = ?
       `, [matchId]),
 
-      dbAll(`
+      db.all(`
         SELECT g.id, g.user_id, u.username, u.nickname, tp.team_id
         FROM goals g
         JOIN users u ON g.user_id = u.id
@@ -1374,7 +1030,7 @@ app.get('/matches/:id', async (req, res) => {
         ORDER BY g.id ASC
       `, [matchId, matchId]),
 
-      dbAll(`
+      db.all(`
         SELECT a.id, a.user_id, u.username, u.nickname, tp.team_id
         FROM assists a
         JOIN users u ON a.user_id = u.id
@@ -1383,23 +1039,23 @@ app.get('/matches/:id', async (req, res) => {
         ORDER BY a.id ASC
       `, [matchId, matchId]),
 
-      dbAll(`
+      db.all(`
         SELECT r.rated_id, r.score, u.username, u.nickname
         FROM ratings r
         JOIN users u ON r.rated_id = u.id
         WHERE r.match_id = ?
       `, [matchId]),
 
-      // Quem ja avaliou, para a tela mostrar o progresso. Nao expomos qual nota
-      // cada um deu para ninguem alem do proprio avaliador.
-      dbAll('SELECT DISTINCT rater_id FROM ratings WHERE match_id = ?', [matchId]),
+      // Quem já avaliou, para a tela mostrar o progresso. Não expomos qual nota
+      // cada um deu para ninguém além do próprio avaliador.
+      db.all('SELECT DISTINCT rater_id FROM ratings WHERE match_id = ?', [matchId]),
 
-      // As notas que quem esta pedindo a partida ja registrou
-      requesterId
-        ? dbAll('SELECT rated_id, score FROM ratings WHERE match_id = ? AND rater_id = ?', [matchId, requesterId])
+      // As notas que quem está pedindo a partida já registrou
+      quem
+        ? db.all('SELECT rated_id, score FROM ratings WHERE match_id = ? AND rater_id = ?', [matchId, quem.id])
         : Promise.resolve([]),
 
-      calcularFormas()
+      obterFormas()
     ]);
 
     const teams = {};
@@ -1440,11 +1096,9 @@ app.get('/matches/:id', async (req, res) => {
     match.ratings = ratingRows;
 
     match.teams.forEach(t => {
-      if (t.manual_score !== null && t.manual_score !== undefined) {
-        t.score = t.manual_score;
-      } else {
-        t.score = match.goals.filter(g => g.team_id === t.id).length;
-      }
+      t.score = t.manual_score !== null && t.manual_score !== undefined
+        ? t.manual_score
+        : match.goals.filter(g => g.team_id === t.id).length;
     });
 
     // Estado da janela de avaliação. O relógio que vale é o do servidor: mandamos
@@ -1459,75 +1113,87 @@ app.get('/matches/:id', async (req, res) => {
 
     res.json(match);
   } catch (err) {
-    console.error('Erro ao carregar partida:', err.message);
-    res.status(500).json({ error: 'Erro ao carregar a partida' });
+    erroInterno(res, 'carregar a partida', err, 'Erro ao carregar a partida');
   }
 });
+
+/** Lista de ids inteiros, sem repetição. */
+const idsUnicos = (lista) => [...new Set((Array.isArray(lista) ? lista : []).map(Number).filter(Number.isInteger))];
 
 app.post('/matches/:id/teams', requireOpenMatchOrAdmin, async (req, res) => {
   const matchId = req.params.id;
-  const { teams } = req.body;
+  const teams = Array.isArray(req.body.teams) ? req.body.teams : [];
 
   try {
-    const partida = await dbGet('SELECT type FROM matches WHERE id = ?', [matchId]);
-
     // Contra rival não existe sorteio: só trocamos quem está escalado no nosso time.
     // Recriar os times apagaria o adversário e o placar que o admin já tivesse lançado.
-    if (partida && partida.type === 'rival') {
-      const nosso = await dbGet('SELECT id FROM teams WHERE match_id = ? AND is_opponent = 0', [matchId]);
+    if (req.match.type === 'rival') {
+      const nosso = await db.get('SELECT id FROM teams WHERE match_id = ? AND is_opponent = 0', [matchId]);
       if (!nosso) return res.status(400).json({ error: 'Time do clube não encontrado nesta partida.' });
 
-      const playerIds = [...new Set(((teams && teams[0] && teams[0].playerIds) || []).map(Number))];
-      await dbRun('DELETE FROM team_players WHERE team_id = ?', [nosso.id]);
+      const playerIds = idsUnicos(teams[0] && teams[0].playerIds);
+      const comandos = [{ sql: 'DELETE FROM team_players WHERE team_id = ?', args: [nosso.id] }];
       if (playerIds.length > 0) {
-        const placeholders = playerIds.map(() => '(?, ?)').join(', ');
-        await dbRun(
-          `INSERT INTO team_players (team_id, user_id) VALUES ${placeholders}`,
-          playerIds.flatMap(playerId => [nosso.id, playerId])
-        );
+        comandos.push({
+          sql: `INSERT INTO team_players (team_id, user_id) VALUES ${playerIds.map(() => '(?, ?)').join(', ')}`,
+          args: playerIds.flatMap(playerId => [nosso.id, playerId])
+        });
       }
+      await db.batch(comandos);
+      auditar(req, 'PARTIDA', `Escalou ${playerIds.length} atleta(s) na partida ${matchId}`);
       return res.json({ success: true });
     }
 
-    // Mesma armadilha do DELETE: sem aguardar cada comando, os INSERT dos times
-    // novos corriam junto com o DELETE dos antigos e a escalação saía embaralhada.
-    await dbRun('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
-    await dbRun('DELETE FROM teams WHERE match_id = ?', [matchId]);
+    // Um atleta só pode estar em um dos times
+    const vistos = new Set();
+    const times = teams.map(t => ({
+      name: String(t.name || '').trim() || 'TIME',
+      playerIds: idsUnicos(t.playerIds).filter(id => !vistos.has(id) && vistos.add(id))
+    }));
 
-    if (!teams || teams.length === 0) {
-      return res.json({ success: true });
-    }
+    // Tudo numa transação: antes, os INSERT dos times novos corriam junto com o
+    // DELETE dos antigos e a escalação saía embaralhada
+    const comandos = [
+      { sql: 'DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', args: [matchId] },
+      { sql: 'DELETE FROM teams WHERE match_id = ?', args: [matchId] }
+    ];
+    times.forEach(time => {
+      comandos.push({ sql: 'INSERT INTO teams (match_id, name) VALUES (?, ?)', args: [matchId, time.name] });
+      if (time.playerIds.length > 0) {
+        comandos.push({
+          // O time acabou de ser criado nesta transação: é o maior id da partida
+          sql: `INSERT INTO team_players (team_id, user_id) VALUES ${time.playerIds.map(() => '((SELECT MAX(id) FROM teams WHERE match_id = ?), ?)').join(', ')}`,
+          args: time.playerIds.flatMap(playerId => [matchId, playerId])
+        });
+      }
+    });
+    await db.batch(comandos);
 
-    for (const team of teams) {
-      const criado = await dbRun('INSERT INTO teams (match_id, name) VALUES (?, ?)', [matchId, team.name]);
-      const teamId = criado.lastID;
-      const playerIds = team.playerIds || [];
-      if (playerIds.length === 0) continue;
-
-      // Uma única ida ao banco para escalar o time inteiro
-      const placeholders = playerIds.map(() => '(?, ?)').join(', ');
-      const args = playerIds.flatMap(playerId => [teamId, playerId]);
-      await dbRun(`INSERT INTO team_players (team_id, user_id) VALUES ${placeholders}`, args);
-    }
-
+    auditar(req, 'PARTIDA', `Montou os times da partida ${matchId}`);
     res.json({ success: true });
   } catch (err) {
-    console.error('Erro ao salvar os times:', err.message);
-    res.status(500).json({ error: 'Não foi possível salvar a escalação.' });
+    erroInterno(res, 'salvar os times', err, 'Não foi possível salvar a escalação.');
   }
 });
 
-// Update team manual score
-app.put('/matches/:id/team-score', requireAdmin, (req, res) => {
+// Placar digitado pelo admin. Vazio (null) volta ao automático: a soma dos gols lançados.
+app.put('/matches/:id/team-score', requireAdmin, async (req, res) => {
   const { team_id, score } = req.body;
-  const numScore = parseInt(score, 10);
-  db.run('UPDATE teams SET manual_score = ? WHERE id = ?', [isNaN(numScore) ? null : numScore, team_id], (err) => {
-    if (err) return res.status(500).json({ error: err.message });
+  const numScore = score === null || score === undefined || score === '' ? null : parseInt(score, 10);
+  if (numScore !== null && (isNaN(numScore) || numScore < 0 || numScore > 99)) {
+    return res.status(400).json({ error: 'Placar inválido.' });
+  }
+
+  try {
+    const r = await db.run('UPDATE teams SET manual_score = ? WHERE id = ? AND match_id = ?', [numScore, team_id, req.params.id]);
+    if (!r.changes) return res.status(404).json({ error: 'Time não encontrado nesta partida.' });
     res.json({ success: true, score: numScore });
-  });
+  } catch (err) {
+    erroInterno(res, 'salvar o placar', err, 'Não foi possível salvar o placar.');
+  }
 });
 
-// Update player goals or assists count directly
+// Número de gols ou assistências de um atleta na partida
 app.put('/matches/:id/player-events', requireAdmin, async (req, res) => {
   const matchId = req.params.id;
   const { user_id, type, count } = req.body;
@@ -1535,54 +1201,36 @@ app.put('/matches/:id/player-events', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Tipo de evento inválido (deve ser "goal" ou "assist").' });
   }
   const table = type === 'goal' ? 'goals' : 'assists';
-  const targetCount = Math.max(0, parseInt(count, 10) || 0);
+  const targetCount = Math.min(30, Math.max(0, parseInt(count, 10) || 0));
 
   try {
-    await dbRun(`DELETE FROM ${table} WHERE match_id = ? AND user_id = ?`, [matchId, user_id]);
+    // Apagar e regravar na mesma transação: dois envios seguidos do mesmo atleta não
+    // conseguem mais se misturar e duplicar os gols
+    const comandos = [{ sql: `DELETE FROM ${table} WHERE match_id = ? AND user_id = ?`, args: [matchId, user_id] }];
     if (targetCount > 0) {
-      const placeholders = Array(targetCount).fill('(?, ?)').join(', ');
-      const args = [];
-      for (let i = 0; i < targetCount; i++) {
-        args.push(matchId, user_id);
-      }
-      await dbRun(`INSERT INTO ${table} (match_id, user_id) VALUES ${placeholders}`, args);
+      comandos.push({
+        sql: `INSERT INTO ${table} (match_id, user_id) VALUES ${Array(targetCount).fill('(?, ?)').join(', ')}`,
+        args: Array.from({ length: targetCount }, () => [matchId, user_id]).flat()
+      });
     }
+    await db.batch(comandos);
     res.json({ success: true, count: targetCount });
   } catch (err) {
-    console.error(`Erro ao atualizar ${table}:`, err.message);
-    res.status(500).json({ error: 'Erro ao atualizar eventos: ' + err.message });
-  }
-});
-
-// -- EVENTS (Goals, Assists) --
-app.post('/events', requireAdmin, (req, res) => {
-  const { type, match_id, user_id } = req.body;
-  if (type === 'goal') {
-    db.run('INSERT INTO goals (match_id, user_id) VALUES (?, ?)', [match_id, user_id], function() {
-      res.json({ success: true, id: this.lastID });
-    });
-  } else if (type === 'assist') {
-    db.run('INSERT INTO assists (match_id, user_id) VALUES (?, ?)', [match_id, user_id], function() {
-      res.json({ success: true, id: this.lastID });
-    });
-  } else {
-    res.status(400).json({ error: 'Tipo inválido' });
+    erroInterno(res, `atualizar ${table}`, err, 'Erro ao atualizar eventos.');
   }
 });
 
 // -- RATINGS --
 // Envio das notas da partida. Cada atleta que entrou em campo avalia todos os
-// jogadores (inclusive a si mesmo), e pode reenviar para corrigir enquanto o prazo
-// de 12 horas depois do encerramento não terminar.
-app.post('/ratings', async (req, res) => {
+// jogadores (inclusive a si mesmo), e pode reenviar para corrigir enquanto a votação
+// estiver aberta.
+app.post('/ratings', requireAuth, async (req, res) => {
   try {
     const matchId = req.body.match_id;
     const notas = req.body.ratings || {};
+    const avaliador = req.requester;
 
-    const avaliador = await getRequester(req);
-    if (!avaliador) return res.status(403).json({ error: 'Faça login novamente para avaliar.' });
-
-    const match = await dbGet('SELECT id, status, finished_at, rating_deadline FROM matches WHERE id = ?', [matchId]);
+    const match = await db.get('SELECT id, status, finished_at, rating_deadline FROM matches WHERE id = ?', [matchId]);
     if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
 
     const janela = janelaDeAvaliacao(match);
@@ -1595,7 +1243,7 @@ app.post('/ratings', async (req, res) => {
     }
 
     // Só quem entrou em campo avalia, e só dá nota a quem também jogou
-    const escalados = await dbAll(
+    const escalados = await db.all(
       'SELECT tp.user_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ?',
       [matchId]
     );
@@ -1613,18 +1261,19 @@ app.post('/ratings', async (req, res) => {
       return res.status(400).json({ error: 'Nenhuma nota válida foi enviada.' });
     }
 
-    // Reenviar substitui as notas anteriores deste avaliador em vez de somar linhas
-    await dbRun('DELETE FROM ratings WHERE match_id = ? AND rater_id = ?', [matchId, avaliador.id]);
+    // Reenviar substitui as notas anteriores deste avaliador, na mesma transação
+    await db.batch([
+      { sql: 'DELETE FROM ratings WHERE match_id = ? AND rater_id = ?', args: [matchId, avaliador.id] },
+      {
+        sql: `INSERT INTO ratings (match_id, rater_id, rated_id, score) VALUES ${entradas.map(() => '(?, ?, ?, ?)').join(', ')}`,
+        args: entradas.flatMap(([ratedId, nota]) => [matchId, avaliador.id, ratedId, nota])
+      }
+    ]);
 
-    const placeholders = entradas.map(() => '(?, ?, ?, ?)').join(', ');
-    const args = entradas.flatMap(([ratedId, nota]) => [matchId, avaliador.id, ratedId, nota]);
-    await dbRun(`INSERT INTO ratings (match_id, rater_id, rated_id, score) VALUES ${placeholders}`, args);
-
-    logAudit(avaliador.id, avaliador.username, 'AVALIAÇÃO', `Avaliou ${entradas.length} atleta(s) na partida ${matchId}`);
+    auditar(req, 'AVALIAÇÃO', `Avaliou ${entradas.length} atleta(s) na partida ${matchId}`);
     res.json({ success: true, saved: entradas.length, rating_ends_at: janela.terminaEm });
   } catch (err) {
-    console.error('Erro ao gravar avaliações:', err.message);
-    res.status(500).json({ error: 'Erro ao gravar as avaliações' });
+    erroInterno(res, 'gravar as avaliações', err, 'Erro ao gravar as avaliações');
   }
 });
 
@@ -1633,7 +1282,7 @@ app.post('/ratings', async (req, res) => {
 // então aumentá-la depois que a votação fechou abre a votação de novo.
 app.put('/matches/:id/rating-window', requireAdmin, async (req, res) => {
   try {
-    const match = await dbGet('SELECT id, status, finished_at, rating_deadline FROM matches WHERE id = ?', [req.params.id]);
+    const match = await db.get('SELECT id, status, finished_at, rating_deadline FROM matches WHERE id = ?', [req.params.id]);
     if (!match) return res.status(404).json({ error: 'Partida não encontrada' });
     if (match.status !== 'completed' || !match.finished_at) {
       return res.status(400).json({ error: 'Encerre a partida antes de mexer na votação.' });
@@ -1653,106 +1302,124 @@ app.put('/matches/:id/rating-window', requireAdmin, async (req, res) => {
       descricao = `Mudou a duração da votação da partida ${match.id} para ${horas}h`;
     }
 
-    await dbRun('UPDATE matches SET rating_deadline = ? WHERE id = ?', [prazo.toISOString(), match.id]);
-    logAudit(req.requester.id, req.requester.username, 'AVALIAÇÃO', descricao);
+    await db.run('UPDATE matches SET rating_deadline = ? WHERE id = ?', [prazo.toISOString(), match.id]);
+    auditar(req, 'AVALIAÇÃO', descricao);
 
     const janela = janelaDeAvaliacao({ ...match, rating_deadline: prazo.toISOString() });
     res.json({ success: true, rating_open: janela.aberta, rating_ends_at: janela.terminaEm, rating_hours: janela.horas });
   } catch (err) {
-    console.error('Erro ao ajustar a votação:', err.message);
-    res.status(500).json({ error: 'Não foi possível ajustar a votação.' });
+    erroInterno(res, 'ajustar a votação', err, 'Não foi possível ajustar a votação.');
   }
 });
 
-// Delete individual goal or assist
-app.delete('/goals/:id', requireAdmin, (req, res) => {
-  db.run('DELETE FROM goals WHERE id = ?', [req.params.id], (err) => {
-    res.json({ success: true });
+// Excluir um gol ou uma assistência específica
+['goals', 'assists'].forEach(tabela => {
+  app.delete(`/${tabela}/:id`, requireAdmin, async (req, res) => {
+    try {
+      const r = await db.run(`DELETE FROM ${tabela} WHERE id = ?`, [req.params.id]);
+      if (!r.changes) return res.status(404).json({ error: 'Registro não encontrado.' });
+      res.json({ success: true });
+    } catch (err) {
+      erroInterno(res, `excluir de ${tabela}`, err, 'Não foi possível excluir.');
+    }
   });
 });
 
-app.delete('/assists/:id', requireAdmin, (req, res) => {
-  db.run('DELETE FROM assists WHERE id = ?', [req.params.id], (err) => {
-    res.json({ success: true });
-  });
-});
-
-// Delete match and all related records
+// Excluir a partida e tudo que depende dela
 app.delete('/matches/:id', requireAdmin, async (req, res) => {
   const matchId = req.params.id;
   try {
-    // A ordem importa: o Turso valida chaves estrangeiras, então os registros
-    // filhos precisam sair antes da partida. O db.serialize do driver não
-    // serializa de fato — disparava os seis comandos em paralelo, e o DELETE da
-    // partida falhava por FOREIGN KEY enquanto a API respondia sucesso.
-    await dbRun('DELETE FROM ratings WHERE match_id = ?', [matchId]);
-    await dbRun('DELETE FROM goals WHERE match_id = ?', [matchId]);
-    await dbRun('DELETE FROM assists WHERE match_id = ?', [matchId]);
-    await dbRun('DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', [matchId]);
-    await dbRun('DELETE FROM teams WHERE match_id = ?', [matchId]);
-    await dbRun('DELETE FROM matches WHERE id = ?', [matchId]);
+    // Numa transação e na ordem certa: o Turso valida chaves estrangeiras, então os
+    // registros filhos precisam sair antes da partida
+    const resultados = await db.batch([
+      { sql: 'DELETE FROM ratings WHERE match_id = ?', args: [matchId] },
+      { sql: 'DELETE FROM goals WHERE match_id = ?', args: [matchId] },
+      { sql: 'DELETE FROM assists WHERE match_id = ?', args: [matchId] },
+      { sql: 'DELETE FROM team_players WHERE team_id IN (SELECT id FROM teams WHERE match_id = ?)', args: [matchId] },
+      { sql: 'DELETE FROM teams WHERE match_id = ?', args: [matchId] },
+      { sql: 'DELETE FROM matches WHERE id = ?', args: [matchId] }
+    ]);
+    if (!resultados[resultados.length - 1].changes) return res.status(404).json({ error: 'Partida não encontrada' });
 
-    logAudit(req.requester.id, req.requester.username, 'PARTIDA', `Excluiu a partida ${matchId}`);
+    auditar(req, 'PARTIDA', `Excluiu a partida ${matchId}`);
     res.json({ success: true });
   } catch (err) {
-    console.error('Erro ao excluir partida:', err.message);
-    res.status(500).json({ error: 'Não foi possível excluir a partida.' });
+    erroInterno(res, 'excluir partida', err, 'Não foi possível excluir a partida.');
   }
 });
 
-// Switch player between teams (Time A <-> Time B)
-app.put('/matches/:id/switch-team', requireOpenMatchOrAdmin, (req, res) => {
+/** Times da partida que recebem jogadores (o adversário de um jogo rival fica de fora). */
+const timesComJogadores = (matchId) =>
+  db.all('SELECT id FROM teams WHERE match_id = ? AND COALESCE(is_opponent, 0) = 0 ORDER BY id', [matchId]);
+
+/** Em qual time da partida o atleta está, ou undefined. */
+const timeDoAtleta = (matchId, userId) =>
+  db.get('SELECT tp.team_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ? AND tp.user_id = ?', [matchId, userId]);
+
+// Trocar o atleta de time (COM COLETE <-> SEM COLETE). Não existe em jogo contra rival.
+app.put('/matches/:id/switch-team', requireOpenMatchOrAdmin, async (req, res) => {
   const matchId = req.params.id;
-  const { user_id } = req.body;
-  db.all('SELECT id FROM teams WHERE match_id = ?', [matchId], (err, teams) => {
-    if (!teams || teams.length < 2) return res.status(400).json({ error: 'Menos de 2 times' });
-    const teamA = teams[0].id;
-    const teamB = teams[1].id;
-    db.get('SELECT team_id FROM team_players WHERE user_id = ? AND (team_id = ? OR team_id = ?)', 
-      [user_id, teamA, teamB], (err, tp) => {
-        if (!tp) return res.status(404).json({ error: 'Jogador não encontrado na partida' });
-        const newTeamId = tp.team_id === teamA ? teamB : teamA;
-        db.run('UPDATE team_players SET team_id = ? WHERE user_id = ? AND team_id = ?', 
-          [newTeamId, user_id, tp.team_id], (err) => {
-            res.json({ success: true, newTeamId });
-        });
-    });
-  });
+  const userId = Number(req.body.user_id);
+  if (req.match.type === 'rival') {
+    return res.status(400).json({ error: 'Em jogo contra rival não há troca de time.' });
+  }
+
+  try {
+    const times = await timesComJogadores(matchId);
+    if (times.length !== 2) return res.status(400).json({ error: 'A partida precisa ter exatamente 2 times.' });
+
+    const atual = await timeDoAtleta(matchId, userId);
+    if (!atual) return res.status(404).json({ error: 'Jogador não encontrado na partida' });
+
+    const newTeamId = atual.team_id === times[0].id ? times[1].id : times[0].id;
+    await db.run('UPDATE team_players SET team_id = ? WHERE user_id = ? AND team_id = ?', [newTeamId, userId, atual.team_id]);
+    res.json({ success: true, newTeamId });
+  } catch (err) {
+    erroInterno(res, 'trocar de time', err, 'Não foi possível trocar o atleta de time.');
+  }
 });
 
-// Replace a player in a team with another player from the roster
-app.put('/matches/:id/replace-player', requireOpenMatchOrAdmin, (req, res) => {
+// Substituir um atleta da partida por outro do elenco que ainda não está nela
+app.put('/matches/:id/replace-player', requireOpenMatchOrAdmin, async (req, res) => {
   const matchId = req.params.id;
-  const { old_user_id, new_user_id } = req.body;
-  db.all('SELECT id FROM teams WHERE match_id = ?', [matchId], (err, teams) => {
-    if (!teams || teams.length === 0) return res.status(400).json({ error: 'Sem times na partida' });
-    const teamIds = teams.map(t => t.id);
-    const placeholders = teamIds.map(() => '?').join(',');
-    db.run(`UPDATE team_players SET user_id = ? WHERE user_id = ? AND team_id IN (${placeholders})`, 
-      [new_user_id, old_user_id, ...teamIds], (err) => {
-        res.json({ success: true });
-    });
-  });
+  const oldUserId = Number(req.body.old_user_id);
+  const newUserId = Number(req.body.new_user_id);
+
+  try {
+    const [saindo, entrando, existe] = await Promise.all([
+      timeDoAtleta(matchId, oldUserId),
+      timeDoAtleta(matchId, newUserId),
+      db.get('SELECT id FROM users WHERE id = ?', [newUserId])
+    ]);
+    if (!saindo) return res.status(404).json({ error: 'O atleta substituído não está na partida.' });
+    if (!existe) return res.status(404).json({ error: 'Atleta não encontrado.' });
+    if (entrando) return res.status(400).json({ error: 'Esse atleta já está na partida.' });
+
+    await db.run('UPDATE team_players SET user_id = ? WHERE user_id = ? AND team_id = ?', [newUserId, oldUserId, saindo.team_id]);
+    res.json({ success: true });
+  } catch (err) {
+    erroInterno(res, 'substituir atleta', err, 'Não foi possível substituir o atleta.');
+  }
 });
 
-// Add a new player to a team in an ongoing match
-app.put('/matches/:id/add-player', requireOpenMatchOrAdmin, (req, res) => {
+// Colocar mais um atleta em um time da partida
+app.put('/matches/:id/add-player', requireOpenMatchOrAdmin, async (req, res) => {
   const matchId = req.params.id;
-  const { user_id, team_id } = req.body;
-  
-  if (!user_id || !team_id) return res.status(400).json({ error: 'Usuário e Time são obrigatórios' });
+  const userId = Number(req.body.user_id);
+  const teamId = Number(req.body.team_id);
+  if (!userId || !teamId) return res.status(400).json({ error: 'Usuário e Time são obrigatórios' });
 
-  // Verificar se o jogador já não está na partida
-  db.all('SELECT tp.user_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ? AND tp.user_id = ?', 
-    [matchId, user_id], (err, existing) => {
-      if (err) return res.status(500).json({ error: err.message });
-      if (existing && existing.length > 0) return res.status(400).json({ error: 'O jogador já está nesta partida' });
-      
-      db.run('INSERT INTO team_players (team_id, user_id) VALUES (?, ?)', [team_id, user_id], function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true, team_id, user_id });
-      });
-  });
+  try {
+    const times = await timesComJogadores(matchId);
+    // O time precisa ser desta partida, e nunca o adversário
+    if (!times.some(t => t.id === teamId)) return res.status(400).json({ error: 'Time inválido para esta partida.' });
+    if (await timeDoAtleta(matchId, userId)) return res.status(400).json({ error: 'O jogador já está nesta partida' });
+
+    await db.run('INSERT INTO team_players (team_id, user_id) VALUES (?, ?)', [teamId, userId]);
+    res.json({ success: true, team_id: teamId, user_id: userId });
+  } catch (err) {
+    erroInterno(res, 'adicionar atleta', err, 'Não foi possível adicionar o atleta.');
+  }
 });
 
 // Tira um atleta da partida. Junto saem os gols, as assistências e as notas dele
@@ -1762,16 +1429,12 @@ app.delete('/matches/:id/players/:userId', requireOpenMatchOrAdmin, async (req, 
   const userId = req.params.userId;
 
   try {
-    const escalado = await dbGet(
-      'SELECT tp.team_id FROM team_players tp JOIN teams t ON tp.team_id = t.id WHERE t.match_id = ? AND tp.user_id = ?',
-      [matchId, userId]
-    );
-    if (!escalado) return res.status(404).json({ error: 'Este atleta não está na partida.' });
+    if (!(await timeDoAtleta(matchId, userId))) return res.status(404).json({ error: 'Este atleta não está na partida.' });
 
     // Gols e assistências são exclusivos do administrador: tirar alguém que já tem
     // lances lançados apagaria esses números, então isso fica só com ele
     if (!isAdminUser(req.requester)) {
-      const lances = await dbGet(
+      const lances = await db.get(
         `SELECT (SELECT COUNT(*) FROM goals WHERE match_id = ? AND user_id = ?) +
                 (SELECT COUNT(*) FROM assists WHERE match_id = ? AND user_id = ?) AS n`,
         [matchId, userId, matchId, userId]
@@ -1781,26 +1444,27 @@ app.delete('/matches/:id/players/:userId', requireOpenMatchOrAdmin, async (req, 
       }
     }
 
-    // Em sequência, como nas outras exclusões: o driver do Turso não serializa sozinho
-    await dbRun('DELETE FROM ratings WHERE match_id = ? AND (rater_id = ? OR rated_id = ?)', [matchId, userId, userId]);
-    await dbRun('DELETE FROM goals WHERE match_id = ? AND user_id = ?', [matchId, userId]);
-    await dbRun('DELETE FROM assists WHERE match_id = ? AND user_id = ?', [matchId, userId]);
-    await dbRun('DELETE FROM team_players WHERE user_id = ? AND team_id IN (SELECT id FROM teams WHERE match_id = ?)', [userId, matchId]);
+    await db.batch([
+      { sql: 'DELETE FROM ratings WHERE match_id = ? AND (rater_id = ? OR rated_id = ?)', args: [matchId, userId, userId] },
+      { sql: 'DELETE FROM goals WHERE match_id = ? AND user_id = ?', args: [matchId, userId] },
+      { sql: 'DELETE FROM assists WHERE match_id = ? AND user_id = ?', args: [matchId, userId] },
+      { sql: 'DELETE FROM team_players WHERE user_id = ? AND team_id IN (SELECT id FROM teams WHERE match_id = ?)', args: [userId, matchId] }
+    ]);
 
-    const quem = req.requester;
-    logAudit(quem ? quem.id : null, quem ? quem.username : 'Atleta', 'PARTIDA', `Tirou o atleta ID ${userId} da partida ${matchId}`);
+    auditar(req, 'PARTIDA', `Tirou o atleta ID ${userId} da partida ${matchId}`);
     res.json({ success: true });
   } catch (err) {
-    console.error('Erro ao tirar atleta da partida:', err.message);
-    res.status(500).json({ error: 'Não foi possível tirar o atleta da partida.' });
+    erroInterno(res, 'tirar atleta da partida', err, 'Não foi possível tirar o atleta da partida.');
   }
 });
 
-// -- LEADERBOARD & STATS (OPTIMIZED — SQL aggregation instead of loading all tables) --
+// ---------------------------------------------------------------------------
+// Ranking e estatísticas
+// ---------------------------------------------------------------------------
 app.get('/stats', async (req, res) => {
   const { month, year } = req.query;
 
-  // Filtro de periodo aplicado sobre as partidas encerradas
+  // Filtro de período aplicado sobre as partidas encerradas
   let dateFilter = '';
   const dateArgs = [];
   if (year && month) {
@@ -1812,26 +1476,24 @@ app.get('/stats', async (req, res) => {
   }
 
   try {
-    // Cinco consultas independentes: rodam juntas em vez de encadeadas.
-    // A lista de atletas nao traz mais as fotos em Base64, so a URL de cada uma.
+    // Consultas independentes: rodam juntas em vez de encadeadas
     const [users, goalsRows, assistsRows, ratingsRows, matchDetails, formas] = await Promise.all([
-      dbAll(`SELECT ${USER_COLS}, (CASE WHEN pin IS NOT NULL AND pin != '' THEN 1 ELSE 0 END) as has_pin, ${photoCols()} FROM users`),
+      db.all(`SELECT ${USER_COLS}, ${HAS_PIN_COL}, ${photoCols()} FROM users`),
 
-      dbAll(`SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id
-             WHERE m.status = 'completed'${dateFilter} GROUP BY g.user_id`, dateArgs),
+      db.all(`SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id
+              WHERE m.status = 'completed'${dateFilter} GROUP BY g.user_id`, dateArgs),
 
-      dbAll(`SELECT a.user_id, COUNT(*) as cnt FROM assists a JOIN matches m ON a.match_id = m.id
-             WHERE m.status = 'completed'${dateFilter} GROUP BY a.user_id`, dateArgs),
+      db.all(`SELECT a.user_id, COUNT(*) as cnt FROM assists a JOIN matches m ON a.match_id = m.id
+              WHERE m.status = 'completed'${dateFilter} GROUP BY a.user_id`, dateArgs),
 
-      dbAll(`SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id
-             WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`, dateArgs),
+      db.all(`SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id
+              WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`, dateArgs),
 
-      // Detalhe por partida, necessario para calcular sequencia e forma recente.
+      // Detalhe por partida, necessário para calcular sequência e forma recente.
       // O placar de cada time segue a mesma regra da tela da partida: o digitado pelo
       // admin ou, se ele não digitou, a soma dos gols lançados para os atletas daquele
-      // time. Antes o ranking lia só o digitado e tratava a ausência como zero — contra
-      // rival, lançar 3 gols e digitar só o 1 do adversário virava derrota no ranking.
-      dbAll(`
+      // time.
+      db.all(`
         WITH placar_time AS (
           SELECT t.id AS team_id,
                  COALESCE(t.manual_score, (
@@ -1856,15 +1518,13 @@ app.get('/stats', async (req, res) => {
 
       // A evolução da carta usa sempre o histórico completo, mesmo quando o ranking
       // está filtrado por mês: o OVR é do atleta, não do período
-      calcularFormas()
+      obterFormas()
     ]);
 
-    const goalsMap = {};
-    goalsRows.forEach(r => { goalsMap[r.user_id] = r.cnt; });
-    const assistsMap = {};
-    assistsRows.forEach(r => { assistsMap[r.user_id] = r.cnt; });
-    const ratingsMap = {};
-    ratingsRows.forEach(r => { ratingsMap[r.rated_id] = r.avg_score; });
+    const porAtleta = (linhas, chave, valor) => Object.fromEntries(linhas.map(r => [r[chave], r[valor]]));
+    const goalsMap = porAtleta(goalsRows, 'user_id', 'cnt');
+    const assistsMap = porAtleta(assistsRows, 'user_id', 'cnt');
+    const ratingsMap = porAtleta(ratingsRows, 'rated_id', 'avg_score');
 
     const userMatchMap = {};
     matchDetails.forEach(row => {
@@ -1872,29 +1532,25 @@ app.get('/stats', async (req, res) => {
       userMatchMap[row.user_id].push(row);
     });
 
-    const result = users.map(user => {
+    res.json(users.map(user => {
       const userMatches = userMatchMap[user.id] || [];
       let wins = 0, draws = 0, losses = 0;
-      const formList = [];
-
-      userMatches.forEach(um => {
+      const formList = userMatches.map(um => {
         const ownScore = um.own_score ?? 0;
         const oppScore = um.opp_score ?? 0;
-        let r = 'E';
-        if (ownScore > oppScore) { wins++; r = 'V'; }
-        else if (ownScore < oppScore) { losses++; r = 'D'; }
-        else { draws++; }
-        formList.push(r);
+        if (ownScore > oppScore) { wins++; return 'V'; }
+        if (ownScore < oppScore) { losses++; return 'D'; }
+        draws++;
+        return 'E';
       });
 
       let winStreak = 0;
       for (const r of formList) {
-        if (r === 'V') winStreak++;
-        else break;
+        if (r !== 'V') break;
+        winStreak++;
       }
 
       const matchesCount = userMatches.length;
-
       return {
         ...aplicarForma(withPhotoUrls(user), formas),
         goals: goalsMap[user.id] || 0,
@@ -1908,57 +1564,61 @@ app.get('/stats', async (req, res) => {
         recent_form: formList.slice(0, 5),
         win_streak: winStreak
       };
-    });
-
-    res.json(result);
+    }));
   } catch (err) {
-    console.error('Erro ao calcular estatísticas:', err.message);
-    res.status(500).json({ error: 'Erro ao calcular estatísticas' });
+    erroInterno(res, 'calcular estatísticas', err, 'Erro ao calcular estatísticas');
   }
 });
 
-// Middleware global de tratamento de erros de upload e requisição
+// Tratamento de erros de upload e de requisição
 app.use((err, req, res, next) => {
+  if (!err) return next();
   if (err instanceof multer.MulterError) {
     if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(400).json({ error: 'O arquivo enviado excede o limite máximo permitido (10MB para fotos, 15MB para planilhas).' });
+      return res.status(400).json({ error: 'O arquivo enviado excede o limite permitido (4MB para fotos, 15MB para planilhas).' });
     }
     return res.status(400).json({ error: `Erro no upload: ${err.message}` });
-  } else if (err) {
-    return res.status(400).json({ error: err.message || 'Erro inesperado na requisição.' });
   }
-  next();
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Requisição inválida.' });
+  }
+  // Erros lançados pelos filtros de upload têm mensagem pensada para o usuário
+  if (err.message && /permitid/.test(err.message)) return res.status(400).json({ error: err.message });
+  erroInterno(res, 'processar a requisição', err, 'Erro inesperado na requisição.');
 });
 
-// Fallback SPA para Express 5: Qualquer rota não tratada pelas APIs envia o index.html
+// Fallback SPA para Express 5: qualquer rota não tratada pelas APIs envia o index.html
 if (fs.existsSync(frontendDist)) {
   app.use((req, res) => {
     res.sendFile(path.join(frontendDist, 'index.html'));
   });
 }
 
+// Só começa a atender depois que o banco está no formato esperado
 const PORT = process.env.PORT || 3001;
-const server = app.listen(PORT, '0.0.0.0', () => {
-  console.log(`\n🚀 Servidor local rodando!`);
-  console.log(`💻 No seu PC: http://localhost:${PORT}`);
-  console.log(`📱 No seu Celular (mesmo Wi-Fi): http://192.168.100.3:${PORT}\n`);
-});
+runMigrations()
+  .catch(err => console.error('⚠️  Falha nas migrações:', err.message))
+  .finally(() => {
+    const server = app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 Servidor rodando na porta ${PORT} (http://localhost:${PORT})`);
+    });
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`⚠️  A porta ${PORT} já está em uso. Feche o outro servidor (npx kill-port ${PORT}) e rode de novo.`);
+      } else {
+        console.error('Erro no servidor backend:', err);
+      }
+      process.exit(1);
+    });
+  });
 
-server.on('error', (err) => {
-  if (err.code === 'EADDRINUSE') {
-    console.log(`\n⚠️  PORTA ${PORT} JÁ EM USO!`);
-    console.log(`O backend já está rodando em segundo plano no seu computador e atendendo normalmente.`);
-    console.log(`Se quiser reiniciar manualmente, digite no terminal:\n  npx kill-port ${PORT}\n  node server.js\n`);
-    process.exit(1);
-  } else {
-    console.error('Erro no servidor backend:', err);
-  }
-});
-
+// Erro não tratado deixa o processo num estado desconhecido: registra e encerra, e o
+// Render sobe o servidor de novo
 process.on('uncaughtException', (err) => {
   console.error('Erro não capturado (uncaughtException):', err);
+  process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason) => {
   console.error('Rejeição não tratada (unhandledRejection):', reason);
 });

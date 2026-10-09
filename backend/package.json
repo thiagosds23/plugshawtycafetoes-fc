@@ -1,10 +1,11 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "API do app plugshawtycafetoes FC",
+  "main": "server.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "keywords": [],
   "author": "",
@@ -12,14 +13,14 @@
   "type": "commonjs",
   "dependencies": {
     "@libsql/client": "^0.18.0",
+    "compression": "^1.8.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "multer": "^2.2.0",
-    "sqlite3": "^5.1.7",
-    "xlsx": "^0.18.5"
+    "multer": "^2.4.0",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
   },
   "engines": {
-    "node": "20.x"
+    "node": "22.x"
   }
 }
