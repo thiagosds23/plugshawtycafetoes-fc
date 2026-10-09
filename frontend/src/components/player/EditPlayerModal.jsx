@@ -3,8 +3,13 @@ import { Edit2, X, Camera, UserCircle, Sliders, Trash2, Plus, User, UserCheck, T
 import { motion } from 'framer-motion';
 import { calcOVR } from '../../utils/ovr';
 import { formatHeight } from '../../utils/formatters';
-import { API_URL, formatPhotoUrl } from '../../config';
+import { formatPhotoUrl } from '../../config';
+import { api } from '../../utils/api';
+import { useEscapeKey } from '../../utils/useEscapeKey';
 import { AuthContext } from '../../AuthContext';
+
+/** PIN válido: exatamente 4 números, a mesma regra do servidor. */
+const PIN_VALIDO = /^\d{4}$/;
 
 export default function EditPlayerModal({
   player,
@@ -16,8 +21,12 @@ export default function EditPlayerModal({
   onOpenAdjustPhoto,
   onSelectNewPhoto,
   onDeletePhoto,
+  onPinChanged,
+  fecharComEsc = true,
   isAdmin
 }) {
+  useEscapeKey(onClose, fecharComEsc);
+
   const overall = calcOVR({ ...player, position: editForm.position });
   const [newNickInput, setNewNickInput] = useState('');
 
@@ -41,39 +50,44 @@ export default function EditPlayerModal({
     setEditForm({ ...editForm, nickname: updated.join(', ') });
   };
 
-  const { user } = useContext(AuthContext);
+  const { user, updateUser } = useContext(AuthContext);
+  const ehOProprio = Boolean(user && player && String(user.id) === String(player.id));
   const [pinVal, setPinVal] = useState('');
   const [isSavingPin, setIsSavingPin] = useState(false);
-  const [pinFeedback, setPinFeedback] = useState('');
-  const [hasPinState, setHasPinState] = useState(Boolean(player?.has_pin || (user?.id === player?.id && user?.has_pin)));
+  const [pinFeedback, setPinFeedback] = useState(null);
+  // O modal é remontado a cada atleta (key no Players), então o estado inicial basta.
+  // Depois de salvar, o valor vem da resposta do servidor, sem mexer no objeto do atleta
+  // nem no do usuário (mutá-los não avisava o React e deixava a tela desatualizada).
+  const [hasPinState, setHasPinState] = useState(Boolean(player?.has_pin || (ehOProprio && user?.has_pin)));
 
+  // A mensagem de sucesso some sozinha; o timer é cancelado se o modal fechar antes
   useEffect(() => {
-    setHasPinState(Boolean(player?.has_pin || (user?.id === player?.id && user?.has_pin)));
-  }, [player?.has_pin, player?.id, user?.has_pin, user?.id]);
+    if (!pinFeedback || pinFeedback.type !== 'success') return undefined;
+    const timer = setTimeout(() => setPinFeedback(null), 3500);
+    return () => clearTimeout(timer);
+  }, [pinFeedback]);
 
   const handleSavePin = async (val) => {
+    // Confere antes de enviar: o servidor só aceita exatamente 4 números
+    if (val !== null && !PIN_VALIDO.test(val)) {
+      setPinFeedback({ type: 'error', message: 'O PIN precisa ter exatamente 4 números.' });
+      return;
+    }
     setIsSavingPin(true);
-    setPinFeedback('');
+    setPinFeedback(null);
     try {
-      const res = await fetch(`${API_URL}/users/${player.id}/pin`, {
-        method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'x-user-id': String(player.id)
-        },
-        body: JSON.stringify({ pin: val })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao salvar PIN');
-      setHasPinState(data.has_pin);
-      player.has_pin = data.has_pin;
-      if (user && user.id === player.id) {
-        user.has_pin = data.has_pin;
+      const data = await api(`/users/${player.id}/pin`, { method: 'POST', body: { pin: val }, user });
+      setHasPinState(Boolean(data.has_pin));
+      // Trocar o PIN do próprio atleta invalida o token antigo: o servidor manda um novo,
+      // que precisa substituir o da sessão, senão a próxima ação cairia com 401
+      if (ehOProprio) {
+        updateUser({ has_pin: Boolean(data.has_pin), ...(data.token ? { token: data.token } : {}) });
       }
+      if (onPinChanged) onPinChanged();
       setPinFeedback({ type: 'success', message: val ? 'PIN atualizado com sucesso!' : 'PIN removido! Acesso livre.' });
       setPinVal('');
-      setTimeout(() => setPinFeedback(null), 3500);
     } catch (err) {
+      // Inclui a recusa do servidor ao administrador que tenta ficar sem PIN
       setPinFeedback({ type: 'error', message: err.message });
     } finally {
       setIsSavingPin(false);
@@ -82,7 +96,7 @@ export default function EditPlayerModal({
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(12px)', zIndex: 1200, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '12px' }}>
-      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card" style={{ width: '580px', maxWidth: '96vw', maxHeight: '92dvh', display: 'flex', flexDirection: 'column', background: 'rgba(18, 20, 32, 0.98)', border: '1px solid var(--border)', borderRadius: '20px', boxShadow: '0 25px 60px rgba(0,0,0,0.9), 0 0 30px rgba(0,245,155,0.12)', overflow: 'hidden', padding: 0 }}>
+      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card" role="dialog" aria-modal="true" aria-labelledby="editar-atleta-titulo" style={{ width: '580px', maxWidth: '96vw', maxHeight: '92dvh', display: 'flex', flexDirection: 'column', background: 'rgba(18, 20, 32, 0.98)', border: '1px solid var(--border)', borderRadius: '20px', boxShadow: '0 25px 60px rgba(0,0,0,0.9), 0 0 30px rgba(0,245,155,0.12)', overflow: 'hidden', padding: 0 }}>
         
         {/* Header com indicador de OVR e Botão Fechar */}
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px 20px', borderBottom: '1px solid var(--border)', background: 'rgba(255,255,255,0.02)' }}>
@@ -92,7 +106,7 @@ export default function EditPlayerModal({
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <h3 className="font-extrabold text-lg text-main" style={{ margin: 0 }}>
+                <h3 id="editar-atleta-titulo" className="font-extrabold text-main" style={{ margin: 0 }}>
                   {editForm.username || player.username}
                 </h3>
                 {currentNicknames.length > 0 && (
@@ -104,13 +118,13 @@ export default function EditPlayerModal({
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '3px' }}>
                 <span className="font-bold text-primary">{editForm.position || 'MEI'}</span>
                 <span>•</span>
-                <span className="font-bold text-yellow-400">OVR {overall}</span>
+                <span className="font-bold">OVR {overall}</span>
               </div>
             </div>
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <button onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-muted)', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} title="Fechar">
+            <button type="button" onClick={onClose} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-muted)', width: '36px', height: '36px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }} title="Fechar" aria-label="Fechar">
               <X size={18} />
             </button>
           </div>
@@ -199,7 +213,7 @@ export default function EditPlayerModal({
             </h4>
             
             <div style={{ marginBottom: '12px' }}>
-              <label className="label text-xs font-bold" style={{ color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+              <label className="label font-bold" style={{ color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
                 <UserCheck size={14} color="var(--primary)" /> Nome Oficial
               </label>
               <input 
@@ -216,7 +230,7 @@ export default function EditPlayerModal({
             {/* Gerenciador de Múltiplos Apelidos */}
             <div style={{ background: 'rgba(255,255,255,0.02)', padding: '14px', borderRadius: '14px', border: '1px solid var(--border)', marginBottom: '12px' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <label className="label text-xs" style={{ margin: 0, fontWeight: '800', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <label className="label" style={{ margin: 0, fontWeight: '800', color: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                   <Tag size={13} color="var(--primary)" /> Apelidos de Jogo ({currentNicknames.length})
                 </label>
                 <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
@@ -248,6 +262,7 @@ export default function EditPlayerModal({
                         onClick={() => handleRemoveNickname(idx)}
                         style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,0.6)', cursor: 'pointer', padding: 0, fontSize: '13px', lineHeight: 1, display: 'flex', alignItems: 'center' }}
                         title="Remover este apelido"
+                        aria-label={`Remover o apelido ${nick}`}
                       >
                         ×
                       </button>
@@ -288,7 +303,7 @@ export default function EditPlayerModal({
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
               <div>
-                <label className="label text-xs">Posição de Jogo</label>
+                <label className="label">Posição de Jogo</label>
                 <select 
                   className="input" 
                   style={{ marginBottom: 0, height: '40px', padding: '6px 12px' }} 
@@ -305,7 +320,7 @@ export default function EditPlayerModal({
               </div>
 
               <div>
-                <label className="label text-xs">Altura (m)</label>
+                <label className="label">Altura (m)</label>
                 <input 
                   type="text" 
                   className="input" 
@@ -317,18 +332,18 @@ export default function EditPlayerModal({
                 />
               </div>
               <div>
-                <label className="label text-xs">Peso (kg)</label>
+                <label className="label">Peso (kg)</label>
                 <input type="text" className="input" style={{ marginBottom: 0, padding: '8px 12px' }} placeholder="Ex: 75" value={editForm.weight} onChange={e => setEditForm({...editForm, weight: e.target.value})} />
               </div>
 
               <div>
-                <label className="label text-xs" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                   <Phone size={12} color="var(--primary)" /> Telefone
                 </label>
-                <input type="text" className="input" style={{ marginBottom: 0, padding: '8px 12px' }} placeholder="54999999999" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
+                <input type="text" inputMode="tel" className="input" style={{ marginBottom: 0, padding: '8px 12px' }} placeholder="54999999999" value={editForm.phone} onChange={e => setEditForm({...editForm, phone: e.target.value})} />
               </div>
               <div style={{ gridColumn: 'span 2' }}>
-                <label className="label text-xs" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                <label className="label" style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
                   <Mail size={12} color="var(--primary)" /> E-mail de Login
                 </label>
                 <input type="email" className="input" style={{ marginBottom: 0, padding: '8px 12px', width: '100%' }} placeholder="seu@email.com" value={editForm.email} onChange={e => setEditForm({...editForm, email: e.target.value})} />
@@ -348,7 +363,7 @@ export default function EditPlayerModal({
             </div>
 
             {pinFeedback && (
-              <div style={{ 
+              <div role={pinFeedback.type === 'error' ? 'alert' : 'status'} style={{
                 fontSize: '0.75rem', 
                 fontWeight: 'bold', 
                 marginBottom: '8px', 
@@ -363,30 +378,38 @@ export default function EditPlayerModal({
             )}
 
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
-              <input 
+              {/* Teclado numérico no celular e só dígitos: o servidor aceita exatamente 4 */}
+              <input
                 type="password"
-                maxLength={6}
+                inputMode="numeric"
+                pattern="[0-9]*"
+                autoComplete="new-password"
+                maxLength={4}
                 className="input"
+                aria-label={hasPinState ? 'Novo PIN de 4 dígitos' : 'Criar PIN de 4 dígitos'}
                 placeholder={hasPinState ? "Novo PIN (4 dígitos)" : "Criar PIN (4 dígitos)"}
                 value={pinVal}
-                onChange={e => setPinVal(e.target.value)}
+                onChange={e => setPinVal(e.target.value.replace(/\D/g, '').slice(0, 4))}
+                onKeyDown={e => {
+                  if (e.key === 'Enter' && PIN_VALIDO.test(pinVal) && !isSavingPin) handleSavePin(pinVal);
+                }}
                 style={{ flex: '1 1 140px', padding: '7px 12px', fontSize: '0.82rem', height: '36px', marginBottom: 0, borderRadius: '8px' }}
               />
-              <button 
-                type="button" 
-                className="btn" 
+              <button
+                type="button"
+                className="btn"
                 style={{ padding: '7px 14px', fontSize: '0.78rem', height: '36px', width: 'auto', borderRadius: '8px' }}
                 onClick={() => handleSavePin(pinVal)}
-                disabled={isSavingPin || !pinVal.trim()}
+                disabled={isSavingPin || !PIN_VALIDO.test(pinVal)}
               >
                 {isSavingPin ? 'Salvando...' : (hasPinState ? 'Alterar PIN' : 'Definir PIN')}
               </button>
               {hasPinState && (
-                <button 
-                  type="button" 
-                  className="btn btn-secondary" 
+                <button
+                  type="button"
+                  className="btn btn-secondary"
                   style={{ padding: '7px 12px', fontSize: '0.75rem', height: '36px', width: 'auto', borderRadius: '8px', color: '#ff3366' }}
-                  onClick={() => { if (confirm('Deseja remover o PIN? Qualquer pessoa poderá acessar com seu nome.')) handleSavePin(null); }}
+                  onClick={() => { if (window.confirm('Deseja remover o PIN? Qualquer pessoa poderá acessar com seu nome.')) handleSavePin(null); }}
                   disabled={isSavingPin}
                 >
                   Remover PIN

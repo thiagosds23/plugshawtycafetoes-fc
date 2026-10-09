@@ -34,18 +34,34 @@ export default function FutCard({
 
   const cardId = id || (player.id ? `fut-card-${player.id}` : undefined);
 
+  // Carta clicável também abre pelo teclado (Enter ou Espaço), como um botão de verdade.
+  // Só reage quando o foco está na própria carta: Enter num botão de ação dentro dela
+  // (baixar, editar) não pode abrir o perfil junto.
+  const aoTeclar = (e) => {
+    if (e.target !== e.currentTarget) return;
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault(); // Espaço rolaria a página
+      onCardClick(e);
+    }
+  };
+
+  const propsDeBotao = onCardClick
+    ? { role: 'button', tabIndex: 0, onKeyDown: aoTeclar, 'aria-label': `Ver perfil de ${displayName}` }
+    : {};
+
   return (
     <div
       id={cardId}
       className={`fut-card fut-card-${tier} fut-card-size-${size} ${className}`}
       onClick={onCardClick}
+      {...propsDeBotao}
       style={{
         cursor: onCardClick ? 'pointer' : 'default',
         ...style
       }}
     >
       <div className="fut-card-shine" />
-      <img src="/fut-bg.png" alt="Card Background" className="fut-card-bg" />
+      <img src="/fut-bg.png" alt="" className="fut-card-bg" />
 
       <div className="fut-card-inner">
         {/* Ações / Botões Flutuantes (ex: Download, Editar) */}

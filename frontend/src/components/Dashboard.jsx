@@ -1,42 +1,66 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useMemo, useState, useContext } from 'react';
 import { Goal, Award, Crown, Coffee, Calendar, Flame, Activity, ShieldCheck, Zap, ArrowRight, Search, Footprints, Swords, Star as StarIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import { AuthContext } from '../AuthContext';
-import { API_URL, formatPhotoUrl } from '../config';
+import { formatPhotoUrl } from '../config';
+import { api } from '../utils/api';
 import { getPrimaryName, getPlayerAchievements } from '../utils/formatters';
 import AchievementBadge from './AchievementBadge';
+
+const CORES_DO_PODIO = ['#ffd700', '#c0c0c0', '#cd7f32'];
+
+/** Data local no formato das partidas (AAAA-MM-DD). toISOString usaria o fuso UTC. */
+function dataLocalISO(data) {
+  const mes = String(data.getMonth() + 1).padStart(2, '0');
+  const dia = String(data.getDate()).padStart(2, '0');
+  return `${data.getFullYear()}-${mes}-${dia}`;
+}
 
 export default function Dashboard() {
   const { user } = useContext(AuthContext);
   const [stats, setStats] = useState([]);
   const [matches, setMatches] = useState([]);
-  const [period, setPeriod] = useState('all'); // 'month' or 'all'
+  const [period, setPeriod] = useState('season'); // 'month' (mês atual) ou 'season' (ano atual)
   const [tableSearch, setTableSearch] = useState('');
 
   const currentYear = new Date().getFullYear().toString();
   const currentMonth = (new Date().getMonth() + 1).toString().padStart(2, '0');
+  // Prefixo de data das partidas do período: "2026-10" no mês, "2026-" na temporada
+  const prefixoDoPeriodo = period === 'month' ? `${currentYear}-${currentMonth}` : `${currentYear}-`;
 
-  const loadData = () => {
-    let url = `${API_URL}/stats`;
-    if (period === 'month') {
-      url += `?year=${currentYear}&month=${currentMonth}`;
-    }
-    fetch(url)
-      .then(res => res.json())
-      .then(data => {
-        const sorted = data.sort((a, b) => (b.avg_rating || 0) - (a.avg_rating || 0) || (b.goals || 0) - (a.goals || 0));
-        setStats(sorted);
-      });
-
-    fetch(`${API_URL}/matches`)
-      .then(res => res.json())
-      .then(data => setMatches(data || []));
-  };
-
+  // Ranking do período. Sem o year, o /stats devolve o histórico inteiro, e não a
+  // temporada que o botão promete.
   useEffect(() => {
-    loadData();
-  }, [period]);
+    // Alternar o período rápido dispara dois pedidos: a resposta do anterior pode chegar
+    // depois e mostrar o ranking errado. Cancelar o pedido antigo resolve.
+    const controle = new AbortController();
+    const query = period === 'month' ? `?year=${currentYear}&month=${currentMonth}` : `?year=${currentYear}`;
+    api(`/stats${query}`, { signal: controle.signal })
+      .then(data => {
+        const lista = Array.isArray(data) ? data : [];
+        lista.sort((a, b) => (b.avg_rating || 0) - (a.avg_rating || 0) || (b.goals || 0) - (a.goals || 0));
+        setStats(lista);
+      })
+      .catch(err => {
+        if (err.name === 'AbortError') return;
+        console.error('Erro ao carregar o ranking:', err);
+        // Sem dados do período, mostrar o ranking de outro período seria enganoso
+        setStats([]);
+      });
+    return () => controle.abort();
+  }, [period, currentYear, currentMonth]);
+
+  // A agenda não depende do período: carrega uma vez
+  useEffect(() => {
+    const controle = new AbortController();
+    api('/matches', { signal: controle.signal })
+      .then(data => setMatches(Array.isArray(data) ? data : []))
+      .catch(err => {
+        if (err.name !== 'AbortError') console.error('Erro ao carregar as partidas:', err);
+      });
+    return () => controle.abort();
+  }, []);
 
   // Find user personal stats
   const currentUserStats = stats.find(s => user && s.id === user.id);
@@ -55,23 +79,45 @@ export default function Dashboard() {
       return (b.avg_rating || 0) - (a.avg_rating || 0) || (b.goals || 0) - (a.goals || 0);
     })[0];
 
-  // Upcoming or Latest Match
-  const nextScheduledMatch = matches.find(m => m.status === 'scheduled');
+  // Próxima partida: a agendada de data mais próxima a partir de hoje. O /matches vem em
+  // ordem de data DECRESCENTE, então pegar a primeira agendada trazia a mais distante.
+  // Se nenhuma está no futuro (ex.: o admin esqueceu de encerrar), fica a agendada mais
+  // recente.
+  const nextScheduledMatch = useMemo(() => {
+    const hoje = dataLocalISO(new Date());
+    const agendadas = matches.filter(m => m.status === 'scheduled' && m.date);
+    const futuras = agendadas
+      .filter(m => m.date >= hoje)
+      .sort((a, b) => a.date.localeCompare(b.date) || a.id - b.id);
+    return futuras[0] || agendadas[0];
+  }, [matches]);
+  // Em ordem decrescente, a primeira encerrada é a mais recente
   const latestCompletedMatch = matches.find(m => m.status === 'completed');
 
   // Feature 3: O Clube em Números (Estatísticas Coletivas)
-  const totalCompletedMatches = matches.filter(m => m.status === 'completed').length;
+  // Partidas e gols do MESMO período: no modo Mês, dividir os gols do mês pelas partidas
+  // de todos os tempos derrubava a média.
+  const totalCompletedMatches = matches.filter(m =>
+    m.status === 'completed' && String(m.date || '').startsWith(prefixoDoPeriodo)
+  ).length;
   const totalClubGoals = stats.reduce((acc, p) => acc + (p.goals || 0), 0);
   const totalClubAssists = stats.reduce((acc, p) => acc + (p.assists || 0), 0);
-  const avgGoalsPerMatch = totalCompletedMatches > 0 
-    ? (totalClubGoals / totalCompletedMatches).toFixed(1) 
+  const avgGoalsPerMatch = totalCompletedMatches > 0
+    ? (totalClubGoals / totalCompletedMatches).toFixed(1)
     : '0.0';
 
-  // Compute Achievements per player
-  const getAchievements = (playerOrId) => {
-    const p = typeof playerOrId === 'object' ? playerOrId : stats.find(s => s.id === playerOrId);
-    return getPlayerAchievements(p, stats, period);
-  };
+  // Conquistas calculadas uma vez por ranking. getPlayerAchievements percorre o elenco
+  // inteiro para cada atleta (O(n²)) e rodava nas duas listas (celular e computador) a
+  // cada tecla digitada na busca.
+  const conquistasPorAtleta = useMemo(
+    () => new Map(stats.map(p => [p.id, getPlayerAchievements(p, stats, period)])),
+    [stats, period]
+  );
+  const getAchievements = (player) => conquistasPorAtleta.get(player.id) || [];
+
+  // Posição no ranking completo. O índice da lista filtrada pela busca mudava a posição
+  // (buscar um atleta o colocava sempre em 1º, com medalha de ouro).
+  const posicaoNoRanking = useMemo(() => new Map(stats.map((p, i) => [p.id, i + 1])), [stats]);
 
   const container = {
     hidden: { opacity: 0 },
@@ -85,9 +131,10 @@ export default function Dashboard() {
   const userMatches = currentUserStats ? (currentUserStats.matches_count || 0) : 0;
 
   // Filtered stats for table search
-  const filteredStats = stats.filter(p => 
-    (p.nickname || p.username || '').toLowerCase().includes(tableSearch.toLowerCase())
-  );
+  const filteredStats = useMemo(() => {
+    const busca = tableSearch.toLowerCase();
+    return stats.filter(p => (p.nickname || p.username || '').toLowerCase().includes(busca));
+  }, [stats, tableSearch]);
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
@@ -109,10 +156,10 @@ export default function Dashboard() {
         {/* Textos em Cima */}
         <div style={{ marginBottom: '18px' }}>
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', background: 'rgba(0, 245, 155, 0.12)', color: 'var(--primary)', padding: '4px 12px', borderRadius: '20px', fontSize: '0.72rem', fontWeight: '800', marginBottom: '10px', letterSpacing: '0.5px' }}>
-            <Zap size={13} /> TEMPORADA OFICIAL 2026
+            <Zap size={13} /> TEMPORADA OFICIAL {currentYear}
           </div>
           
-          <h2 className="text-2xl font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <h2 className="font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.5px', display: 'flex', alignItems: 'center', gap: '10px' }}>
             Fala, {user ? getPrimaryName(user) : 'Atleta'}! <Swords size={22} color="var(--primary)" />
           </h2>
           <p className="text-muted" style={{ margin: 0, fontSize: '0.88rem', lineHeight: 1.45, maxWidth: '620px' }}>
@@ -123,20 +170,20 @@ export default function Dashboard() {
         {/* Jogos, Gols, Aproveit. e Nota Média em Baixo, cabendo perfeitamente na tela */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
           <div className="glass-card" style={{ padding: '12px 4px', textAlign: 'center', borderRadius: '14px', background: 'rgba(0, 245, 155, 0.06)', border: '1px solid rgba(0, 245, 155, 0.2)' }}>
-            <div className="text-muted font-bold uppercase tracking-wider" style={{ fontSize: '0.62rem' }}>Jogos</div>
-            <div className="font-extrabold text-xl text-primary" style={{ marginTop: '2px' }}>{userMatches}</div>
+            <div className="text-muted font-bold" style={{ fontSize: '0.62rem' }}>Jogos</div>
+            <div className="font-extrabold text-primary" style={{ marginTop: '2px' }}>{userMatches}</div>
           </div>
           <div className="glass-card" style={{ padding: '12px 4px', textAlign: 'center', borderRadius: '14px', background: 'rgba(255, 255, 255, 0.03)' }}>
-            <div className="text-muted font-bold uppercase tracking-wider" style={{ fontSize: '0.62rem' }}>Gols</div>
-            <div className="font-extrabold text-xl text-main" style={{ marginTop: '2px' }}>{currentUserStats ? (currentUserStats.goals || 0) : 0}</div>
+            <div className="text-muted font-bold" style={{ fontSize: '0.62rem' }}>Gols</div>
+            <div className="font-extrabold text-main" style={{ marginTop: '2px' }}>{currentUserStats ? (currentUserStats.goals || 0) : 0}</div>
           </div>
           <div className="glass-card" style={{ padding: '12px 4px', textAlign: 'center', borderRadius: '14px', background: 'rgba(251, 191, 36, 0.06)', border: '1px solid rgba(251, 191, 36, 0.2)' }}>
-            <div className="text-muted font-bold uppercase tracking-wider" style={{ fontSize: '0.62rem' }}>Aproveit.</div>
-            <div className="font-extrabold text-xl text-gold" style={{ marginTop: '2px' }}>{currentUserStats ? currentUserStats.win_rate : 0}%</div>
+            <div className="text-muted font-bold" style={{ fontSize: '0.62rem' }}>Aproveit.</div>
+            <div className="font-extrabold text-gold" style={{ marginTop: '2px' }}>{currentUserStats ? currentUserStats.win_rate : 0}%</div>
           </div>
           <div className="glass-card" style={{ padding: '12px 4px', textAlign: 'center', borderRadius: '14px', background: 'rgba(0, 229, 255, 0.06)', border: '1px solid rgba(0, 229, 255, 0.2)' }}>
-            <div className="text-muted font-bold uppercase tracking-wider" style={{ fontSize: '0.62rem' }}>Nota Média</div>
-            <div className="font-extrabold text-xl" style={{ marginTop: '2px', color: '#00e5ff' }}>
+            <div className="text-muted font-bold" style={{ fontSize: '0.62rem' }}>Nota Média</div>
+            <div className="font-extrabold" style={{ marginTop: '2px', color: '#00e5ff' }}>
               {currentUserStats && currentUserStats.avg_rating > 0 ? currentUserStats.avg_rating.toFixed(1) : '-'}
             </div>
           </div>
@@ -295,40 +342,42 @@ export default function Dashboard() {
       {/* 3. Feature 3: O Clube em Números (Estatísticas Coletivas da Temporada) */}
       <div style={{ marginBottom: '48px' }}>
         <div style={{ marginBottom: '16px' }}>
-          <h3 className="font-extrabold text-xl text-main flex items-center gap-2" style={{ margin: '0 0 4px', letterSpacing: '-0.3px' }}>
+          <h3 className="font-extrabold text-main flex items-center gap-2" style={{ margin: '0 0 4px', letterSpacing: '-0.3px' }}>
             <Activity size={22} color="var(--primary)" /> O Clube em Números
           </h3>
-          <p className="text-muted text-sm" style={{ margin: 0 }}>
-            Estatísticas gerais acumuladas de todas as partidas da temporada.
+          <p className="text-muted" style={{ margin: 0 }}>
+            {period === 'month'
+              ? 'Estatísticas gerais acumuladas das partidas do mês atual.'
+              : `Estatísticas gerais acumuladas das partidas da temporada ${currentYear}.`}
           </p>
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '14px' }}>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Partidas Disputadas</div>
-            <div className="font-extrabold text-2xl text-main" style={{ marginTop: '6px' }}>{totalCompletedMatches}</div>
+            <div className="font-extrabold text-main" style={{ marginTop: '6px' }}>{totalCompletedMatches}</div>
           </div>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Gols Marcados</div>
-            <div className="font-extrabold text-2xl text-primary" style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Goal size={20} />{totalClubGoals}</div>
+            <div className="font-extrabold text-primary" style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Goal size={20} />{totalClubGoals}</div>
           </div>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Assistências</div>
-            <div className="font-extrabold text-2xl text-cyan" style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Footprints size={20} />{totalClubAssists}</div>
+            <div className="font-extrabold text-cyan" style={{ marginTop: '6px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}><Footprints size={20} />{totalClubAssists}</div>
           </div>
           <div className="glass-card" style={{ padding: '18px 16px', textAlign: 'center', borderRadius: '18px' }}>
             <div style={{ fontSize: '0.72rem', fontWeight: 'bold', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Média de Gols / Jogo</div>
-            <div className="font-extrabold text-2xl text-gold" style={{ marginTop: '6px' }}>{avgGoalsPerMatch}</div>
+            <div className="font-extrabold text-gold" style={{ marginTop: '6px' }}>{avgGoalsPerMatch}</div>
           </div>
         </div>
       </div>
 
       {/* 4. Destaques Individuais (Podium Cards com Feature 1: Quem Tá Voando) */}
       <div style={{ marginBottom: '20px' }}>
-        <h3 className="font-extrabold text-xl text-main flex items-center gap-2" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
+        <h3 className="font-extrabold text-main flex items-center gap-2" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
           <Flame size={22} color="#fbbf24" /> Destaques da Temporada
         </h3>
-        <p className="text-muted text-sm" style={{ margin: 0 }}>
+        <p className="text-muted" style={{ margin: 0 }}>
           Os atletas que lideram as notas médias, a artilharia, as assistências e o momento recente do clube.
         </p>
       </div>
@@ -339,7 +388,7 @@ export default function Dashboard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
             <div>
               <span className="badge badge-gold"><Crown size={13} /> {period === 'month' ? 'CRAQUE DO MÊS' : 'MVP DA TEMPORADA'}</span>
-              <h4 className="font-extrabold text-xl text-main" style={{ margin: '12px 0 2px' }}>{mvp ? getPrimaryName(mvp) : '-'}</h4>
+              <h4 className="font-extrabold text-main" style={{ margin: '12px 0 2px' }}>{mvp ? getPrimaryName(mvp) : '-'}</h4>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{mvp ? (mvp.position || 'MEI') : ''}</div>
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--gold)', boxShadow: 'var(--glow-gold)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -350,9 +399,9 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <div className="flex justify-between items-center pt-3 border-t border-border">
-            <span className="text-xs text-muted font-bold tracking-wider uppercase">NOTA MÉDIA</span>
-            <span className="font-extrabold text-xl text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? (mvp.avg_rating || 0).toFixed(1) : '0.0'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
+          <div className="flex justify-between items-center">
+            <span className="text-muted font-bold">NOTA MÉDIA</span>
+            <span className="font-extrabold text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? (mvp.avg_rating || 0).toFixed(1) : '0.0'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
           </div>
         </div>
 
@@ -363,7 +412,7 @@ export default function Dashboard() {
               <span className="badge" style={{ background: 'rgba(255, 107, 0, 0.15)', color: '#ff7700', border: '1px solid rgba(255, 107, 0, 0.35)' }}>
                 <Flame size={13} color="#ff7700" /> QUEM TÁ VOANDO
               </span>
-              <h4 className="font-extrabold text-xl text-main" style={{ margin: '12px 0 2px' }}>{hotPlayer ? getPrimaryName(hotPlayer) : '-'}</h4>
+              <h4 className="font-extrabold text-main" style={{ margin: '12px 0 2px' }}>{hotPlayer ? getPrimaryName(hotPlayer) : '-'}</h4>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{hotPlayer ? (hotPlayer.position || 'MEI') : ''}</div>
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid #ff7700', boxShadow: '0 0 16px rgba(255, 107, 0, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -374,9 +423,9 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <div className="flex justify-between items-center pt-3 border-t border-border">
-            <span className="text-xs text-muted font-bold tracking-wider uppercase">SEQUÊNCIA</span>
-            <span className="font-extrabold text-xl" style={{ color: '#ff7700' }}>
+          <div className="flex justify-between items-center">
+            <span className="text-muted font-bold">SEQUÊNCIA</span>
+            <span className="font-extrabold" style={{ color: '#ff7700' }}>
               {hotPlayer && (hotPlayer.win_streak || 0) > 1 
                 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{hotPlayer.win_streak} Vitórias <Flame size={16} color="#ff7700" /></span>
                 : (hotPlayer && hotPlayer.avg_rating > 0 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{hotPlayer.avg_rating.toFixed(1)} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span> : 'Fase Regular')}
@@ -389,7 +438,7 @@ export default function Dashboard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
             <div>
               <span className="badge badge-volt"><Goal size={13} /> ARTILHEIRO</span>
-              <h4 className="font-extrabold text-xl text-main" style={{ margin: '12px 0 2px' }}>{topScorer ? getPrimaryName(topScorer) : '-'}</h4>
+              <h4 className="font-extrabold text-main" style={{ margin: '12px 0 2px' }}>{topScorer ? getPrimaryName(topScorer) : '-'}</h4>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{topScorer ? (topScorer.position || 'ATA') : ''}</div>
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--primary)', boxShadow: 'var(--glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -400,9 +449,9 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <div className="flex justify-between items-center pt-3 border-t border-border">
-            <span className="text-xs text-muted font-bold tracking-wider uppercase">GOLS MARCADOS</span>
-            <span className="font-extrabold text-xl text-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{topScorer ? topScorer.goals : 0} <Goal size={16} color="var(--primary)" /></span>
+          <div className="flex justify-between items-center">
+            <span className="text-muted font-bold">GOLS MARCADOS</span>
+            <span className="font-extrabold text-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{topScorer ? topScorer.goals : 0} <Goal size={16} color="var(--primary)" /></span>
           </div>
         </div>
 
@@ -411,7 +460,7 @@ export default function Dashboard() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '18px' }}>
             <div>
               <span className="badge badge-cyan"><Coffee size={13} /> MAIOR GARÇOM</span>
-              <h4 className="font-extrabold text-xl text-main" style={{ margin: '12px 0 2px' }}>{topPlaymaker ? getPrimaryName(topPlaymaker) : '-'}</h4>
+              <h4 className="font-extrabold text-main" style={{ margin: '12px 0 2px' }}>{topPlaymaker ? getPrimaryName(topPlaymaker) : '-'}</h4>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{topPlaymaker ? (topPlaymaker.position || 'MEI') : ''}</div>
             </div>
             <div style={{ width: '54px', height: '54px', borderRadius: '50%', background: '#0a0a0f', overflow: 'hidden', border: '2px solid var(--cyan)', boxShadow: '0 0 16px var(--cyan-glow)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -422,9 +471,9 @@ export default function Dashboard() {
               )}
             </div>
           </div>
-          <div className="flex justify-between items-center pt-3 border-t border-border">
-            <span className="text-xs text-muted font-bold tracking-wider uppercase">ASSISTÊNCIAS</span>
-            <span className="font-extrabold text-xl text-cyan" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{topPlaymaker ? topPlaymaker.assists : 0} <Footprints size={16} color="var(--cyan)" /></span>
+          <div className="flex justify-between items-center">
+            <span className="text-muted font-bold">ASSISTÊNCIAS</span>
+            <span className="font-extrabold text-cyan" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{topPlaymaker ? topPlaymaker.assists : 0} <Footprints size={16} color="var(--cyan)" /></span>
           </div>
         </div>
       </div>
@@ -432,11 +481,11 @@ export default function Dashboard() {
       {/* 5. Tabela de Classificação do Elenco com Feature 2: Forma Recente */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: '24px', flexWrap: 'wrap', gap: '16px' }}>
         <div>
-          <h3 className="text-2xl font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
+          <h3 className="font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
             Classificação do Elenco
           </h3>
-          <div className="text-muted text-sm" style={{ margin: 0 }}>
-            {period === 'month' ? 'Ranking referente aos jogos do mês atual' : 'Ranking acumulado de toda a temporada'}
+          <div className="text-muted" style={{ margin: 0 }}>
+            {period === 'month' ? 'Ranking referente aos jogos do mês atual' : `Ranking acumulado da temporada ${currentYear}`}
           </div>
         </div>
 
@@ -448,7 +497,8 @@ export default function Dashboard() {
             <input 
               type="text" 
               className="input" 
-              placeholder="Buscar atleta..." 
+              placeholder="Buscar atleta..."
+              aria-label="Buscar atleta no ranking"
               value={tableSearch}
               onChange={e => setTableSearch(e.target.value)}
               style={{ width: '100%', padding: '8px 12px 8px 34px', fontSize: '0.85rem', marginBottom: 0, borderRadius: '10px', height: '40px' }}
@@ -461,15 +511,17 @@ export default function Dashboard() {
               className={`btn ${period === 'month' ? '' : 'btn-secondary'}`} 
               style={{ padding: '8px 16px', fontSize: '0.82rem', fontWeight: period === 'month' ? 800 : 600, width: 'auto', borderRadius: '10px' }} 
               onClick={() => setPeriod('month')}
+              aria-pressed={period === 'month'}
             >
               Mês Atual
             </button>
             <button 
-              className={`btn ${period === 'all' ? '' : 'btn-secondary'}`} 
-              style={{ padding: '8px 16px', fontSize: '0.82rem', fontWeight: period === 'all' ? 800 : 600, width: 'auto', borderRadius: '10px' }} 
-              onClick={() => setPeriod('all')}
+              className={`btn ${period === 'season' ? '' : 'btn-secondary'}`}
+              style={{ padding: '8px 16px', fontSize: '0.82rem', fontWeight: period === 'season' ? 800 : 600, width: 'auto', borderRadius: '10px' }}
+              onClick={() => setPeriod('season')}
+              aria-pressed={period === 'season'}
             >
-              Temporada Completa
+              Temporada {currentYear}
             </button>
           </div>
         </div>
@@ -478,9 +530,11 @@ export default function Dashboard() {
       {/* Visualização Mobile: Cards Elegantes de Ranking (FotMob / Sofascore style) */}
       <div className="mobile-only" style={{ marginTop: '14px' }}>
         <motion.div variants={container} initial="hidden" animate="show" style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {filteredStats.map((player, idx) => {
-            const isTop3 = idx < 3;
-            const posBadgeColors = ['#ffd700', '#c0c0c0', '#cd7f32'];
+          {filteredStats.map((player) => {
+            // Posição no ranking completo, não na lista filtrada pela busca
+            const posicao = posicaoNoRanking.get(player.id) || 0;
+            const isTop3 = posicao >= 1 && posicao <= 3;
+            const corDoPodio = CORES_DO_PODIO[posicao - 1];
             const hasMatches = (player.matches_count || 0) > 0;
             
             return (
@@ -491,8 +545,8 @@ export default function Dashboard() {
                 style={{
                   padding: '14px 14px',
                   borderRadius: '16px',
-                  border: isTop3 ? `1.5px solid ${posBadgeColors[idx]}40` : '1px solid var(--border)',
-                  background: isTop3 ? `linear-gradient(135deg, ${posBadgeColors[idx]}0a, rgba(16, 19, 28, 0.9))` : 'rgba(14, 17, 26, 0.75)',
+                  border: isTop3 ? `1.5px solid ${corDoPodio}40` : '1px solid var(--border)',
+                  background: isTop3 ? `linear-gradient(135deg, ${corDoPodio}0a, rgba(16, 19, 28, 0.9))` : 'rgba(14, 17, 26, 0.75)',
                   display: 'flex',
                   flexDirection: 'column',
                   gap: '12px'
@@ -506,9 +560,9 @@ export default function Dashboard() {
                       width: '28px', 
                       height: '28px', 
                       borderRadius: '8px', 
-                      background: isTop3 ? `${posBadgeColors[idx]}25` : 'rgba(255,255,255,0.06)',
-                      border: `1.5px solid ${isTop3 ? posBadgeColors[idx] : 'var(--border)'}`,
-                      color: isTop3 ? posBadgeColors[idx] : 'var(--text-muted)',
+                      background: isTop3 ? `${corDoPodio}25` : 'rgba(255,255,255,0.06)',
+                      border: `1.5px solid ${isTop3 ? corDoPodio : 'var(--border)'}`,
+                      color: isTop3 ? corDoPodio : 'var(--text-muted)',
                       fontWeight: 900,
                       fontSize: '0.82rem',
                       display: 'flex',
@@ -516,11 +570,11 @@ export default function Dashboard() {
                       justifyContent: 'center',
                       flexShrink: 0
                     }}>
-                      {idx + 1}
+                      {posicao}
                     </div>
 
                     {/* Foto */}
-                    <div style={{ width: '38px', height: '38px', borderRadius: '50%', overflow: 'hidden', border: isTop3 ? `2px solid ${posBadgeColors[idx]}` : '1px solid var(--border)', background: 'var(--secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                    <div style={{ width: '38px', height: '38px', borderRadius: '50%', overflow: 'hidden', border: isTop3 ? `2px solid ${corDoPodio}` : '1px solid var(--border)', background: 'var(--secondary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
                       {player.photo ? (
                         <img src={formatPhotoUrl(player.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                       ) : (
@@ -646,22 +700,24 @@ export default function Dashboard() {
               </tr>
             </thead>
             <motion.tbody variants={container} initial="hidden" animate="show">
-              {filteredStats.map((player, idx) => {
-                const isTop3 = idx < 3;
-                const posBadgeColors = ['#ffd700', '#c0c0c0', '#cd7f32'];
+              {filteredStats.map((player) => {
+                // Posição no ranking completo, não na lista filtrada pela busca
+                const posicao = posicaoNoRanking.get(player.id) || 0;
+                const isTop3 = posicao >= 1 && posicao <= 3;
+                const corDoPodio = CORES_DO_PODIO[posicao - 1];
                 const hasMatches = (player.matches_count || 0) > 0;
                 
                 return (
-                  <motion.tr variants={item} key={player.id} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }} className="hover:bg-white/5">
+                  <motion.tr variants={item} key={player.id} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }}>
                     <td style={{ padding: '18px 24px', display: 'flex', alignItems: 'center', gap: '16px' }}>
                       {/* Ranking badge */}
                       <div style={{ 
                         width: '30px', 
                         height: '30px', 
                         borderRadius: '9px', 
-                        background: isTop3 ? `${posBadgeColors[idx]}20` : 'rgba(255,255,255,0.04)', 
-                        border: `1.5px solid ${isTop3 ? posBadgeColors[idx] : 'var(--border)'}`,
-                        color: isTop3 ? posBadgeColors[idx] : 'var(--text-muted)',
+                        background: isTop3 ? `${corDoPodio}20` : 'rgba(255,255,255,0.04)', 
+                        border: `1.5px solid ${isTop3 ? corDoPodio : 'var(--border)'}`,
+                        color: isTop3 ? corDoPodio : 'var(--text-muted)',
                         fontWeight: '900', 
                         fontSize: '0.85rem',
                         display: 'flex',
@@ -669,10 +725,10 @@ export default function Dashboard() {
                         justifyContent: 'center',
                         flexShrink: 0
                       }}>
-                        {idx + 1}
+                        {posicao}
                       </div>
 
-                      <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--secondary)', overflow: 'hidden', border: isTop3 ? `2px solid ${posBadgeColors[idx]}` : '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'var(--secondary)', overflow: 'hidden', border: isTop3 ? `2px solid ${corDoPodio}` : '1px solid var(--border)', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                         {player.photo ? (
                           <img src={formatPhotoUrl(player.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                         ) : (
@@ -682,7 +738,7 @@ export default function Dashboard() {
                         )}
                       </div>
                       <div>
-                        <div className="font-bold text-base text-main" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                        <div className="font-bold text-main" style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                           <span>{getPrimaryName(player)}</span>
                           {getAchievements(player).map((ach) => (
                             <AchievementBadge
@@ -725,7 +781,7 @@ export default function Dashboard() {
                           ))}
                         </div>
                       ) : (
-                        <span className="text-muted text-xs font-bold">-</span>
+                        <span className="text-muted font-bold">-</span>
                       )}
                     </td>
 
@@ -739,7 +795,7 @@ export default function Dashboard() {
                           <span style={{ color: 'var(--danger)' }}>{player.losses || 0}</span>
                         </>
                       ) : (
-                        <span className="text-muted text-xs">0 / 0 / 0</span>
+                        <span className="text-muted">0 / 0 / 0</span>
                       )}
                     </td>
 
@@ -749,7 +805,7 @@ export default function Dashboard() {
                           {player.win_rate || 0}%
                         </span>
                       ) : (
-                        <span className="text-muted text-xs">0%</span>
+                        <span className="text-muted">0%</span>
                       )}
                     </td>
 
@@ -764,7 +820,7 @@ export default function Dashboard() {
                           <StarIcon size={14} fill={player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)')} color={player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)')} />{player.avg_rating.toFixed(1)}
                         </span>
                       ) : (
-                        <span className="text-muted text-xs">-</span>
+                        <span className="text-muted">-</span>
                       )}
                     </td>
 
@@ -772,7 +828,7 @@ export default function Dashboard() {
                       {player.goals > 0 ? (
                         <span className="text-primary">{player.goals}</span>
                       ) : (
-                        <span className="text-muted text-xs">0</span>
+                        <span className="text-muted">0</span>
                       )}
                     </td>
 
@@ -780,7 +836,7 @@ export default function Dashboard() {
                       {player.assists > 0 ? (
                         <span className="text-cyan">{player.assists}</span>
                       ) : (
-                        <span className="text-muted text-xs">0</span>
+                        <span className="text-muted">0</span>
                       )}
                     </td>
                   </motion.tr>

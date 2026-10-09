@@ -1,129 +1,201 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Goal, Footprints } from 'lucide-react';
-import { calcOVR } from '../../utils/ovr';
+import { calcOVR, calcTeamOVR } from '../../utils/ovr';
 import { formatPhotoUrl } from '../../config';
 import { getPrimaryName } from '../../utils/formatters';
 
+// Posições de cada setor do campo. Ficam num lugar só porque decidem tanto a linha
+// em que o atleta aparece quanto a cor do selo de posição.
+const POSICOES_DEFESA = ['ZAG', 'LAT', 'DEF', 'LE', 'LD'];
+const POSICOES_MEIO = ['VOL', 'MEI', 'MC'];
+const POSICOES_LATERAL = ['LAT', 'LE', 'LD'];
+
+const COR_DO_SETOR = { gol: '#fbbf24', defesa: '#38bdf8', meio: '#00f59b', ataque: '#f43f5e' };
+
+const posicaoDe = (p) => (p.position || 'MEI').toUpperCase();
+
+/** Setor da posição: goleiro, defesa, meio ou ataque (qualquer outra posição). */
+const setorDaPosicao = (pos) => {
+  if (pos === 'GOL') return 'gol';
+  if (POSICOES_DEFESA.includes(pos)) return 'defesa';
+  if (POSICOES_MEIO.includes(pos)) return 'meio';
+  return 'ataque';
+};
+
+// Laterais nas pontas da linha de defesa, zagueiros no meio
 const sortDefensiveLine = (defList) => {
-  const isLateral = (p) => ['LAT', 'LE', 'LD'].includes((p.position || '').toUpperCase());
+  const isLateral = (p) => POSICOES_LATERAL.includes((p.position || '').toUpperCase());
   const laterais = defList.filter(isLateral);
   const zagueiros = defList.filter(p => !isLateral(p));
-  
+
   if (laterais.length === 0) return zagueiros;
   if (laterais.length === 1) return [...laterais, ...zagueiros];
   return [laterais[0], ...zagueiros, laterais[1]];
 };
 
+/** Linhas do time em campo, do goleiro ao ataque (ou ao contrário, para o time de baixo). */
 const groupTeamByLines = (teamPlayers, isTopTeam) => {
-  const gk = [];
-  const def = [];
-  const mid = [];
-  const fwd = [];
+  const porSetor = { gol: [], defesa: [], meio: [], ataque: [] };
+  (teamPlayers || []).forEach(p => porSetor[setorDaPosicao(posicaoDe(p))].push(p));
 
-  (teamPlayers || []).forEach(p => {
-    const pos = (p.position || 'MEI').toUpperCase();
-    if (pos === 'GOL') gk.push(p);
-    else if (['ZAG', 'LAT', 'DEF', 'LE', 'LD'].includes(pos)) def.push(p);
-    else if (['VOL', 'MEI', 'MC'].includes(pos)) mid.push(p);
-    else fwd.push(p);
-  });
-
-  const sortedDef = sortDefensiveLine(def);
-
-  if (isTopTeam) {
-    return [
-      { label: 'Goleiro', players: gk },
-      { label: 'Defesa', players: sortedDef },
-      { label: 'Meio-Campo', players: mid },
-      { label: 'Ataque', players: fwd }
-    ];
-  } else {
-    return [
-      { label: 'Ataque', players: fwd },
-      { label: 'Meio-Campo', players: mid },
-      { label: 'Defesa', players: sortedDef },
-      { label: 'Goleiro', players: gk }
-    ];
-  }
+  const linhas = [
+    { label: 'Goleiro', players: porSetor.gol },
+    { label: 'Defesa', players: sortDefensiveLine(porSetor.defesa) },
+    { label: 'Meio-Campo', players: porSetor.meio },
+    { label: 'Ataque', players: porSetor.ataque }
+  ];
+  return isTopTeam ? linhas : linhas.reverse();
 };
+
+// Cores de cada time no campo
+const TEMAS = [
+  { cor: '#00f59b', brilhoAtleta: 'rgba(0, 245, 155, 0.45)', brilhoRotulo: 'rgba(0, 245, 155, 0.35)' },
+  { cor: '#ffffff', brilhoAtleta: 'rgba(255, 255, 255, 0.45)', brilhoRotulo: 'rgba(255, 255, 255, 0.3)' }
+];
+
+/** Um atleta no campo: foto com borda do time, selos de OVR e posição, nome e gols. */
+function AtletaNoCampo({ p, tema, gols, assists, onClick }) {
+  const displayName = getPrimaryName(p.nickname, p.username);
+  const pos = posicaoDe(p);
+  const posColor = COR_DO_SETOR[setorDaPosicao(pos)];
+
+  return (
+    <div
+      onClick={() => onClick && onClick(p)}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        cursor: 'pointer',
+        transition: 'transform 0.18s',
+        width: '100%',
+        maxWidth: '84px',
+        textAlign: 'center',
+        margin: '0 auto'
+      }}
+      title="Toque para ver estatísticas e histórico"
+    >
+      {/* Avatar Circular com Borda Brilhante e Badges Flutuantes */}
+      <div style={{ position: 'relative' }}>
+        <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(7, 10, 16, 0.55)', backdropFilter: 'blur(3px)', border: `2px solid ${tema.cor}`, overflow: 'hidden', boxShadow: `0 0 14px ${tema.brilhoAtleta}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          {p.photo ? (
+            <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+          ) : (
+            <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 900, color: tema.cor, textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
+              {p.username?.charAt(0).toUpperCase()}
+            </div>
+          )}
+        </div>
+
+        {/* Badge Flutuante de OVR */}
+        <div style={{ position: 'absolute', top: -4, right: -6, background: '#07080c', border: `1px solid ${tema.cor}`, color: tema.cor, fontSize: '0.60rem', fontWeight: 900, padding: '1px 5px', borderRadius: '7px', boxShadow: '0 2px 6px rgba(0,0,0,0.8)' }}>
+          {calcOVR(p)}
+        </div>
+
+        {/* Badge Flutuante de Posição */}
+        <div style={{ position: 'absolute', bottom: -4, left: '50%', transform: 'translateX(-50%)', background: posColor, color: '#07080c', fontSize: '0.52rem', fontWeight: 900, padding: '0 4px', borderRadius: '4px', boxShadow: '0 2px 6px rgba(0,0,0,0.8)' }}>
+          {pos}
+        </div>
+      </div>
+
+      {/* Rótulo com Nome e Contadores de Gol/Assist */}
+      <div style={{ background: 'rgba(7, 8, 14, 0.94)', padding: '2px 7px', borderRadius: '7px', fontSize: '0.70rem', fontWeight: 800, color: '#fff', marginTop: '5px', whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,0.12)', maxWidth: '95px', overflow: 'hidden', textOverflow: 'ellipsis', boxShadow: '0 4px 12px rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', gap: '3px' }}>
+        <span>{displayName}</span>
+        {gols > 0 && <span style={{ color: 'var(--primary)', fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '1px' }}><Goal size={10} />{gols}</span>}
+        {assists > 0 && <span style={{ color: '#fbbf24', fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '1px' }}><Footprints size={10} />{assists}</span>}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Um time no campo: o rótulo com nome e OVR e as linhas de atletas.
+ * - `goleiroEmCima`: o time de cima tem o goleiro no alto; o de baixo, invertido.
+ * - `rotuloEmBaixo`: o time de baixo mostra o rótulo depois das linhas.
+ * - `destaque`: time sozinho no campo, com o rótulo um pouco maior.
+ * - `espacamento`: o respiro entre o time e a linha do meio-campo.
+ */
+function TimeNoCampo({ time, tema, goleiroEmCima = true, rotuloEmBaixo = false, destaque = false, espacamento, ovrDoTime, getPlayerEventCount, onPlayerClick }) {
+  const rotulo = (
+    <div style={{ textAlign: 'center' }}>
+      <span
+        style={{
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '8px',
+          fontSize: destaque ? '0.84rem' : '0.80rem',
+          fontWeight: 900,
+          padding: destaque ? '5px 16px' : '4px 16px',
+          borderRadius: destaque ? '16px' : '14px',
+          background: 'rgba(7, 8, 12, 0.88)',
+          color: tema.cor,
+          border: `1.5px solid ${tema.cor}`,
+          boxShadow: `0 0 ${destaque ? 16 : 14}px ${tema.brilhoRotulo}`,
+          textTransform: 'uppercase',
+          letterSpacing: '0.4px'
+        }}
+      >
+        <span>{time.name}</span>
+        <span style={{ opacity: 0.6 }}>•</span>
+        <span>OVR {ovrDoTime}</span>
+      </span>
+    </div>
+  );
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, ...espacamento }}>
+      {!rotuloEmBaixo && rotulo}
+
+      {groupTeamByLines(time.players, goleiroEmCima).map(line => {
+        if (line.players.length === 0) return null;
+        return (
+          <div
+            key={line.label}
+            style={{
+              display: 'grid',
+              gridTemplateColumns: `repeat(${line.players.length}, 1fr)`,
+              justifyItems: 'center',
+              alignItems: 'center',
+              width: '100%',
+              maxWidth: '460px',
+              margin: '0 auto',
+              padding: '0 4px'
+            }}
+          >
+            {line.players.map(p => (
+              <AtletaNoCampo
+                key={p.id}
+                p={p}
+                tema={tema}
+                gols={getPlayerEventCount(p.id, 'goals')}
+                assists={getPlayerEventCount(p.id, 'assists')}
+                onClick={onPlayerClick}
+              />
+            ))}
+          </div>
+        );
+      })}
+
+      {rotuloEmBaixo && rotulo}
+    </div>
+  );
+}
 
 export default function TacticalPitch({
   match,
   abaDoCampo = 'both',
   onPlayerClick,
   getPlayerEventCount = () => 0,
-  getTeamOVR = (team) => {
-    if (!team?.players?.length) return 0;
-    const sum = team.players.reduce((acc, p) => acc + calcOVR(p), 0);
-    return Math.round(sum / team.players.length);
-  }
+  getTeamOVR = (team) => calcTeamOVR(team?.players)
 }) {
   if (!match || !match.teams) return null;
 
-  const renderTacticalPlayer = (p, themeColor, glowColor) => {
-    const gCount = getPlayerEventCount(p.id, 'goals');
-    const aCount = getPlayerEventCount(p.id, 'assists');
-    const displayName = getPrimaryName(p.nickname, p.username);
-    const pOvr = calcOVR(p);
-    const pos = (p.position || 'MEI').toUpperCase();
-    const posColor = pos === 'GOL' 
-      ? '#fbbf24' 
-      : (['ZAG', 'LAT', 'DEF', 'LE', 'LD'].includes(pos) 
-        ? '#38bdf8' 
-        : (['VOL', 'MEI', 'MC'].includes(pos) ? '#00f59b' : '#f43f5e'));
-
-    return (
-      <div 
-        key={p.id}
-        onClick={() => onPlayerClick && onPlayerClick(p)}
-        style={{ 
-          display: 'flex', 
-          flexDirection: 'column', 
-          alignItems: 'center', 
-          justifyContent: 'center',
-          cursor: 'pointer', 
-          transition: 'transform 0.18s',
-          width: '100%',
-          maxWidth: '84px',
-          textAlign: 'center',
-          margin: '0 auto'
-        }}
-        className="hover:scale-110"
-        title="Toque para ver estatísticas e histórico"
-      >
-        {/* Avatar Circular com Borda Brilhante e Badges Flutuantes */}
-        <div style={{ position: 'relative' }}>
-          <div style={{ width: '44px', height: '44px', borderRadius: '50%', background: 'rgba(7, 10, 16, 0.55)', backdropFilter: 'blur(3px)', border: `2px solid ${themeColor}`, overflow: 'hidden', boxShadow: `0 0 14px ${glowColor}`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {p.photo ? (
-              <img src={formatPhotoUrl(p.photo)} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-            ) : (
-              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', fontWeight: 900, color: themeColor, textShadow: '0 2px 6px rgba(0,0,0,0.9)' }}>
-                {p.username?.charAt(0).toUpperCase()}
-              </div>
-            )}
-          </div>
-
-          {/* Badge Flutuante de OVR */}
-          <div style={{ position: 'absolute', top: -4, right: -6, background: '#07080c', border: `1px solid ${themeColor}`, color: themeColor, fontSize: '0.60rem', fontWeight: 900, padding: '1px 5px', borderRadius: '7px', boxShadow: '0 2px 6px rgba(0,0,0,0.8)' }}>
-            {pOvr}
-          </div>
-
-          {/* Badge Flutuante de Posição */}
-          <div style={{ position: 'absolute', bottom: -4, left: '50%', transform: 'translateX(-50%)', background: posColor, color: '#07080c', fontSize: '0.52rem', fontWeight: 900, padding: '0 4px', borderRadius: '4px', boxShadow: '0 2px 6px rgba(0,0,0,0.8)' }}>
-            {pos}
-          </div>
-        </div>
-
-        {/* Rótulo com Nome e Contadores de Gol/Assist */}
-        <div style={{ background: 'rgba(7, 8, 14, 0.94)', padding: '2px 7px', borderRadius: '7px', fontSize: '0.70rem', fontWeight: 800, color: '#fff', marginTop: '5px', whiteSpace: 'nowrap', border: '1px solid rgba(255,255,255,0.12)', maxWidth: '95px', overflow: 'hidden', textOverflow: 'ellipsis', boxShadow: '0 4px 12px rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', gap: '3px' }}>
-          <span>{displayName}</span>
-          {gCount > 0 && <span style={{ color: 'var(--primary)', fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '1px' }}><Goal size={10} />{gCount}</span>}
-          {aCount > 0 && <span style={{ color: '#fbbf24', fontSize: '0.66rem', display: 'inline-flex', alignItems: 'center', gap: '1px' }}><Footprints size={10} />{aCount}</span>}
-        </div>
-      </div>
-    );
-  };
+  // O que é igual para todo time desenhado no campo
+  const comum = { getPlayerEventCount, onPlayerClick };
+  // Time sozinho no campo: 'team0' ou 'team1'
+  const indiceSozinho = abaDoCampo === 'team0' ? 0 : 1;
 
   return (
     <motion.div 
@@ -214,201 +286,38 @@ export default function TacticalPitch({
           <>
             {/* Metade Superior: Time 0 */}
             {match.teams[0] && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, paddingBottom: '10px' }}>
-                <div style={{ textAlign: 'center' }}>
-                  <span 
-                    style={{ 
-                      display: 'inline-flex', 
-                      alignItems: 'center', 
-                      gap: '8px', 
-                      fontSize: '0.80rem', 
-                      fontWeight: 900, 
-                      padding: '4px 16px', 
-                      borderRadius: '14px', 
-                      background: 'rgba(7, 8, 12, 0.88)', 
-                      color: '#00f59b', 
-                      border: '1.5px solid #00f59b',
-                      boxShadow: '0 0 14px rgba(0, 245, 155, 0.35)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.4px'
-                    }}
-                  >
-                    <span>{match.teams[0].name}</span>
-                    <span style={{ opacity: 0.6 }}>•</span>
-                    <span>OVR {getTeamOVR(match.teams[0])}</span>
-                  </span>
-                </div>
-
-                {groupTeamByLines(match.teams[0].players, true).map((line, lIdx) => {
-                  if (line.players.length === 0) return null;
-                  return (
-                    <div 
-                      key={lIdx} 
-                      style={{ 
-                        display: 'grid', 
-                        gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
-                        justifyItems: 'center', 
-                        alignItems: 'center', 
-                        width: '100%', 
-                        maxWidth: '460px', 
-                        margin: '0 auto', 
-                        padding: '0 4px' 
-                      }}
-                    >
-                      {line.players.map(p => renderTacticalPlayer(p, '#00f59b', 'rgba(0, 245, 155, 0.45)'))}
-                    </div>
-                  );
-                })}
-              </div>
+              <TimeNoCampo
+                {...comum}
+                time={match.teams[0]}
+                tema={TEMAS[0]}
+                ovrDoTime={getTeamOVR(match.teams[0])}
+                espacamento={{ paddingBottom: '10px' }}
+              />
             )}
 
-            {/* Metade Inferior: Time 1 */}
+            {/* Metade Inferior: Time 1, de frente para o time de cima */}
             {match.teams[1] && (
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, paddingTop: '10px' }}>
-                {groupTeamByLines(match.teams[1].players, false).map((line, lIdx) => {
-                  if (line.players.length === 0) return null;
-                  return (
-                    <div 
-                      key={lIdx} 
-                      style={{ 
-                        display: 'grid', 
-                        gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
-                        justifyItems: 'center', 
-                        alignItems: 'center', 
-                        width: '100%', 
-                        maxWidth: '460px', 
-                        margin: '0 auto', 
-                        padding: '0 4px' 
-                      }}
-                    >
-                      {line.players.map(p => renderTacticalPlayer(p, '#ffffff', 'rgba(255, 255, 255, 0.45)'))}
-                    </div>
-                  );
-                })}
-
-                <div style={{ textAlign: 'center' }}>
-                  <span 
-                    style={{ 
-                      display: 'inline-flex', 
-                      alignItems: 'center', 
-                      gap: '8px', 
-                      fontSize: '0.80rem', 
-                      fontWeight: 900, 
-                      padding: '4px 16px', 
-                      borderRadius: '14px', 
-                      background: 'rgba(7, 8, 12, 0.88)', 
-                      color: '#ffffff', 
-                      border: '1.5px solid #ffffff',
-                      boxShadow: '0 0 14px rgba(255, 255, 255, 0.3)',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.4px'
-                    }}
-                  >
-                    <span>{match.teams[1].name}</span>
-                    <span style={{ opacity: 0.6 }}>•</span>
-                    <span>OVR {getTeamOVR(match.teams[1])}</span>
-                  </span>
-                </div>
-              </div>
+              <TimeNoCampo
+                {...comum}
+                time={match.teams[1]}
+                tema={TEMAS[1]}
+                ovrDoTime={getTeamOVR(match.teams[1])}
+                goleiroEmCima={false}
+                rotuloEmBaixo
+                espacamento={{ paddingTop: '10px' }}
+              />
             )}
           </>
-        ) : abaDoCampo === 'team0' ? (
-          match.teams[0] && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, padding: '12px 0' }}>
-              <div style={{ textAlign: 'center' }}>
-                <span 
-                  style={{ 
-                    display: 'inline-flex', 
-                    alignItems: 'center', 
-                    gap: '8px', 
-                    fontSize: '0.84rem', 
-                    fontWeight: 900, 
-                    padding: '5px 16px', 
-                    borderRadius: '16px', 
-                    background: 'rgba(7, 8, 12, 0.88)', 
-                    color: '#00f59b', 
-                    border: '1.5px solid #00f59b',
-                    boxShadow: '0 0 16px rgba(0, 245, 155, 0.35)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.4px'
-                  }}
-                >
-                  <span>{match.teams[0].name}</span>
-                  <span style={{ opacity: 0.6 }}>•</span>
-                  <span>OVR {getTeamOVR(match.teams[0])}</span>
-                </span>
-              </div>
-
-              {groupTeamByLines(match.teams[0].players, true).map((line, lIdx) => {
-                if (line.players.length === 0) return null;
-                return (
-                  <div 
-                    key={lIdx} 
-                    style={{ 
-                      display: 'grid', 
-                      gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
-                      justifyItems: 'center', 
-                      alignItems: 'center', 
-                      width: '100%', 
-                      maxWidth: '460px', 
-                      margin: '0 auto', 
-                      padding: '0 4px' 
-                    }}
-                  >
-                    {line.players.map(p => renderTacticalPlayer(p, '#00f59b', 'rgba(0, 245, 155, 0.45)'))}
-                  </div>
-                );
-              })}
-            </div>
-          )
         ) : (
-          match.teams[1] && (
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-around', zIndex: 5, padding: '12px 0' }}>
-              <div style={{ textAlign: 'center' }}>
-                <span 
-                  style={{ 
-                    display: 'inline-flex', 
-                    alignItems: 'center', 
-                    gap: '8px', 
-                    fontSize: '0.84rem', 
-                    fontWeight: 900, 
-                    padding: '5px 16px', 
-                    borderRadius: '16px', 
-                    background: 'rgba(7, 8, 12, 0.88)', 
-                    color: '#ffffff', 
-                    border: '1.5px solid #ffffff',
-                    boxShadow: '0 0 16px rgba(255, 255, 255, 0.3)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.4px'
-                  }}
-                >
-                  <span>{match.teams[1].name}</span>
-                  <span style={{ opacity: 0.6 }}>•</span>
-                  <span>OVR {getTeamOVR(match.teams[1])}</span>
-                </span>
-              </div>
-
-              {groupTeamByLines(match.teams[1].players, true).map((line, lIdx) => {
-                if (line.players.length === 0) return null;
-                return (
-                  <div 
-                    key={lIdx} 
-                    style={{ 
-                      display: 'grid', 
-                      gridTemplateColumns: `repeat(${line.players.length}, 1fr)`, 
-                      justifyItems: 'center', 
-                      alignItems: 'center', 
-                      width: '100%', 
-                      maxWidth: '460px', 
-                      margin: '0 auto', 
-                      padding: '0 4px' 
-                    }}
-                  >
-                    {line.players.map(p => renderTacticalPlayer(p, '#ffffff', 'rgba(255, 255, 255, 0.45)'))}
-                  </div>
-                );
-              })}
-            </div>
+          match.teams[indiceSozinho] && (
+            <TimeNoCampo
+              {...comum}
+              time={match.teams[indiceSozinho]}
+              tema={TEMAS[indiceSozinho]}
+              ovrDoTime={getTeamOVR(match.teams[indiceSozinho])}
+              destaque
+              espacamento={{ padding: '12px 0' }}
+            />
           )
         )}
       </div>

@@ -38,10 +38,17 @@ export default function AchievementBadge({
   const fontSize = isXs ? '0.62rem' : isMd ? '0.78rem' : '0.69rem';
   const borderRadius = isXs ? '6px' : isMd ? '10px' : '8px';
 
+  const descricao = badge.title || badge.description || '';
+  // A versão compacta é só um ícone: sem um nome acessível, o leitor de tela não
+  // anunciaria a medalha (o title sozinho não é lido de forma confiável)
+  const semTexto = variant === 'compact' || !showLabel;
+
   return (
     <span
       className={`achievement-badge ${className}`}
-      title={badge.title || badge.description || ''}
+      title={descricao}
+      role={semTexto ? 'img' : undefined}
+      aria-label={semTexto ? descricao : undefined}
       style={{
         display: 'inline-flex',
         alignItems: 'center',

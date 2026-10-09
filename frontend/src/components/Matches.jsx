@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Calendar, Plus, ChevronRight, Clock, CheckCircle2, Trash2, MapPin, Swords, Shuffle } from 'lucide-react';
+import { Calendar, Plus, ChevronRight, Clock, CheckCircle2, Trash2, MapPin, Swords, Shuffle, RefreshCw } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { API_URL, authHeaders, isAdminUser } from '../config';
+import { isAdminUser } from '../config';
+import { api } from '../utils/api';
 import { AuthContext } from '../AuthContext';
 
 export default function Matches() {
@@ -11,7 +12,13 @@ export default function Matches() {
   const isAdmin = isAdminUser(user);
 
   const [matches, setMatches] = useState([]);
+  // Sem isto, a lista vazia durante o carregamento (ou depois de uma falha) aparecia
+  // como "Nenhuma partida registrada"
+  const [carregando, setCarregando] = useState(true);
+  const [erroLista, setErroLista] = useState(null);
   const [isCreating, setIsCreating] = useState(false);
+  // Trava o botão enquanto a partida é criada: dois toques criavam duas partidas
+  const [salvandoPartida, setSalvandoPartida] = useState(false);
   const getTodayDate = () => {
     const d = new Date();
     const y = d.getFullYear();
@@ -28,15 +35,22 @@ export default function Matches() {
   const [newOpponent, setNewOpponent] = useState('');
   const navigate = useNavigate();
 
-  const loadMatches = () => {
-    fetch(`${API_URL}/matches`)
-      .then(res => res.json())
-      .then(data => setMatches(data));
-  };
+  const loadMatches = useCallback(async () => {
+    setErroLista(null);
+    try {
+      const data = await api('/matches');
+      setMatches(Array.isArray(data) ? data : []);
+    } catch (err) {
+      console.error('Erro ao carregar as partidas:', err);
+      setErroLista(err.message);
+    } finally {
+      setCarregando(false);
+    }
+  }, []);
 
   useEffect(() => {
     loadMatches();
-  }, []);
+  }, [loadMatches]);
 
   const handleCreate = async (e) => {
     e.preventDefault();
@@ -48,36 +62,41 @@ export default function Matches() {
       alert('Informe o nome do time adversário.');
       return;
     }
-    const res = await fetch(`${API_URL}/matches`, {
-      method: 'POST',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ 
-        date: newDate,
-        time: timeToSend,
-        location: locToSend,
-        type: newType,
-        opponent: contraRival ? newOpponent.trim() : undefined
-      })
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      alert(data.error || 'Não foi possível criar a partida.');
-      return;
+    if (salvandoPartida) return;
+
+    setSalvandoPartida(true);
+    try {
+      const data = await api('/matches', {
+        method: 'POST',
+        user,
+        body: {
+          date: newDate,
+          time: timeToSend,
+          location: locToSend,
+          type: newType,
+          opponent: contraRival ? newOpponent.trim() : undefined
+        }
+      });
+      navigate(`/matches/${data.id}`);
+    } catch (err) {
+      console.error('Erro ao criar a partida:', err);
+      alert(err.message);
+    } finally {
+      setSalvandoPartida(false);
     }
-    navigate(`/matches/${data.id}`);
   };
 
   const handleDeleteMatch = async (id, e) => {
     e.preventDefault();
     e.stopPropagation();
     if (window.confirm('Tem certeza que deseja excluir esta partida do histórico?')) {
-      const res = await fetch(`${API_URL}/matches/${id}`, { method: 'DELETE', headers: authHeaders(user) });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Não foi possível excluir a partida.');
-        return;
+      try {
+        await api(`/matches/${id}`, { method: 'DELETE', user });
+        loadMatches();
+      } catch (err) {
+        console.error('Erro ao excluir a partida:', err);
+        alert(err.message);
       }
-      loadMatches();
     }
   };
 
@@ -99,7 +118,7 @@ export default function Matches() {
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
-      <div className="flex justify-between items-center mb-6 flex-wrap gap-3">
+      <div className="flex justify-between items-center mb-6 gap-3">
         <h2 className="font-extrabold flex items-center gap-3 text-main" style={{ fontSize: '1.25rem', margin: 0 }}>
           <div style={{ background: 'rgba(57, 255, 20, 0.1)', padding: '8px', borderRadius: '10px', boxShadow: 'var(--glow)' }}>
             <Calendar color="var(--primary)" size={20} />
@@ -228,8 +247,8 @@ export default function Matches() {
             <button type="button" className="btn btn-secondary" style={{ width: 'auto', padding: '9px 18px' }} onClick={() => setIsCreating(false)}>
               Cancelar
             </button>
-            <button type="submit" className="btn" style={{ width: 'auto', padding: '9px 24px', fontWeight: 800 }}>
-              Confirmar Agendamento
+            <button type="submit" className="btn" style={{ width: 'auto', padding: '9px 24px', fontWeight: 800 }} disabled={salvandoPartida}>
+              {salvandoPartida ? 'Agendando...' : 'Confirmar Agendamento'}
             </button>
           </div>
         </motion.form>
@@ -238,7 +257,7 @@ export default function Matches() {
       {Object.keys(groupedMatches).length > 0 ? (
         Object.entries(groupedMatches).map(([monthYear, group]) => (
           <div key={monthYear} className="mb-8">
-            <h3 className="text-lg font-bold mb-3 text-primary border-b pb-2" style={{ borderColor: 'var(--border)' }}>
+            <h3 className="font-bold mb-3 text-primary">
               {monthYear}
             </h3>
             <motion.div variants={container} initial="hidden" animate="show" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -304,6 +323,7 @@ export default function Matches() {
                           hidden={!isAdmin}
                           onClick={(e) => handleDeleteMatch(match.id, e)} 
                           title="Excluir partida do histórico"
+                          aria-label="Excluir partida do histórico"
                           style={{ 
                             background: 'rgba(239, 68, 68, 0.08)', 
                             border: '1px solid rgba(239, 68, 68, 0.25)', 
@@ -379,9 +399,18 @@ export default function Matches() {
             </motion.div>
           </div>
         ))
+      ) : erroLista ? (
+        <div className="text-center text-muted mt-8">
+          <div className="mb-3">Não foi possível carregar as partidas. {erroLista}</div>
+          <button className="btn btn-secondary" style={{ width: 'auto' }} onClick={loadMatches}>
+            <RefreshCw size={16} /> Tentar de novo
+          </button>
+        </div>
+      ) : carregando ? (
+        <div className="text-center text-muted mt-8">Carregando partidas...</div>
       ) : (
         !isCreating && (
-          <div className="text-center text-muted mt-8 text-lg">Nenhuma partida registrada no histórico.</div>
+          <div className="text-center text-muted mt-8">Nenhuma partida registrada no histórico.</div>
         )
       )}
     </motion.div>

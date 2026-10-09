@@ -61,6 +61,12 @@ export function calcBaseOVR(player) {
   return calcOVR({ ...player, ...player.base_attrs });
 }
 
+/** OVR médio de um time (lista de atletas), arredondado. 0 se o time está vazio. */
+export function calcTeamOVR(players) {
+  if (!Array.isArray(players) || players.length === 0) return 0;
+  return Math.round(players.reduce((soma, p) => soma + calcOVR(p), 0) / players.length);
+}
+
 /** Quanto o OVR subiu (positivo) ou caiu (negativo) pelo desempenho nas partidas. */
 export function ovrTrend(player) {
   if (!player || !player.form) return 0;

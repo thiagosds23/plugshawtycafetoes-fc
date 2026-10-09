@@ -1,7 +1,6 @@
 import React from 'react';
 import { calcBaseOVR, ovrTrend } from '../utils/ovr';
-
-const formatarNota = (valor) => Number(valor).toLocaleString('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+import { formatarNota } from '../utils/formatters';
 
 /**
  * Explica em uma linha por que a carta subiu ou caiu.
@@ -13,12 +12,15 @@ const formatarNota = (valor) => Number(valor).toLocaleString('pt-BR', { minimumF
 export default function ResumoForma({ atleta }) {
   if (!atleta || !atleta.form) return null;
 
-  const { partidas, nota, nota_esperada: notaEsperada } = atleta.form;
+  const {
+    partidas,
+    nota,
+    nota_esperada: notaEsperada,
+    bonus_gol: bonusGol,
+    bonus_assist: bonusAssist
+  } = atleta.form;
   const variacao = ovrTrend(atleta);
   const ovrBase = calcBaseOVR(atleta);
-
-  // Finalização ou passe acima do resto indica bônus por participação nos gols do time
-  const teveBonusOfensivo = (atleta.form.shooting > atleta.form.pace) || (atleta.form.passing > atleta.form.pace);
 
   let motivo;
   if (nota === null || nota === undefined) {
@@ -30,7 +32,18 @@ export default function ResumoForma({ atleta }) {
   } else {
     motivo = `nota ${formatarNota(nota)}, dentro do esperado para OVR ${ovrBase}`;
   }
-  if (teveBonusOfensivo) motivo += ', com participação acima do esperado nos gols';
+
+  // O bônus de gols/assistências vem pronto do backend. Antes a frase era deduzida
+  // comparando SHO/PAS com PAC, e aparecia por engano quando o PAC batia no teto de 99.
+  const bonusDeGol = Number(bonusGol) > 0;
+  const bonusDeAssistencia = Number(bonusAssist) > 0;
+  if (bonusDeGol && bonusDeAssistencia) {
+    motivo += ', com gols e assistências acima do esperado para a posição';
+  } else if (bonusDeGol) {
+    motivo += ', com participação acima do esperado nos gols';
+  } else if (bonusDeAssistencia) {
+    motivo += ', com assistências acima do esperado para a posição';
+  }
 
   const cor = variacao > 0 ? 'var(--primary)' : variacao < 0 ? '#ef4444' : 'var(--text-muted)';
   const destaque = variacao > 0 ? `▲ +${variacao} OVR` : variacao < 0 ? `▼ ${variacao} OVR` : 'OVR estável';

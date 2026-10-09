@@ -1,16 +1,14 @@
-import React, { useState } from 'react';
+import React, { useState, useId } from 'react';
 import { motion } from 'framer-motion';
 import { X, Users, Save } from 'lucide-react';
-import { calcOVR } from '../../utils/ovr';
+import { calcOVR, calcTeamOVR } from '../../utils/ovr';
 import { getPrimaryName } from '../../utils/formatters';
+import FundoModal from './FundoModal';
 
 const TIMES = [
   { key: 'A', name: 'COM COLETE', curto: 'COM', cor: '#00f59b', fundo: 'rgba(0, 245, 155, 0.12)', borda: 'rgba(0, 245, 155, 0.4)' },
   { key: 'B', name: 'SEM COLETE', curto: 'SEM', cor: '#ffffff', fundo: 'rgba(255, 255, 255, 0.1)', borda: 'rgba(255, 255, 255, 0.4)' }
 ];
-
-const mediaOVR = (lista) =>
-  lista.length ? Math.round(lista.reduce((soma, p) => soma + calcOVR(p), 0) / lista.length) : 0;
 
 /**
  * Montagem dos times à mão, sem sorteio. Cada convocado vai para COM COLETE ou
@@ -18,6 +16,7 @@ const mediaOVR = (lista) =>
  * Só salva quando todos os convocados têm time e nenhum dos dois lados está vazio.
  */
 export default function ManualTeamsModal({ players = [], onClose, onSave, isSaving = false }) {
+  const tituloId = useId();
   // id do atleta -> 'A' | 'B'
   const [lado, setLado] = useState({});
 
@@ -32,7 +31,7 @@ export default function ManualTeamsModal({ players = [], onClose, onSave, isSavi
   const escolher = (playerId, key) => setLado(prev => ({ ...prev, [playerId]: key }));
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
+    <FundoModal tituloId={tituloId} onClose={onClose}>
       <motion.div
         initial={{ scale: 0.95, opacity: 0 }}
         animate={{ scale: 1, opacity: 1 }}
@@ -40,10 +39,10 @@ export default function ManualTeamsModal({ players = [], onClose, onSave, isSavi
         style={{ width: '100%', maxWidth: '520px', maxHeight: '88vh', padding: '22px 18px', background: '#0a0a0f', display: 'flex', flexDirection: 'column' }}
       >
         <div className="flex justify-between items-center mb-3">
-          <h3 className="font-extrabold text-lg text-main flex items-center gap-2" style={{ margin: 0 }}>
+          <h3 id={tituloId} className="font-extrabold text-main flex items-center gap-2" style={{ margin: 0 }}>
             <Users color="var(--primary)" size={20} /> Montar Times Manualmente
           </h3>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }} title="Fechar">
+          <button type="button" onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }} title="Fechar" aria-label="Fechar">
             <X size={20} />
           </button>
         </div>
@@ -56,7 +55,7 @@ export default function ManualTeamsModal({ players = [], onClose, onSave, isSavi
               <div key={time.key} style={{ padding: '10px 12px', borderRadius: '12px', border: `1px solid ${time.borda}`, background: time.fundo, textAlign: 'center' }}>
                 <div className="font-extrabold" style={{ color: time.cor, fontSize: '0.88rem' }}>{time.name}</div>
                 <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', marginTop: '2px' }}>
-                  {lista.length} atleta(s) • OVR {mediaOVR(lista)}
+                  {lista.length} atleta(s) • OVR {calcTeamOVR(lista)}
                 </div>
               </div>
             );
@@ -108,16 +107,16 @@ export default function ManualTeamsModal({ players = [], onClose, onSave, isSavi
         <div style={{ fontSize: '0.78rem', color: faltam > 0 ? '#fbbf24' : 'var(--text-muted)', textAlign: 'center', margin: '12px 0 10px' }}>
           {faltam > 0
             ? `Falta escolher o time de ${faltam} atleta(s).`
-            : `Diferença de OVR entre os times: ${Math.abs(mediaOVR(timeA) - mediaOVR(timeB))}`}
+            : `Diferença de OVR entre os times: ${Math.abs(calcTeamOVR(timeA) - calcTeamOVR(timeB))}`}
         </div>
 
         <div className="flex gap-3">
           <button
             type="button"
-            className="btn flex-1"
+            className="btn"
             disabled={!podeSalvar}
             onClick={() => onSave(timeA.map(p => p.id), timeB.map(p => p.id))}
-            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+            style={{ flex: 1, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
           >
             <Save size={16} /> {isSaving ? 'Salvando...' : 'Salvar Times'}
           </button>
@@ -126,6 +125,6 @@ export default function ManualTeamsModal({ players = [], onClose, onSave, isSavi
           </button>
         </div>
       </motion.div>
-    </div>
+    </FundoModal>
   );
 }

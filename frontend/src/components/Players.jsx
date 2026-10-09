@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useContext } from 'react';
-import { useLocation } from 'react-router-dom';
+import React, { useEffect, useState, useContext, useCallback, useRef } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { 
   Edit2, Plus, Loader2, UserCheck, Users, Search, 
   ArrowUpDown, FileSpreadsheet, ClipboardList, ExternalLink, 
@@ -10,7 +10,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import { AuthContext } from '../AuthContext';
 import { calcOVR } from '../utils/ovr';
-import { API_URL, isAdminUser } from '../config';
+import { formatPhotoUrl, isAdminUser } from '../config';
+import { api } from '../utils/api';
+import { baixarBackup } from '../utils/backup';
+import { useEscapeKey } from '../utils/useEscapeKey';
 import { waitForImages } from '../utils/exportImage';
 import { formatHeight, getPrimaryName } from '../utils/formatters';
 import FutCard from './FutCard';
@@ -23,6 +26,10 @@ import '../fut-card.css';
 
 export default function Players() {
   const { user, updateUser } = useContext(AuthContext);
+  const isAdmin = isAdminUser(user);
+  const meuId = user?.id;
+  const navigate = useNavigate();
+  const location = useLocation();
 
   const [players, setPlayers] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
@@ -48,6 +55,9 @@ export default function Players() {
   const [evalConfirmationView, setEvalConfirmationView] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
 
+  const fecharAvaliacao = () => { setShowEvalModal(false); setEvalConfirmationView(false); };
+  useEscapeKey(fecharAvaliacao, showEvalModal);
+
   // Player Stats Modal state
   const [selectedPlayerModal, setSelectedPlayerModal] = useState(null);
   const [playerHistory, setPlayerHistory] = useState([]);
@@ -56,21 +66,27 @@ export default function Players() {
   const [downloadingCardId, setDownloadingCardId] = useState(null);
   const [isDownloadingBackup, setIsDownloadingBackup] = useState(false);
 
+  // Histórico do atleta aberto no perfil. Trocar de atleta antes da resposta chegar
+  // cancela o pedido anterior, senão o histórico de um aparecia no perfil do outro.
+  // Erro do servidor vira lista vazia: um { error } no lugar da lista quebrava o .map.
+  const historicoId = selectedPlayerModal?.id;
   useEffect(() => {
-    if (selectedPlayerModal) {
-      setPlayerHistoryLoading(true);
-      fetch(`${API_URL}/users/${selectedPlayerModal.id}/history`)
-        .then(res => res.json())
-        .then(data => {
-          setPlayerHistory(data);
-          setPlayerHistoryLoading(false);
-        })
-        .catch(err => {
-          console.error(err);
-          setPlayerHistoryLoading(false);
-        });
-    }
-  }, [selectedPlayerModal]);
+    if (!historicoId) return undefined;
+    const controle = new AbortController();
+    setPlayerHistory([]);
+    setPlayerHistoryLoading(true);
+    api(`/users/${historicoId}/history`, { signal: controle.signal })
+      .then(data => setPlayerHistory(Array.isArray(data) ? data : []))
+      .catch(err => {
+        if (err.name === 'AbortError') return;
+        console.error('Erro ao carregar o histórico do atleta:', err);
+        setPlayerHistory([]);
+      })
+      .finally(() => {
+        if (!controle.signal.aborted) setPlayerHistoryLoading(false);
+      });
+    return () => controle.abort();
+  }, [historicoId]);
 
   const EVAL_FORM_URL = 'https://docs.google.com/forms/d/e/1FAIpQLSdBKBRFIXYLRsJwf0FwNqQJqhD8a5PvD0xLbB9zY1v3x26gQw/viewform';
 
@@ -79,12 +95,13 @@ export default function Players() {
     setEvalAnswered(true);
     setEvalConfirmationView(true);
 
-    // Registra na auditoria do app
-    fetch(`${API_URL}/audit-logs`, {
+    // Registra na auditoria do app. É só um registro: se falhar, a confirmação do
+    // atleta continua valendo e não vale incomodá-lo com um erro.
+    api('/audit-logs', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': String(user?.id) },
-      body: JSON.stringify({ action: 'AVALIAÇÃO', details: 'Confirmou que respondeu ao Formulário Oficial de Avaliação' })
-    }).catch(() => {});
+      body: { action: 'AVALIAÇÃO', details: 'Confirmou que respondeu ao Formulário Oficial de Avaliação' },
+      user
+    }).catch(err => console.error('Não foi possível registrar a avaliação na auditoria:', err));
   };
 
   const handleGoToForm = () => {
@@ -96,18 +113,7 @@ export default function Players() {
   const handleDownloadBackupDirect = async () => {
     setIsDownloadingBackup(true);
     try {
-      const res = await fetch(`${API_URL}/admin/backup`, {
-        headers: { 'x-user-id': String(user?.id) }
-      });
-      if (!res.ok) throw new Error('Falha ao gerar backup');
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      await baixarBackup(user);
       alert('✅ Backup do clube exportado com sucesso em JSON!');
     } catch (err) {
       alert('Erro ao baixar backup: ' + err.message);
@@ -151,57 +157,45 @@ export default function Players() {
     }
   };
 
-  const normalize = str => (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  // "Meu Jogador" é só o atleta com o mesmo id do usuário logado. Comparar por nome ou
+  // apelido marcava outro atleta (nome parecido, apelido repetido) como se fosse o próprio
+  // e liberava a edição da carta dele.
+  const isMyPlayer = useCallback(
+    (p) => Boolean(meuId && p && String(p.id) === String(meuId)),
+    [meuId]
+  );
 
-  // Verifica se o jogador corresponde ao usuário logado
-  const isMyPlayer = (p) => {
-    if (!user || !p) return false;
-    if (user.id && p.id && String(p.id) === String(user.id)) return true;
-    if (user.username && p.username && normalize(p.username) === normalize(user.username)) return true;
-    if (user.nickname && p.nickname && normalize(user.nickname).length >= 2) {
-      const uNick = normalize(user.nickname);
-      const pNick = normalize(p.nickname);
-      if (pNick.split(',').map(s => s.trim()).includes(uNick)) return true;
-    }
-    return false;
-  };
+  const loadPlayers = useCallback(() => {
+    api('/stats')
+      .then(data => { if (Array.isArray(data)) setPlayers(data); })
+      // Mantém a lista que já está na tela: um erro não pode esvaziar o elenco
+      .catch(err => console.error('Erro ao carregar o elenco:', err));
+  }, []);
+
+  useEffect(() => {
+    loadPlayers();
+  }, [loadPlayers]);
 
   const handleImportExcel = async (e) => {
-    const file = e.target.files && e.target.files[0];
+    const input = e.target;
+    const file = input.files && input.files[0];
     if (!file) return;
     setIsImporting(true);
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const res = await fetch(`${API_URL}/users/import-ratings-excel`, {
-        method: 'POST',
-        body: formData
-      });
-      const data = await res.json();
-      if (res.ok && data.success) {
-        alert(`✅ Sucesso! Foram atualizados os atributos de ${data.updatedCount} atletas a partir da planilha.`);
-        loadPlayers();
-      } else {
-        alert(data.error || 'Erro ao importar planilha.');
-      }
+      // A importação é exclusiva do administrador: sem o token o servidor recusa
+      const data = await api('/users/import-ratings-excel', { method: 'POST', body: formData, user });
+      alert(`✅ Sucesso! Foram atualizados os atributos de ${data.updatedCount} atletas a partir da planilha.`);
+      loadPlayers();
     } catch (err) {
       console.error('Erro na importação da planilha:', err);
-      alert('Erro ao enviar arquivo de planilha.');
+      alert(err.message || 'Erro ao importar planilha.');
     } finally {
       setIsImporting(false);
-      e.target.value = '';
+      input.value = '';
     }
   };
-
-  const loadPlayers = () => {
-    fetch(`${API_URL}/stats`)
-      .then(res => res.json())
-      .then(data => setPlayers(data));
-  };
-  
-  useEffect(() => {
-    loadPlayers();
-  }, []);
 
   const handlePhotoSelect = (player, e) => {
     if (!isMyPlayer(player) && !isAdmin) {
@@ -225,11 +219,14 @@ export default function Players() {
       alert('Você só pode alterar a foto do seu próprio atleta.');
       return;
     }
+    // Parte da foto atual (já com o fundo recortado); a original continua disponível
+    // dentro do modal para quem quiser recomeçar. Sempre pela URL versionada (?v=): a
+    // URL sem versão vinha do cache com a foto antiga e regravava por cima da nova.
     const photoToLoad = player.photo || player.original_photo;
     if (!photoToLoad) return;
     setRawFile(null);
     setCropModalPlayer(player);
-    setTempImageSrc(photoToLoad.startsWith('http') ? photoToLoad : `${API_URL}/users/${player.id}/photo`);
+    setTempImageSrc(formatPhotoUrl(photoToLoad));
   };
 
   const removePlayerPhoto = async (playerId) => {
@@ -238,23 +235,22 @@ export default function Players() {
       alert('Você só pode remover a foto do seu próprio atleta.');
       return;
     }
-    if (window.confirm('Tem certeza que deseja remover a sua foto?')) {
-      const res = await fetch(`${API_URL}/users/${playerId}/photo`, { 
-        method: 'DELETE', 
-        headers: { 'x-user-id': user?.id }
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        alert(errData.error || 'Erro ao remover foto.');
-        return;
-      }
-      setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, photo: null, original_photo: null } : p));
-      if (cropModalPlayer && cropModalPlayer.id === playerId) {
-        setCropModalPlayer(null);
-        setTempImageSrc(null);
-      }
-      loadPlayers();
+    if (!window.confirm('Tem certeza que deseja remover a sua foto?')) return;
+    try {
+      await api(`/users/${playerId}/photo`, { method: 'DELETE', user });
+    } catch (err) {
+      alert(err.message || 'Erro ao remover foto.');
+      return;
     }
+    setPlayers(prev => prev.map(p => p.id === playerId ? { ...p, photo: null, original_photo: null } : p));
+    if (isMyPlayer(targetPlayer)) {
+      updateUser({ photo: null, original_photo: null });
+    }
+    if (cropModalPlayer && cropModalPlayer.id === playerId) {
+      setCropModalPlayer(null);
+      setTempImageSrc(null);
+    }
+    loadPlayers();
   };
 
   const handleSaveCroppedPhoto = async (croppedBlob, originalFile) => {
@@ -263,6 +259,7 @@ export default function Players() {
       alert('Você só pode alterar a foto do seu próprio atleta.');
       return;
     }
+    const alvo = cropModalPlayer;
     const formData = new FormData();
     const croppedExt = croppedBlob.type && croppedBlob.type.includes('webp') ? 'webp' : 'png';
     formData.append('photo', croppedBlob, `cropped_player.${croppedExt}`);
@@ -270,22 +267,20 @@ export default function Players() {
       const compactOriginal = await downscaleForAI(originalFile, 1000);
       formData.append('original_photo', compactOriginal, 'original_player.jpg');
     }
-    const res = await fetch(`${API_URL}/users/${cropModalPlayer.id}/photo`, { 
-      method: 'POST', 
-      headers: { 'x-user-id': user?.id },
-      body: formData 
-    });
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      alert(errData.error || 'Erro ao salvar foto.');
+    let data;
+    try {
+      data = await api(`/users/${alvo.id}/photo`, { method: 'POST', body: formData, user });
+    } catch (err) {
+      alert(err.message || 'Erro ao salvar foto.');
       return;
     }
-    const data = await res.json();
-    
-    setPlayers(prev => prev.map(p => p.id === cropModalPlayer.id ? { ...p, photo: data.photoUrl, original_photo: data.origUrl || p.original_photo } : p));
-    
-    if (isMyPlayer(cropModalPlayer) && updateUser) {
-      updateUser({ photo: data.photoUrl, original_photo: data.origUrl || data.photoUrl });
+
+    // Sem foto original nova (só reenquadrou), a original guardada continua a mesma
+    const original = data.origUrl || alvo.original_photo || null;
+    setPlayers(prev => prev.map(p => p.id === alvo.id ? { ...p, photo: data.photoUrl, original_photo: original } : p));
+
+    if (isMyPlayer(alvo)) {
+      updateUser({ photo: data.photoUrl, original_photo: original });
     }
 
     setCropModalPlayer(null);
@@ -294,13 +289,16 @@ export default function Players() {
     loadPlayers();
   };
 
-  const isAdmin = isAdminUser(user);
+  // Atleta cuja edição foi aberta por último: a resposta do GET /users/:id de um atleta
+  // anterior não pode preencher o formulário de outro
+  const edicaoAtual = useRef(null);
 
-  const startEditing = (player) => {
+  const startEditing = useCallback((player) => {
     if (!isMyPlayer(player) && !isAdmin) {
       alert('Você só tem permissão para editar o seu próprio jogador.');
       return;
     }
+    edicaoAtual.current = player.id;
     setEditingId(player.id);
     setEditForm({
       username: player.username || '',
@@ -308,28 +306,40 @@ export default function Players() {
       position: player.position || 'MEI',
       height: player.height ? formatHeight(player.height) : '',
       weight: player.weight || '',
-      phone: player.phone || '',
-      email: player.email || '',
-      pace: player.pace || 50,
-      shooting: player.shooting || 50,
-      passing: player.passing || 50,
-      dribbling: player.dribbling || 50,
-      defending: player.defending || 50,
-      physical: player.physical || 50
+      // /stats e /users não trazem telefone e e-mail (dados pessoais): chegam logo abaixo
+      phone: '',
+      email: ''
     });
-  };
 
-  const location = useLocation();
+    // GET /users/:id com o token só devolve telefone e e-mail para o próprio atleta ou o
+    // administrador. Se não vierem, os campos ficam vazios e o servidor não os altera.
+    api(`/users/${player.id}`, { user })
+      .then(completo => {
+        if (edicaoAtual.current !== player.id || !completo) return;
+        setEditForm(prev => ({
+          ...prev,
+          // Não sobrescreve o que o atleta já começou a digitar enquanto carregava
+          phone: prev.phone || completo.phone || '',
+          email: prev.email || completo.email || ''
+        }));
+      })
+      .catch(err => console.error('Erro ao carregar telefone e e-mail do atleta:', err));
+  }, [isMyPlayer, isAdmin, user]);
 
+  // Pedido de abrir a edição vindo de outra tela: o cabeçalho do app (a própria carta) ou
+  // a tela da partida (admin editando outro atleta). playerId diz quem; sem ele, o próprio.
+  const autoEdit = Boolean(location.state?.autoEdit);
+  const autoEditId = location.state?.playerId;
   useEffect(() => {
-    if (location.state?.autoEdit && players.length > 0) {
-      const me = players.find(p => isMyPlayer(p));
-      if (me) {
-        startEditing(me);
-        window.history.replaceState({}, document.title);
-      }
-    }
-  }, [location.state, players]);
+    if (!autoEdit || players.length === 0) return;
+    const alvoId = autoEditId ?? meuId;
+    const alvo = players.find(p => String(p.id) === String(alvoId));
+    if (alvo) startEditing(alvo);
+    // Limpa o pedido pelo React Router. O window.history.replaceState não avisa o
+    // Router: o location.state continuava com autoEdit e o modal reabria sozinho a cada
+    // recarga da lista (ex.: depois de salvar).
+    navigate(location.pathname, { replace: true, state: null });
+  }, [autoEdit, autoEditId, meuId, players, startEditing, navigate, location.pathname]);
 
   const saveProfile = async (id) => {
     const targetPlayer = players.find(p => p.id === id);
@@ -338,23 +348,26 @@ export default function Players() {
       return;
     }
     const payload = {
-      ...editForm,
-      height: formatHeight(editForm.height)
+      username: editForm.username,
+      nickname: editForm.nickname,
+      position: editForm.position,
+      height: formatHeight(editForm.height),
+      weight: editForm.weight
     };
-    const res = await fetch(`${API_URL}/users/${id}/profile`, {
-      method: 'PUT',
-      headers: { 
-        'Content-Type': 'application/json',
-        'x-user-id': user?.id
-      },
-      body: JSON.stringify(payload)
-    });
-    if (!res.ok) {
-      const errData = await res.json().catch(() => ({}));
-      alert(errData.error || 'Erro ao salvar perfil.');
+    // Telefone e e-mail só vão quando preenchidos: em branco quer dizer "não carregado",
+    // nunca "apagar" (o servidor também ignora vazios)
+    const phone = String(editForm.phone || '').trim();
+    const email = String(editForm.email || '').trim();
+    if (phone) payload.phone = phone;
+    if (email) payload.email = email;
+
+    try {
+      await api(`/users/${id}/profile`, { method: 'PUT', body: payload, user });
+    } catch (err) {
+      alert(err.message || 'Erro ao salvar perfil.');
       return;
     }
-    if (isMyPlayer(targetPlayer) && updateUser) {
+    if (isMyPlayer(targetPlayer)) {
       updateUser(payload);
     }
     setEditingId(null);
@@ -364,11 +377,12 @@ export default function Players() {
   const createPlayer = async (e) => {
     e.preventDefault();
     if (!newUsername.trim()) return;
-    await fetch(`${API_URL}/users`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username: newUsername })
-    });
+    try {
+      await api('/users', { method: 'POST', body: { username: newUsername.trim() }, user });
+    } catch (err) {
+      alert(err.message || 'Erro ao cadastrar atleta.');
+      return;
+    }
     setNewUsername('');
     setIsCreating(false);
     loadPlayers();
@@ -379,19 +393,15 @@ export default function Players() {
       alert('Apenas o Administrador pode excluir jogadores.');
       return;
     }
-    if (window.confirm('Tem certeza que deseja excluir este jogador? Esta ação não pode ser desfeita.')) {
-      const res = await fetch(`${API_URL}/users/${id}`, { 
-        method: 'DELETE',
-        headers: { 'x-user-id': user?.id }
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        alert(errData.error || 'Erro ao excluir jogador.');
-        return;
-      }
-      setEditingId(null);
-      loadPlayers();
+    if (!window.confirm('Tem certeza que deseja excluir este jogador? Esta ação não pode ser desfeita.')) return;
+    try {
+      await api(`/users/${id}`, { method: 'DELETE', user });
+    } catch (err) {
+      alert(err.message || 'Erro ao excluir jogador.');
+      return;
     }
+    setEditingId(null);
+    loadPlayers();
   };
 
   // Separação entre Meu Jogador e Resto do Elenco
@@ -445,6 +455,7 @@ export default function Players() {
           }}
           className="fut-card-btn-action"
           title="Baixar ou Compartilhar Carta FUT em HD"
+          aria-label="Baixar a carta FUT em HD"
           disabled={downloadingCardId === player.id}
         >
           {downloadingCardId === player.id ? (
@@ -455,10 +466,14 @@ export default function Players() {
         </button>
 
         {isEditable && (
-          <button 
-            onClick={() => startEditing(player)}
-            style={{ 
-              position: 'absolute', 
+          <button
+            onClick={(e) => {
+              // O botão fica dentro da carta: sem isso o clique também abria o perfil
+              e.stopPropagation();
+              startEditing(player);
+            }}
+            style={{
+              position: 'absolute',
               top: 14, 
               right: 16, 
               width: '34px',
@@ -477,6 +492,7 @@ export default function Players() {
             }}
             className="fut-card-btn-action"
             title="Editar Meu Perfil & Carta"
+            aria-label="Editar meu perfil e carta"
           >
             <Edit2 size={15} color="var(--primary)" />
           </button>
@@ -629,10 +645,10 @@ export default function Players() {
       <div style={{ marginBottom: '24px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '12px' }}>
           <div>
-            <h2 className="text-2xl font-extrabold text-main" style={{ margin: '0 0 4px', letterSpacing: '-0.4px' }}>
+            <h2 className="font-extrabold text-main" style={{ margin: '0 0 4px', letterSpacing: '-0.4px' }}>
               Plantel do Elenco
             </h2>
-            <div className="text-muted text-sm">
+            <div className="text-muted">
               {players.length} Atletas cadastrados
             </div>
           </div>
@@ -683,6 +699,7 @@ export default function Players() {
                     accept=".xlsx,.xls,.csv" 
                     style={{ display: 'none' }} 
                     onChange={handleImportExcel}
+                    aria-label="Importar notas da planilha Excel"
                     disabled={isImporting}
                   />
                 </label>
@@ -703,9 +720,9 @@ export default function Players() {
             animate={{ height: 'auto', opacity: 1 }} 
             exit={{ height: 0, opacity: 0 }}
             onSubmit={createPlayer} 
-            className="glass-card mb-6 overflow-hidden"
+            className="glass-card mb-6"
           >
-            <div className="flex gap-3 items-end flex-wrap">
+            <div className="flex gap-3">
               <div style={{ flex: '1 1 200px' }}>
                 <label className="label">Nome do Jogador</label>
                 <input 
@@ -729,10 +746,10 @@ export default function Players() {
         <div style={{ marginBottom: '38px' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
             <div>
-              <h3 className="text-xl font-extrabold text-main" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <h3 className="font-extrabold text-main" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <UserCheck color="var(--primary)" size={22} /> Meu Jogador
               </h3>
-              <p className="text-muted text-xs" style={{ margin: '3px 0 0' }}>
+              <p className="text-muted" style={{ margin: '3px 0 0' }}>
                 Sua carta oficial no clube. Apenas você pode alterar seu perfil, apelido e foto.
               </p>
             </div>
@@ -758,10 +775,10 @@ export default function Players() {
       <div style={{ marginTop: myPlayer ? '36px' : '0' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
           <div>
-            <h3 className="text-xl font-extrabold text-main" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <h3 className="font-extrabold text-main" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Users color="var(--primary)" size={22} /> Resto do Elenco
             </h3>
-            <p className="text-muted text-xs" style={{ margin: '3px 0 0' }}>
+            <p className="text-muted" style={{ margin: '3px 0 0' }}>
               Cartas dos outros atletas do time ({otherPlayers.length} jogadores) • Somente visualização
             </p>
           </div>
@@ -778,6 +795,7 @@ export default function Players() {
                 type="text" 
                 className="input" 
                 placeholder="Buscar atleta..."
+                aria-label="Buscar atleta no elenco"
                 value={searchTerm}
                 onChange={e => setSearchTerm(e.target.value)}
                 style={{ paddingLeft: '40px', marginBottom: 0, width: '100%', height: '40px' }}
@@ -858,7 +876,8 @@ export default function Players() {
 
       {/* Modern Edit Profile Modal Overlay */}
       {editingPlayer && (
-        <EditPlayerModal 
+        <EditPlayerModal
+          key={editingPlayer.id}
           player={editingPlayer}
           editForm={editForm}
           setEditForm={setEditForm}
@@ -868,6 +887,9 @@ export default function Players() {
           onOpenAdjustPhoto={() => openAdjustExistingPhoto(editingPlayer)}
           onSelectNewPhoto={(e) => handlePhotoSelect(editingPlayer, e)}
           onDeletePhoto={() => removePlayerPhoto(editingPlayer.id)}
+          onPinChanged={loadPlayers}
+          // Com o ajuste de foto aberto por cima, o Esc fecha só ele (não perde a edição)
+          fecharComEsc={!cropModalPlayer}
           isAdmin={isAdmin}
         />
       )}
@@ -879,9 +901,12 @@ export default function Players() {
             initial={{ scale: 0.92, opacity: 0, y: 15 }} 
             animate={{ scale: 1, opacity: 1, y: 0 }} 
             exit={{ scale: 0.92, opacity: 0, y: 15 }}
-            className="glass-card" 
-            style={{ 
-              width: '460px', 
+            className="glass-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="avaliacao-titulo"
+            style={{
+              width: '460px',
               maxWidth: '94vw', 
               background: 'rgba(15, 18, 28, 0.98)', 
               border: '1px solid rgba(0, 245, 155, 0.35)', 
@@ -892,9 +917,11 @@ export default function Players() {
               position: 'relative' 
             }}
           >
-            <button 
-              onClick={() => { setShowEvalModal(false); setEvalConfirmationView(false); }} 
+            <button
+              type="button"
+              onClick={fecharAvaliacao}
               style={{ position: 'absolute', top: '16px', right: '16px', background: 'rgba(255,255,255,0.06)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+              aria-label="Fechar"
             >
               <X size={16} />
             </button>
@@ -905,11 +932,11 @@ export default function Players() {
                   <ClipboardList size={28} color="var(--primary)" />
                 </div>
 
-                <h3 className="text-xl font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
+                <h3 id="avaliacao-titulo" className="font-extrabold text-main" style={{ margin: '0 0 6px', letterSpacing: '-0.3px' }}>
                   Avaliação Oficial do Elenco
                 </h3>
-                <p className="text-muted text-xs" style={{ margin: '0 0 20px', lineHeight: 1.4 }}>
-                  plugshawtycafetoes FC • Temporada 2026
+                <p className="text-muted" style={{ margin: '0 0 20px', lineHeight: 1.4 }}>
+                  plugshawtycafetoes FC • Temporada {new Date().getFullYear()}
                 </p>
 
                 <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border)', borderRadius: '16px', padding: '16px 14px', marginBottom: '22px', textAlign: 'left' }}>
@@ -969,10 +996,10 @@ export default function Players() {
                   <Check size={28} color="var(--primary)" />
                 </div>
 
-                <h3 className="text-xl font-extrabold text-main" style={{ margin: '0 0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
+                <h3 id="avaliacao-titulo" className="font-extrabold text-main" style={{ margin: '0 0 8px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
                   <Check size={22} color="var(--primary)" /> Tudo Certo!
                 </h3>
-                <p className="text-muted text-sm" style={{ margin: '0 0 22px', lineHeight: 1.45 }}>
+                <p className="text-muted" style={{ margin: '0 0 22px', lineHeight: 1.45 }}>
                   Suas notas já foram enviadas e são levadas em conta no cálculo oficial do OVR do elenco. Segue o jogo!
                 </p>
 
@@ -1016,6 +1043,7 @@ export default function Players() {
         isMyPlayer={isMyPlayer}
         isAdmin={isAdmin}
         onEdit={(p) => startEditing(p)}
+        allStats={players}
       />
 
     </motion.div>

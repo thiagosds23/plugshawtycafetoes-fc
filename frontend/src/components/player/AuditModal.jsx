@@ -1,47 +1,51 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { ShieldCheck, X, Search, RefreshCw, HardDriveDownload, Trash2, KeyRound, Camera, Edit2, Lock, ClipboardList, Shield, FileSpreadsheet, Zap, Loader2 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import { API_URL } from '../../config';
+import { api } from '../../utils/api';
+import { baixarBackup } from '../../utils/backup';
+import { useEscapeKey } from '../../utils/useEscapeKey';
 
 export default function AuditModal({ onClose, adminUser }) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedAction, setSelectedAction] = useState('ALL');
+  const [erro, setErro] = useState('');
 
-  const fetchLogs = async () => {
+  useEscapeKey(onClose);
+
+  // Só a resposta do pedido mais recente vale: clicar em "Atualizar" várias vezes
+  // não pode deixar uma resposta antiga sobrescrever a nova
+  const pedidoAtual = useRef(0);
+
+  const fetchLogs = useCallback(async () => {
+    const pedido = ++pedidoAtual.current;
     setLoading(true);
+    setErro('');
     try {
-      const res = await fetch(`${API_URL}/audit-logs`, {
-        headers: { 'x-user-id': String(adminUser?.id) }
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setLogs(data.logs || []);
-      }
-    } catch (e) {
-      console.error(e);
+      const data = await api('/audit-logs', { user: adminUser });
+      if (pedido !== pedidoAtual.current) return;
+      setLogs(Array.isArray(data && data.logs) ? data.logs : []);
+    } catch (err) {
+      if (pedido !== pedidoAtual.current) return;
+      console.error('Erro ao carregar a auditoria:', err);
+      setErro(err.message);
     } finally {
-      setLoading(false);
+      if (pedido === pedidoAtual.current) setLoading(false);
     }
-  };
+  }, [adminUser]);
 
   useEffect(() => {
     fetchLogs();
-  }, []);
+  }, [fetchLogs]);
 
   const handleClear = async () => {
     if (!window.confirm('Tem certeza que deseja limpar todos os registros de auditoria?')) return;
     try {
-      const res = await fetch(`${API_URL}/audit-logs`, {
-        method: 'DELETE',
-        headers: { 'x-user-id': String(adminUser?.id) }
-      });
-      if (res.ok) {
-        setLogs([]);
-      }
-    } catch (e) {
-      alert('Erro ao limpar auditoria');
+      await api('/audit-logs', { method: 'DELETE', user: adminUser });
+      setLogs([]);
+    } catch (err) {
+      alert('Erro ao limpar auditoria: ' + err.message);
     }
   };
 
@@ -50,18 +54,8 @@ export default function AuditModal({ onClose, adminUser }) {
   const handleDownloadBackup = async () => {
     setIsExportingBackup(true);
     try {
-      const res = await fetch(`${API_URL}/admin/backup`, {
-        headers: { 'x-user-id': String(adminUser?.id) }
-      });
-      if (!res.ok) throw new Error('Falha ao gerar backup');
-      const data = await res.json();
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `backup-plugshawty-${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
+      await baixarBackup(adminUser);
+      // O servidor registra o download na auditoria: recarrega para ele aparecer
       fetchLogs();
     } catch (err) {
       alert('Erro ao baixar backup: ' + err.message);
@@ -109,9 +103,12 @@ export default function AuditModal({ onClose, adminUser }) {
         initial={{ scale: 0.95, opacity: 0, y: 15 }} 
         animate={{ scale: 1, opacity: 1, y: 0 }} 
         exit={{ scale: 0.95, opacity: 0, y: 15 }}
-        className="glass-card" 
-        style={{ 
-          width: '680px', 
+        className="glass-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auditoria-titulo"
+        style={{
+          width: '680px',
           maxWidth: '96vw', 
           maxHeight: '90vh',
           display: 'flex',
@@ -130,7 +127,7 @@ export default function AuditModal({ onClose, adminUser }) {
               <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'rgba(139, 92, 246, 0.2)', border: '1px solid #8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                 <ShieldCheck size={18} color="#c084fc" />
               </div>
-              <h3 style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', margin: 0 }}>
+              <h3 id="auditoria-titulo" style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', margin: 0 }}>
                 Auditoria do App (Admin)
               </h3>
             </div>
@@ -143,6 +140,7 @@ export default function AuditModal({ onClose, adminUser }) {
             onClick={onClose} 
             style={{ background: 'rgba(255,255,255,0.06)', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: '7px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
             title="Fechar"
+            aria-label="Fechar"
           >
             <X size={18} />
           </button>
@@ -152,9 +150,10 @@ export default function AuditModal({ onClose, adminUser }) {
           <div style={{ display: 'flex', gap: '8px' }}>
             <div style={{ flex: 1, position: 'relative' }}>
               <Search size={14} style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-              <input 
-                type="text" 
-                placeholder="Buscar por atleta ou detalhe..." 
+              <input
+                type="text"
+                aria-label="Buscar nos registros de auditoria"
+                placeholder="Buscar por atleta ou detalhe..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 style={{ 
@@ -196,6 +195,7 @@ export default function AuditModal({ onClose, adminUser }) {
                 onClick={handleClear} 
                 style={{ padding: '8px 12px', fontSize: '0.8rem', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.3)' }}
                 title="Limpar histórico"
+                aria-label="Limpar histórico de auditoria"
               >
                 <Trash2 size={14} />
               </button>
@@ -244,6 +244,10 @@ export default function AuditModal({ onClose, adminUser }) {
             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
               <Loader2 size={24} className="animate-spin" style={{ margin: '0 auto 8px', color: 'var(--primary)' }} />
               Carregando histórico de auditoria...
+            </div>
+          ) : erro && logs.length === 0 ? (
+            <div role="alert" style={{ textAlign: 'center', padding: '40px', color: '#f87171', fontSize: '0.85rem' }}>
+              Não foi possível carregar a auditoria: {erro}
             </div>
           ) : filteredLogs.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '40px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>

@@ -1,11 +1,14 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Camera, X, Image as ImageIcon, RefreshCw, Trash2, Check, ExternalLink, Loader2, Sparkles } from 'lucide-react';
 import { calcOVR } from '../../utils/ovr';
 import { formatPhotoUrl } from '../../config';
 import { downscaleForAI } from '../../utils/imageProcessing';
+import { getPrimaryName } from '../../utils/formatters';
+import { useEscapeKey } from '../../utils/useEscapeKey';
 
 export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose, onSave, onDeletePhoto }) {
   const previewImgRef = useRef(null);
+  const areaDaFotoRef = useRef(null);
   const [src, setSrc] = useState(initialSrc);
   const [originalSrc, setOriginalSrc] = useState(player && player.original_photo ? formatPhotoUrl(player.original_photo) : initialSrc);
   const [zoom, setZoom] = useState(1);
@@ -51,11 +54,23 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
 
   const handleTouchEnd = () => setIsDragging(false);
 
-  const handleWheel = (e) => {
-    e.preventDefault();
-    const delta = e.deltaY < 0 ? 0.1 : -0.1;
-    setZoom(prev => Math.min(Math.max(prev + delta, 0.8), 3.5));
-  };
+  // Zoom pela rodinha do mouse. O onWheel do React é registrado como listener passivo,
+  // então o preventDefault dele é ignorado e a página rolava junto com o zoom. Um
+  // listener nativo com passive: false consegue segurar a rolagem.
+  useEffect(() => {
+    const area = areaDaFotoRef.current;
+    if (!area) return undefined;
+    const aoRolar = (e) => {
+      e.preventDefault();
+      const delta = e.deltaY < 0 ? 0.1 : -0.1;
+      setZoom(prev => Math.min(Math.max(prev + delta, 0.8), 3.5));
+    };
+    area.addEventListener('wheel', aoRolar, { passive: false });
+    return () => area.removeEventListener('wheel', aoRolar);
+  }, []);
+
+  // Esc fecha, menos durante o recorte por IA (o Cancelar também fica travado)
+  useEscapeKey(onClose, !isRemovingBg);
 
   const handleNewFile = (e) => {
     const file = e.target.files && e.target.files[0];
@@ -186,11 +201,14 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.90)', backdropFilter: 'blur(10px)', zIndex: 1300, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '10px' }}>
-      <div 
-        className="glass-card" 
-        style={{ 
-          width: '100%', 
-          maxWidth: '380px', 
+      <div
+        className="glass-card"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="ajustar-foto-titulo"
+        style={{
+          width: '100%',
+          maxWidth: '380px',
           maxHeight: '98dvh',
           padding: '14px 14px 12px', 
           textAlign: 'center', 
@@ -205,7 +223,7 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
       >
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
           <div style={{ textAlign: 'left' }}>
-            <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 900, color: 'var(--primary)', letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <h3 id="ajustar-foto-titulo" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 900, color: 'var(--primary)', letterSpacing: '-0.3px', display: 'flex', alignItems: 'center', gap: '6px' }}>
               <Camera size={16} color="var(--primary)" /> Ajustar Foto da Carta
             </h3>
             <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
@@ -225,9 +243,10 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
               display: 'flex', 
               alignItems: 'center', 
               justifyContent: 'center', 
-              cursor: 'pointer' 
+              cursor: 'pointer'
             }}
             title="Fechar"
+            aria-label="Fechar"
           >
             <X size={16} />
           </button>
@@ -235,12 +254,13 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
 
         <div style={{ display: 'flex', justifyContent: 'center', margin: '2px 0 6px' }}>
           <div className="fut-card" style={{ width: '190px', margin: 0, position: 'relative' }}>
-            <img src="/fut-bg.png" alt="Card Background" className="fut-card-bg" />
+            <img src="/fut-bg.png" alt="" className="fut-card-bg" />
             <div className="fut-card-inner">
               <div className="fut-rating" style={{ fontSize: '1.55rem' }}>{overall}</div>
               <div className="fut-position" style={{ fontSize: '0.68rem' }}>{player.position || 'MEI'}</div>
               
-              <div 
+              <div
+                ref={areaDaFotoRef}
                 className="fut-photo"
                 onMouseDown={handleMouseDown}
                 onMouseMove={handleMouseMove}
@@ -249,7 +269,6 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
                 onTouchStart={handleTouchStart}
                 onTouchMove={handleTouchMove}
                 onTouchEnd={handleTouchEnd}
-                onWheel={handleWheel}
                 style={{
                   cursor: isDragging ? 'grabbing' : 'grab',
                   touchAction: 'none',
@@ -281,7 +300,7 @@ export default function PhotoAdjustModal({ player, initialSrc, rawFile, onClose,
               </div>
 
               <div className="fut-name" style={{ fontSize: '0.78rem' }}>
-                {player.nickname ? player.nickname.split(',')[0].trim() : player.username}
+                {getPrimaryName(player)}
               </div>
 
               <div className="fut-stats" style={{ fontSize: '0.60rem' }}>

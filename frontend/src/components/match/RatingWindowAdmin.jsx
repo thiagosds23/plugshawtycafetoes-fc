@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Hourglass, CircleStop, Save } from 'lucide-react';
-import { API_URL, authHeaders } from '../../config';
+import { api } from '../../utils/api';
 
 const DURACOES_RAPIDAS = [6, 12, 24, 48];
 const DURACAO_MAXIMA = 7 * 24;
@@ -21,21 +21,12 @@ export default function RatingWindowAdmin({ match, user, onChanged }) {
   const enviar = async (body) => {
     setSalvando(true);
     try {
-      const res = await fetch(`${API_URL}/matches/${match.id}/rating-window`, {
-        method: 'PUT',
-        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify(body)
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        alert(data.error || 'Não foi possível ajustar a votação.');
-        return false;
-      }
+      await api(`/matches/${match.id}/rating-window`, { method: 'PUT', body, user });
       onChanged();
       return true;
     } catch (err) {
       console.error('Falha ao ajustar a votação:', err);
-      alert('Falha de conexão ao ajustar a votação.');
+      alert(err.message);
       return false;
     } finally {
       setSalvando(false);

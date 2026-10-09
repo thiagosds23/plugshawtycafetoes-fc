@@ -1,9 +1,11 @@
-import React from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Goal, Footprints, Star, Edit2 } from 'lucide-react';
 import { calcOVR } from '../../utils/ovr';
 import { formatPhotoUrl } from '../../config';
-import { getPrimaryName } from '../../utils/formatters';
+import { api } from '../../utils/api';
+import { getPrimaryName, getPlayerAchievements } from '../../utils/formatters';
+import { useEscapeKey } from '../../utils/useEscapeKey';
 import ResumoForma from '../ResumoForma';
 import AchievementBadge from '../AchievementBadge';
 
@@ -15,57 +17,41 @@ export default function PlayerDetailsModal({
   playerHistoryLoading = false,
   isMyPlayer = () => false,
   isAdmin = false,
-  onEdit
+  onEdit,
+  // Elenco já carregado pela tela (lista de /stats). Sem ele, o modal busca sozinho.
+  allStats
 }) {
-  if (!isOpen || !player) return null;
+  const aberto = Boolean(isOpen && player);
+  useEscapeKey(onClose, aberto);
+
+  // As medalhas saem de getPlayerAchievements (a mesma regra do ranking), que compara o
+  // atleta com o elenco inteiro (histórico completo, de /stats)
+  const [elencoBuscado, setElencoBuscado] = useState([]);
+  const temElenco = Array.isArray(allStats) && allStats.length > 0;
+  useEffect(() => {
+    if (!aberto || temElenco) return undefined;
+    const controle = new AbortController();
+    api('/stats', { signal: controle.signal })
+      .then(data => setElencoBuscado(Array.isArray(data) ? data : []))
+      .catch(err => {
+        if (err.name !== 'AbortError') console.error('Erro ao carregar o elenco para as medalhas:', err);
+      });
+    return () => controle.abort();
+  }, [aberto, temElenco]);
+  const elenco = temElenco ? allStats : elencoBuscado;
+
+  const badges = useMemo(() => {
+    if (!player) return [];
+    // Usa a versão do atleta que veio junto com o elenco, para os números baterem
+    const atual = elenco.find(p => String(p.id) === String(player.id)) || player;
+    return getPlayerAchievements(atual, elenco, 'all');
+  }, [player, elenco]);
+
+  if (!aberto) return null;
 
   const displayName = getPrimaryName(player);
-
-  const badges = [];
-  if (player.goals && player.goals >= 5) {
-    badges.push({
-      id: 'top_scorer',
-      title: `${player.goals} gols marcados na temporada`,
-      shortLabel: `${player.goals} Gols`,
-      color: '#00f59b',
-      bg: 'linear-gradient(135deg, rgba(0, 245, 155, 0.22), rgba(0, 200, 115, 0.08))',
-      border: 'rgba(0, 245, 155, 0.45)',
-      glow: '0 0 10px rgba(0, 245, 155, 0.25)'
-    });
-  }
-  if (player.assists && player.assists >= 3) {
-    badges.push({
-      id: 'top_playmaker',
-      title: `${player.assists} assistências na temporada`,
-      shortLabel: `${player.assists} Ast`,
-      color: '#00e5ff',
-      bg: 'linear-gradient(135deg, rgba(0, 229, 255, 0.22), rgba(0, 160, 220, 0.08))',
-      border: 'rgba(0, 229, 255, 0.45)',
-      glow: '0 0 10px rgba(0, 229, 255, 0.25)'
-    });
-  }
-  if (player.avg_rating && player.avg_rating >= 7.5) {
-    badges.push({
-      id: 'mvp',
-      title: `Nota média de elite (${player.avg_rating.toFixed(1)})`,
-      shortLabel: 'Elite',
-      color: '#ffd700',
-      bg: 'linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(218, 165, 32, 0.1))',
-      border: 'rgba(255, 215, 0, 0.55)',
-      glow: '0 0 12px rgba(255, 215, 0, 0.35)'
-    });
-  }
-  if (player.win_streak && player.win_streak >= 2) {
-    badges.push({
-      id: 'hot_streak',
-      title: `Sequência de ${player.win_streak} vitórias consecutivas`,
-      shortLabel: `${player.win_streak}V`,
-      color: '#ff7700',
-      bg: 'linear-gradient(135deg, rgba(255, 119, 0, 0.25), rgba(255, 68, 0, 0.08))',
-      border: 'rgba(255, 119, 0, 0.5)',
-      glow: '0 0 12px rgba(255, 119, 0, 0.35)'
-    });
-  }
+  // Um erro do servidor ({ error }) no lugar da lista quebrava o .map do histórico
+  const historico = Array.isArray(playerHistory) ? playerHistory : [];
 
   return (
     <AnimatePresence>
@@ -92,7 +78,10 @@ export default function PlayerDetailsModal({
           exit={{ scale: 0.92, opacity: 0 }}
           onClick={e => e.stopPropagation()}
           className="glass-card"
-          style={{ 
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="detalhes-atleta-titulo detalhes-atleta-nome"
+          style={{
             width: '100%', 
             maxWidth: '520px', 
             maxHeight: '90dvh', 
@@ -109,7 +98,7 @@ export default function PlayerDetailsModal({
         >
           {/* Barra Superior do Modal */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+            <span id="detalhes-atleta-titulo" style={{ fontSize: '0.78rem', fontWeight: 800, color: 'var(--primary)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
               Perfil & Histórico do Atleta
             </span>
             <button 
@@ -133,7 +122,7 @@ export default function PlayerDetailsModal({
               )}
             </div>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', letterSpacing: '-0.3px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+              <div id="detalhes-atleta-nome" style={{ fontSize: '1.25rem', fontWeight: 900, color: '#fff', letterSpacing: '-0.3px', lineHeight: 1.2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                 {displayName}
               </div>
               <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
@@ -142,9 +131,9 @@ export default function PlayerDetailsModal({
                 </span>
                 {player.height && <span>• {Number(player.height).toFixed(2)}m</span>}
                 {player.weight && <span>• {player.weight}kg</span>}
-                {badges.map((b, idx) => (
+                {badges.map((b) => (
                   <AchievementBadge
-                    key={idx}
+                    key={b.id}
                     badge={b}
                     size="xs"
                     variant="pill"
@@ -242,13 +231,13 @@ export default function PlayerDetailsModal({
             </div>
             {playerHistoryLoading ? (
               <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.85rem' }}>Carregando histórico...</div>
-            ) : playerHistory.length === 0 ? (
+            ) : historico.length === 0 ? (
               <div style={{ textAlign: 'center', padding: '16px', color: 'var(--text-muted)', fontSize: '0.85rem', background: 'rgba(255,255,255,0.02)', borderRadius: '12px' }}>
                 Nenhuma partida anterior registrada para este atleta.
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '200px', overflowY: 'auto', paddingRight: '4px' }}>
-                {playerHistory.map(h => {
+                {historico.map(h => {
                   const hDate = new Date(h.date + 'T12:00:00');
                   const rawHDate = isNaN(hDate.getTime()) ? h.date : hDate.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
                   const formattedHDate = rawHDate ? rawHDate.charAt(0).toUpperCase() + rawHDate.slice(1) : '';

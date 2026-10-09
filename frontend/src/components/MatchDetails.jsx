@@ -1,39 +1,66 @@
-import React, { useEffect, useState, useContext, useRef } from 'react';
+import React, { useEffect, useState, useContext, useRef, useMemo, useCallback } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { AuthContext } from '../AuthContext';
-import { 
-  Users, Shuffle, Star, Shield, ArrowLeft, ArrowRight, Share2, Goal, 
-  Award, Trash2, RefreshCw, UserPlus, UserMinus, X, CheckCircle2,
+import {
+  Users, Shuffle, Star, Shield, ArrowLeft, Share2, Goal,
+  Award, Trash2, RefreshCw, UserPlus, UserMinus, CheckCircle2,
   Clipboard, LayoutList, MapPin, Plus,
   Footprints, Lightbulb, Clock, Edit2, Swords
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
 import confetti from 'canvas-confetti';
-import { calcOVR } from '../utils/ovr';
+import { calcOVR, calcTeamOVR } from '../utils/ovr';
 import { API_URL, formatPhotoUrl, authHeaders, isAdminUser } from '../config';
+import { api } from '../utils/api';
 import { waitForImages } from '../utils/exportImage';
 import { getPrimaryName, formatShortTeamName } from '../utils/formatters';
+import { prepararAudio } from '../utils/soundEffects';
 import DraftAnimation from './match/DraftAnimation';
-import { playDraftSound, playCelebrationSound } from '../utils/soundEffects';
 import WhatsAppImportModal from './match/WhatsAppImportModal';
 import RatingModal, { ContadorPrazo } from './match/RatingModal';
 import RatingWindowAdmin from './match/RatingWindowAdmin';
 import ManualTeamsModal from './match/ManualTeamsModal';
 import TacticalPitch from './match/TacticalPitch';
+import NovoAtletaModal from './match/NovoAtletaModal';
+import EditarPartidaModal from './match/EditarPartidaModal';
+import AdicionarJogadorModal from './match/AdicionarJogadorModal';
+import SubstituirJogadorModal from './match/SubstituirJogadorModal';
 import PlayerDetailsModal from './player/PlayerDetailsModal';
+
+const DICA_PLACAR = 'Apague para voltar ao placar automático (soma dos gols)';
+
+// Espera depois da última tecla antes de gravar placar, gols e assistências
+const ESPERA_DO_DEBOUNCE = 600;
+
+/** Mostra ao usuário o motivo que o servidor deu (ou a falta de conexão). */
+function avisarErro(contexto, err) {
+  console.error(`${contexto}:`, err);
+  alert(err.message);
+}
+
+/** Gols lançados para os atletas de um time: o placar automático dele. */
+function golsDoTime(gols, jogadores) {
+  const ids = new Set((jogadores || []).map(p => p.id));
+  return (gols || []).filter(g => ids.has(g.user_id)).length;
+}
 
 export default function MatchDetails() {
   const { id } = useParams();
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
-  
+  const token = user?.token;
+
   const [match, setMatch] = useState(null);
+  // Falha ao carregar a partida: { naoEncontrada: true } (404) ou { mensagem }
+  const [erroCarga, setErroCarga] = useState(null);
   const [allPlayers, setAllPlayers] = useState([]);
+  const [erroElenco, setErroElenco] = useState(null);
   const [selectedPlayers, setSelectedPlayers] = useState([]);
-  
+
   const [showRating, setShowRating] = useState(false);
   const [ratings, setRatings] = useState({});
+  const [enviandoNotas, setEnviandoNotas] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
 
   // View Mode: 'list' (Escalação Detalhada) or 'pitch' (Campo Tático)
@@ -43,17 +70,11 @@ export default function MatchDetails() {
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [isCreatingFromWhatsApp, setIsCreatingFromWhatsApp] = useState(false);
 
-  // Manual New Player Modal State
+  // Cadastro rápido de atleta
   const [showNewPlayerModal, setShowNewPlayerModal] = useState(false);
-  const [newPlayerName, setNewPlayerName] = useState('');
-  const [newPlayerNickname, setNewPlayerNickname] = useState('');
-  const [newPlayerPosition, setNewPlayerPosition] = useState('MEI');
 
   // Substitute Player Modal state
-  const [substituteTarget, setSubstituteTarget] = useState(null); // { user_id, team_id, name }
-  
-  // Field Player Quick Action Modal (when clicking player on the tactical pitch)
-  const [fieldActionPlayer, setFieldActionPlayer] = useState(null);
+  const [substituteTarget, setSubstituteTarget] = useState(null); // { user_id, name, team_name }
 
   // Cinematic Team Draft Animation state
   const [draftAnim, setDraftAnim] = useState(null);
@@ -61,13 +82,17 @@ export default function MatchDetails() {
   // Times montados à mão, sem sorteio
   const [showManualTeams, setShowManualTeams] = useState(false);
   const [savingManualTeams, setSavingManualTeams] = useState(false);
+  // Escalação contra rival sendo gravada (trava o botão contra o toque duplo)
+  const [salvandoEscalacao, setSalvandoEscalacao] = useState(false);
+  // Trocar de time / tirar da partida em andamento: dois toques em "trocar de time"
+  // trocavam e destrocavam o atleta
+  const [mexendoNaEscalacao, setMexendoNaEscalacao] = useState(false);
 
   // Match Edit & Add Player
   const [editMatchModal, setEditMatchModal] = useState(false);
-  const [matchEditForm, setMatchEditForm] = useState({ date: '', time: '', location: '', opponent: '' });
   const [showAddPlayerModal, setShowAddPlayerModal] = useState(null); // holds teamId
 
-  // Tactical Pitch Tab: 'both' | 0 | 1
+  // Tactical Pitch Tab: 'both' | 'team0' | 'team1'
   const [pitchTab, setPitchTab] = useState('both');
 
   // Player Stats & History Modal State
@@ -75,87 +100,306 @@ export default function MatchDetails() {
   const [playerHistory, setPlayerHistory] = useState([]);
   const [playerHistoryLoading, setPlayerHistoryLoading] = useState(false);
 
-  const normalizeStr = str => (str || '').toString().normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  // Texto do placar enquanto o administrador digita (id do time -> texto). Sem isto,
+  // apagar o número para digitar outro já trocava o campo pelo placar automático e o
+  // próximo dígito grudava nele ("2" virava "25").
+  const [placarDigitado, setPlacarDigitado] = useState({});
 
-  const isMyPlayer = (p) => {
-    if (!user || !p) return false;
-    if (user.id && p.id && String(p.id) === String(user.id)) return true;
-    if (user.username && p.username && normalizeStr(p.username) === normalizeStr(user.username)) return true;
-    if (user.nickname && p.nickname && normalizeStr(user.nickname).length >= 2) {
-      const uNick = normalizeStr(user.nickname);
-      const pNick = normalizeStr(p.nickname);
-      if (pNick.split(',').map(s => s.trim()).includes(uNick)) return true;
-    }
-    return false;
-  };
+  // IMPORTANTE: todos os hooks (useState/useEffect/useRef/useMemo/useCallback) ficam
+  // aqui em cima. Um hook declarado depois do "if (!match) return ..." faz o React
+  // rodar uma quantidade diferente de hooks entre o carregamento e a tela pronta
+  // (erro #310).
+  const cardRef = useRef(null);
+  const montadoRef = useRef(false);
+  // Número do último pedido de carga da partida: só a resposta dele vale
+  const cargaAtualRef = useRef(0);
+  // Placar, gols e assistências: envios no debounce (pendentes), requisições em voo e
+  // a fila de cada campo. O objeto nunca é trocado, só mutado.
+  const enviosRef = useRef({ pendentes: {}, emVoo: 0, filas: {} });
+  // setTimeout/setInterval do sorteio, para não continuarem depois de sair da tela
+  const timersDoSorteioRef = useRef([]);
+  // Ids negativos dos gols/assistências otimistas (ainda não gravados)
+  const proximoIdOtimistaRef = useRef(-1);
 
   useEffect(() => {
-    if (selectedPlayerModal && selectedPlayerModal.id) {
-      setPlayerHistoryLoading(true);
-      fetch(`${API_URL}/users/${selectedPlayerModal.id}/history`)
-        .then(res => res.json())
-        .then(data => {
-          setPlayerHistory(Array.isArray(data) ? data : []);
-        })
-        .catch(err => {
-          console.error('Erro ao carregar histórico do jogador:', err);
-          setPlayerHistory([]);
-        })
-        .finally(() => setPlayerHistoryLoading(false));
-    } else {
-      setPlayerHistory([]);
+    montadoRef.current = true;
+    return () => { montadoRef.current = false; };
+  }, []);
+
+  const loadMatch = useCallback(async () => {
+    // Recargas que se cruzam (ou a troca de partida) não podem trazer dados velhos
+    // de volta: só a resposta do pedido mais recente é usada
+    const pedido = ++cargaAtualRef.current;
+    const valeAinda = () => montadoRef.current && pedido === cargaAtualRef.current;
+    try {
+      let res;
+      try {
+        // O token vai junto para o backend devolver as notas que EU já dei. É fetch
+        // direto, e não api(), porque aqui o 404 tem tela própria
+        res = await fetch(`${API_URL}/matches/${id}`, { headers: authHeaders({ token }) });
+      } catch {
+        throw new Error('Sem conexão com o servidor. Verifique sua internet e tente de novo.');
+      }
+      if (!valeAinda()) return;
+      if (res.status === 404) {
+        setMatch(null);
+        setErroCarga({ naoEncontrada: true });
+        return;
+      }
+      const data = await res.json().catch(() => null);
+      if (!res.ok || !data) throw new Error((data && data.error) || `Erro ${res.status} ao carregar a partida.`);
+      if (!valeAinda()) return;
+      setMatch(data);
+      setErroCarga(null);
+    } catch (err) {
+      if (!valeAinda()) return;
+      console.error('Erro ao carregar a partida:', err);
+      setErroCarga({ mensagem: err.message });
     }
-  }, [selectedPlayerModal]);
+  }, [id, token]);
+
+  const loadPlayers = useCallback(async () => {
+    try {
+      const data = await api('/stats');
+      if (!montadoRef.current) return;
+      // Continua sendo uma lista mesmo se o servidor devolver outra coisa
+      setAllPlayers(Array.isArray(data) ? data : []);
+      setErroElenco(null);
+    } catch (err) {
+      if (!montadoRef.current) return;
+      console.error('Erro ao carregar o elenco:', err);
+      setErroElenco(err.message);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadMatch();
+  }, [loadMatch]);
+
+  useEffect(() => {
+    loadPlayers();
+  }, [loadPlayers]);
+
+  // Histórico do atleta aberto no modal. Trocar de atleta rápido cancela o pedido
+  // anterior: sem isso a resposta atrasada do primeiro aparecia no perfil do segundo.
+  const atletaAbertoId = selectedPlayerModal?.id;
+  useEffect(() => {
+    if (!atletaAbertoId) {
+      setPlayerHistory([]);
+      return undefined;
+    }
+    const controle = new AbortController();
+    setPlayerHistory([]);
+    setPlayerHistoryLoading(true);
+    api(`/users/${atletaAbertoId}/history`, { signal: controle.signal })
+      .then(data => {
+        if (!controle.signal.aborted) setPlayerHistory(Array.isArray(data) ? data : []);
+      })
+      .catch(err => {
+        if (err.name === 'AbortError' || controle.signal.aborted) return;
+        console.error('Erro ao carregar histórico do jogador:', err);
+        setPlayerHistory([]);
+      })
+      .finally(() => {
+        if (!controle.signal.aborted) setPlayerHistoryLoading(false);
+      });
+    return () => controle.abort();
+  }, [atletaAbertoId]);
+
+  // Recarrega as notas que este usuário já enviou, para ele conseguir corrigir
+  // dentro do prazo em vez de começar do zero.
+  const minhasNotasSalvas = match && match.my_ratings ? JSON.stringify(match.my_ratings) : '';
+  useEffect(() => {
+    setRatings(minhasNotasSalvas ? JSON.parse(minhasNotasSalvas) : {});
+  }, [minhasNotasSalvas]);
+
+  // Ao sair da tela com um número ainda no debounce, grava na hora em vez de
+  // descartar: senão o último gol digitado antes de tocar em "Voltar" se perdia
+  useEffect(() => {
+    const envios = enviosRef.current;
+    return () => {
+      Object.values(envios.pendentes).forEach(({ timer, enviar }) => {
+        clearTimeout(timer);
+        enviar().catch(err => console.error('Falha ao salvar ao sair da partida:', err));
+      });
+      envios.pendentes = {};
+    };
+  }, []);
+
+  // Para a animação do sorteio ao sair da tela
+  useEffect(() => {
+    const timers = timersDoSorteioRef.current;
+    return () => {
+      timers.forEach(t => { clearTimeout(t); clearInterval(t); });
+      timers.length = 0;
+    };
+  }, []);
+
+  // Contagem de gols e assistências por atleta, calculada uma vez por mudança na
+  // partida. Antes cada linha da tela varria a lista inteira de eventos.
+  const golsDaPartida = match?.goals;
+  const assistsDaPartida = match?.assists;
+  const contagemEventos = useMemo(() => {
+    const contar = (eventos) => {
+      const mapa = new Map();
+      (eventos || []).forEach(e => mapa.set(e.user_id, (mapa.get(e.user_id) || 0) + 1));
+      return mapa;
+    };
+    return { goals: contar(golsDaPartida), assists: contar(assistsDaPartida) };
+  }, [golsDaPartida, assistsDaPartida]);
+
+  const getPlayerEventCount = useCallback(
+    (playerId, tipo) => (contagemEventos[tipo] ? contagemEventos[tipo].get(playerId) || 0 : 0),
+    [contagemEventos]
+  );
+
+  const timesDaPartida = match?.teams;
+  const ovrPorTime = useMemo(
+    () => new Map((timesDaPartida || []).map(t => [t.id, calcTeamOVR(t.players)])),
+    [timesDaPartida]
+  );
+  const getTeamOVR = useCallback(
+    (team) => (team ? (ovrPorTime.get(team.id) ?? calcTeamOVR(team.players)) : 0),
+    [ovrPorTime]
+  );
+
+  // Atletas em campo nesta partida e os do elenco que estão de fora (reservas)
+  const jogadoresDaPartida = useMemo(
+    () => (timesDaPartida || []).flatMap(t => t.players || []),
+    [timesDaPartida]
+  );
+  const foraDaPartida = useMemo(() => {
+    const emCampo = new Set(jogadoresDaPartida.map(p => p.id));
+    return allPlayers.filter(p => !emCampo.has(p.id));
+  }, [allPlayers, jogadoresDaPartida]);
+
+  // Só o id identifica o atleta: comparar por nome ou apelido marcava como "meu" o
+  // atleta errado quando dois tinham nomes parecidos
+  const isMyPlayer = (p) => !!(user && p && user.id != null && String(p.id) === String(user.id));
 
   const openPlayerDetails = (p) => {
     const fullP = allPlayers.find(ap => ap.id === p.id) || p;
     setSelectedPlayerModal(fullP);
   };
 
-  const cardRef = useRef(null);
-
-  // Recarrega as notas que este usuário já enviou, para ele conseguir corrigir
-  // dentro do prazo em vez de começar do zero.
-  const minhasNotasSalvas = match && match.my_ratings ? JSON.stringify(match.my_ratings) : '';
-  useEffect(() => {
-    if (minhasNotasSalvas) setRatings(JSON.parse(minhasNotasSalvas));
-  }, [minhasNotasSalvas]);
-
-  // Timers de debounce dos inputs de gols/assistencias.
-  // IMPORTANTE: precisa ficar aqui em cima, junto dos outros hooks. Se for declarado
-  // depois do "if (!match) return ..." abaixo, o React roda uma quantidade diferente
-  // de hooks entre o estado de carregamento e o carregado (erro #310).
-  const eventDebounceRef = useRef({});
-
-  // Limpa os timers pendentes ao sair da tela, evitando fetch e setState orfaos
-  useEffect(() => {
-    const timers = eventDebounceRef.current;
-    return () => {
-      Object.values(timers).forEach(t => clearTimeout(t));
-    };
-  }, []);
-
-  const loadMatch = () => {
-    // O id vai no cabeçalho para o backend devolver as notas que EU já dei
-    fetch(`${API_URL}/matches/${id}`, { headers: authHeaders(user) })
-      .then(res => res.json())
-      .then(data => {
-        setMatch(data);
-      });
-  };
-
-  const loadPlayers = () => {
-    fetch(`${API_URL}/stats`)
-      .then(res => res.json())
-      .then(data => setAllPlayers(data));
-  };
-
-  useEffect(() => {
+  const tentarDeNovo = () => {
+    setErroCarga(null);
     loadMatch();
     loadPlayers();
-  }, [id]);
+  };
 
-  if (!match) return <div className="text-center mt-10 text-muted">Carregando dados da partida...</div>;
+  if (!match) {
+    if (erroCarga && erroCarga.naoEncontrada) {
+      return (
+        <div className="glass-card text-center" style={{ maxWidth: '440px', margin: '44px auto 0', padding: '28px 20px' }}>
+          <h3 className="font-extrabold text-main" style={{ margin: '0 0 8px' }}>Partida não encontrada</h3>
+          <p className="text-muted" style={{ margin: '0 0 18px', fontSize: '0.88rem' }}>
+            Ela pode ter sido excluída ou o link está errado.
+          </p>
+          <Link to="/matches" className="btn" style={{ textDecoration: 'none' }}>
+            <ArrowLeft size={16} /> Voltar para o Histórico
+          </Link>
+        </div>
+      );
+    }
+    if (erroCarga) {
+      return (
+        <div className="glass-card text-center" style={{ maxWidth: '440px', margin: '44px auto 0', padding: '28px 20px' }}>
+          <h3 className="font-extrabold text-main" style={{ margin: '0 0 8px' }}>Não foi possível carregar a partida</h3>
+          <p className="text-muted" style={{ margin: '0 0 18px', fontSize: '0.88rem' }}>{erroCarga.mensagem}</p>
+          <div className="flex justify-center gap-3">
+            <button className="btn" style={{ width: 'auto' }} onClick={tentarDeNovo}>
+              <RefreshCw size={16} /> Tentar de novo
+            </button>
+            <Link to="/matches" className="btn btn-secondary" style={{ textDecoration: 'none' }}>
+              Voltar
+            </Link>
+          </div>
+        </div>
+      );
+    }
+    return <div className="text-center mt-10 text-muted">Carregando dados da partida...</div>;
+  }
+
+  // Contra rival os dois times já existem desde a criação: o nosso e o adversário, que
+  // nunca tem jogadores. A escalação só está pronta quando o nosso time recebeu atletas.
+  const isRival = match.type === 'rival';
+  const nossoTime = isRival ? (match.teams || []).find(t => !t.is_opponent) : null;
+  const teamsReady = isRival
+    ? !!(nossoTime && nossoTime.players.length > 0)
+    : !!(match.teams && match.teams.length >= 2);
+  // Times que aparecem com jogadores na tela: contra rival, só o nosso
+  const timesEscalados = isRival ? (nossoTime ? [nossoTime] : []) : (match.teams || []);
+  // Contra rival só existe o nosso time em campo, então não há o que alternar
+  const abaDoCampo = isRival ? 'team0' : pitchTab;
+
+  const dataDaPartida = new Date(match.date + 'T12:00:00');
+  // A temporada do rodapé da arte é a do ano do jogo, não um ano fixo
+  const anoDaPartida = isNaN(dataDaPartida.getTime()) ? new Date().getFullYear() : dataDaPartida.getFullYear();
+
+  // ---------------------------------------------------------------------------
+  // Permissões e prazo de avaliação
+  // ---------------------------------------------------------------------------
+  const isAdmin = isAdminUser(user);
+  const partidaEncerrada = match.status === 'completed';
+
+  // Placar, gols, assistências e a agenda são só do administrador.
+  const podeEditarPlacar = isAdmin;
+  // A escalação fica livre para o grupo montar até o apito final.
+  const podeMexerNaEscalacao = isAdmin || !partidaEncerrada;
+
+  const euJoguei = !!(user && jogadoresDaPartida.some(p => p.id === user.id));
+  const janelaAberta = !!match.rating_open;
+  const podeAvaliar = partidaEncerrada && janelaAberta && euJoguei;
+  const jaAvaliei = !!(match.my_ratings && Object.keys(match.my_ratings).length > 0);
+  const quantosAvaliaram = (match.raters || []).length;
+  // O painel de notas ocupa o lugar da escalação. Se o prazo vencer com ele aberto, a
+  // escalação volta (antes a tela ficava vazia)
+  const mostrandoAvaliacao = showRating && podeAvaliar;
+
+  // ---------------------------------------------------------------------------
+  // Gravação com debounce (placar, gols e assistências)
+  // ---------------------------------------------------------------------------
+
+  // Recarrega a partida só quando nada mais está para ser gravado: com um número
+  // ainda no debounce ou a caminho do servidor, o refetch apagaria o que o
+  // administrador acabou de digitar. O último envio a terminar é que recarrega.
+  const recarregarSeOcioso = () => {
+    const envios = enviosRef.current;
+    if (!montadoRef.current) return;
+    if (Object.keys(envios.pendentes).length === 0 && envios.emVoo === 0) loadMatch();
+  };
+
+  const agendarEnvio = (chave, enviar) => {
+    const envios = enviosRef.current;
+    if (envios.pendentes[chave]) clearTimeout(envios.pendentes[chave].timer);
+
+    const timer = setTimeout(async () => {
+      // Saiu do debounce e virou requisição em voo. Só apaga a chave se ela ainda for
+      // deste timer: apagar sem conferir (como era feito no finally, depois do envio)
+      // sumia com o timer novo de quem digitou de novo durante o envio
+      if (envios.pendentes[chave] && envios.pendentes[chave].timer === timer) {
+        delete envios.pendentes[chave];
+      }
+      envios.emVoo += 1;
+
+      // Envios do mesmo campo saem em fila, para o último número digitado chegar por último
+      const envio = (envios.filas[chave] || Promise.resolve()).then(enviar);
+      const fila = envio.catch(() => {});
+      envios.filas[chave] = fila;
+      try {
+        await envio;
+      } catch (err) {
+        if (montadoRef.current) avisarErro('Erro ao salvar na partida', err);
+      } finally {
+        envios.emVoo -= 1;
+        if (envios.filas[chave] === fila) delete envios.filas[chave];
+        recarregarSeOcioso();
+      }
+    }, ESPERA_DO_DEBOUNCE);
+
+    envios.pendentes[chave] = { timer, enviar };
+  };
 
   const handleTogglePlayer = (playerId) => {
     if (selectedPlayers.includes(playerId)) {
@@ -167,32 +411,34 @@ export default function MatchDetails() {
 
   // Contra rival não há sorteio: os convocados formam direto o nosso time
   const saveRivalLineup = async () => {
-    if (selectedPlayers.length === 0) return;
-    const res = await fetch(`${API_URL}/matches/${id}/teams`, {
-      method: 'POST',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ teams: [{ name: 'plugshawty FC', playerIds: selectedPlayers }] })
-    });
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || 'Não foi possível salvar a escalação.');
-      return;
+    if (selectedPlayers.length === 0 || salvandoEscalacao) return;
+    setSalvandoEscalacao(true);
+    try {
+      await api(`/matches/${id}/teams`, {
+        method: 'POST',
+        user,
+        body: { teams: [{ name: 'plugshawty FC', playerIds: selectedPlayers }] }
+      });
+      recarregarSeOcioso();
+    } catch (err) {
+      avisarErro('Erro ao salvar a escalação', err);
+    } finally {
+      setSalvandoEscalacao(false);
     }
-    loadMatch();
   };
 
-  const generateTeamsAuto = async () => {
+  const generateTeamsAuto = () => {
     const selected = allPlayers.filter(p => selectedPlayers.includes(p.id));
     if (selected.length === 0) return;
+
+    // O iPhone só libera o áudio dentro de um toque: o contexto de áudio nasce aqui,
+    // no clique, para os bipes do sorteio conseguirem tocar depois
+    prepararAudio();
 
     // Ordena pelo OVR. Ele já chega evoluído pelo desempenho nas partidas (nota,
     // gols e assistências), então somar a nota média de novo aqui contaria o mesmo
     // desempenho duas vezes no equilíbrio dos times.
-    selected.sort((a, b) => {
-      const powerA = calcOVR(a);
-      const powerB = calcOVR(b);
-      return powerB - powerA;
-    });
+    selected.sort((a, b) => calcOVR(b) - calcOVR(a));
 
     const teamAIds = [];
     const teamBIds = [];
@@ -212,16 +458,33 @@ export default function MatchDetails() {
       });
     });
 
-    // Save to backend in background
-    const savePromise = fetch(`${API_URL}/matches/${id}/teams`, {
+    const timers = timersDoSorteioRef.current;
+    const pararSorteio = () => {
+      timers.forEach(t => { clearTimeout(t); clearInterval(t); });
+      timers.length = 0;
+    };
+    pararSorteio();
+
+    // Grava enquanto a animação roda. A promessa nunca rejeita: devolve o erro (ou
+    // null), e o fim da animação decide entre comemorar e não fazer nada
+    const gravacao = api(`/matches/${id}/teams`, {
       method: 'POST',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
+      user,
+      body: {
         teams: [
           { name: 'COM COLETE', playerIds: teamAIds },
           { name: 'SEM COLETE', playerIds: teamBIds }
         ]
-      })
+      }
+    }).then(() => null, err => err);
+
+    // Se a gravação falhar não adianta terminar a animação (nem soltar confete): fecha
+    // o sorteio e mostra o motivo. Antes o overlay ficava preso em erro de rede.
+    gravacao.then(erro => {
+      if (!erro || !montadoRef.current) return;
+      pararSorteio();
+      setDraftAnim(null);
+      avisarErro('Erro ao salvar o sorteio', erro);
     });
 
     // Start Phase 1: Shuffling
@@ -234,8 +497,9 @@ export default function MatchDetails() {
       total: sequence.length
     });
 
-    // Phase 1 -> Phase 2: Sequential Draft Reveal (after 1000ms)
-    setTimeout(() => {
+    // Phase 1 -> Phase 2: Sequential Draft Reveal (after 1000ms).
+    // Os sons ficam com o DraftAnimation, que toca conforme o estágio.
+    timers.push(setTimeout(() => {
       setDraftAnim(prev => prev ? { ...prev, stage: 'revealing' } : null);
 
       let current = 0;
@@ -243,8 +507,6 @@ export default function MatchDetails() {
         current += 1;
         if (current <= sequence.length) {
           const item = sequence[current - 1];
-          playDraftSound(260 + current * 20);
-
           setDraftAnim(prev => {
             if (!prev) return null;
             return {
@@ -258,48 +520,42 @@ export default function MatchDetails() {
 
         if (current >= sequence.length) {
           clearInterval(interval);
-          // Phase 3: Celebration!
-          setTimeout(async () => {
-            await savePromise;
-            playCelebrationSound();
+          // Phase 3: Celebration — só depois de confirmar que os times foram gravados
+          timers.push(setTimeout(async () => {
+            const erro = await gravacao;
+            if (erro || !montadoRef.current) return;
             confetti({
               particleCount: 110,
               spread: 85,
               origin: { y: 0.55 },
               colors: ['#00f59b', '#fbbf24', '#00e5ff', '#ffffff']
             });
-
             setDraftAnim(prev => prev ? { ...prev, stage: 'done' } : null);
-          }, 350);
+          }, 350));
         }
       }, 190);
-    }, 1000);
+      timers.push(interval);
+    }, 1000));
   };
 
   // Times montados à mão: grava no mesmo formato do sorteio
   const saveManualTeams = async (teamAIds, teamBIds) => {
     setSavingManualTeams(true);
     try {
-      const res = await fetch(`${API_URL}/matches/${id}/teams`, {
+      await api(`/matches/${id}/teams`, {
         method: 'POST',
-        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
+        user,
+        body: {
           teams: [
             { name: 'COM COLETE', playerIds: teamAIds },
             { name: 'SEM COLETE', playerIds: teamBIds }
           ]
-        })
+        }
       });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Não foi possível salvar os times.');
-        return;
-      }
       setShowManualTeams(false);
-      loadMatch();
+      recarregarSeOcioso();
     } catch (err) {
-      console.error('Falha ao salvar os times:', err);
-      alert('Falha de conexão ao salvar os times.');
+      avisarErro('Falha ao salvar os times', err);
     } finally {
       setSavingManualTeams(false);
     }
@@ -312,53 +568,59 @@ export default function MatchDetails() {
     );
     if (!confirmado) return;
 
+    setMexendoNaEscalacao(true);
     try {
-      const res = await fetch(`${API_URL}/matches/${id}/players/${player.id}`, {
-        method: 'DELETE',
-        headers: authHeaders(user)
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        alert(data.error || 'Não foi possível tirar o atleta da partida.');
-        return;
-      }
-      loadMatch();
+      await api(`/matches/${id}/players/${player.id}`, { method: 'DELETE', user });
+      recarregarSeOcioso();
     } catch (err) {
-      console.error('Falha ao tirar atleta da partida:', err);
-      alert('Falha de conexão ao tirar o atleta da partida.');
+      avisarErro('Falha ao tirar atleta da partida', err);
+    } finally {
+      setMexendoNaEscalacao(false);
     }
   };
 
-  // Direct score update for a team (without needing to assign goals to players)
-  const handleUpdateTeamScore = async (teamId, val, inputEl) => {
-    const num = parseInt(val, 10);
-    const scoreVal = isNaN(num) ? 0 : Math.max(0, num);
+  // Placar digitado pelo administrador (DEBOUNCED, um por time). Campo vazio volta ao
+  // placar automático, a soma dos gols lançados para o time, em vez de virar 0 para sempre.
+  const handleUpdateTeamScore = (teamId, val, inputEl) => {
+    const texto = String(val ?? '').trim();
+    const num = parseInt(texto, 10);
+    const placarManual = texto === '' || isNaN(num) ? null : Math.min(99, Math.max(0, num));
 
+    // O campo mostra o que está sendo digitado (inclusive vazio) até perder o foco
+    setPlacarDigitado(prev => ({ ...prev, [teamId]: placarManual === null ? '' : String(placarManual) }));
     // Mesma correção dos campos de gol: evita o campo ficar mostrando "01"
-    if (inputEl && inputEl.value !== String(scoreVal)) {
-      inputEl.value = String(scoreVal);
+    if (inputEl && placarManual !== null && inputEl.value !== String(placarManual)) {
+      inputEl.value = String(placarManual);
     }
 
     // Optimistic local update
     setMatch(prev => {
       if (!prev) return prev;
-      const updatedTeams = (prev.teams || []).map(t => 
-        t.id === teamId ? { ...t, score: scoreVal, manual_score: scoreVal } : t
+      const updatedTeams = (prev.teams || []).map(t =>
+        t.id === teamId
+          ? { ...t, manual_score: placarManual, score: placarManual ?? golsDoTime(prev.goals, t.players) }
+          : t
       );
       return { ...prev, teams: updatedTeams };
     });
 
-    await fetch(`${API_URL}/matches/${id}/team-score`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ team_id: teamId, score: scoreVal })
+    agendarEnvio(`placar-${teamId}`, () =>
+      api(`/matches/${id}/team-score`, { method: 'PUT', user, body: { team_id: teamId, score: placarManual } })
+    );
+  };
+
+  const esquecerPlacarDigitado = (teamId) => {
+    setPlacarDigitado(prev => {
+      const resto = { ...prev };
+      delete resto[teamId];
+      return resto;
     });
   };
 
   // Direct number of goals / assists update for a player (DEBOUNCED)
   const handleSetPlayerEventCount = (playerId, type, val, inputEl) => {
     const num = parseInt(val, 10);
-    const countVal = isNaN(num) ? 0 : Math.max(0, num);
+    const countVal = isNaN(num) ? 0 : Math.min(30, Math.max(0, num));
 
     // Digitar 1 em cima de um campo que ja mostrava 0 deixaria "01" na tela: o React
     // compara o valor do input com o novo de forma fraca e "01" == 1, entao ele nao
@@ -367,149 +629,142 @@ export default function MatchDetails() {
       inputEl.value = String(countVal);
     }
 
+    // Ids negativos marcam os eventos otimistas. Contador próprio em vez de Date.now():
+    // dois atletas lançados no mesmo milissegundo repetiam o id (e a key do React)
+    const idsOtimistas = Array.from({ length: countVal }, () => proximoIdOtimistaRef.current--);
+
     // Optimistic local update — update match state immediately without API call
     setMatch(prev => {
       if (!prev) return prev;
       const eventKey = type === 'goal' ? 'goals' : 'assists';
+      // O chip do gol mostra o nome do atleta: o evento otimista já leva o nome dele
+      const timeDoAtleta = (prev.teams || []).find(t => (t.players || []).some(p => p.id === playerId));
+      const atleta = timeDoAtleta ? timeDoAtleta.players.find(p => p.id === playerId) : null;
       // Remove old events for this player
       const filtered = (prev[eventKey] || []).filter(e => e.user_id !== playerId);
       // Add new events
-      for (let i = 0; i < countVal; i++) {
-        filtered.push({ match_id: prev.id, user_id: playerId, id: -(Date.now() + i) });
-      }
+      idsOtimistas.forEach(idOtimista => {
+        filtered.push({
+          id: idOtimista,
+          match_id: prev.id,
+          user_id: playerId,
+          username: atleta?.username,
+          nickname: atleta?.nickname,
+          team_id: timeDoAtleta?.id
+        });
+      });
       const updatedMatch = { ...prev, [eventKey]: filtered };
       if (type === 'goal' && Array.isArray(prev.teams)) {
         updatedMatch.teams = prev.teams.map(t => {
           if (t.manual_score !== null && t.manual_score !== undefined) return t;
-          const playerIds = (t.players || []).map(p => p.id);
-          const teamGoals = filtered.filter(g => playerIds.includes(g.user_id)).length;
-          return { ...t, score: teamGoals };
+          return { ...t, score: golsDoTime(filtered, t.players) };
         });
       }
       return updatedMatch;
     });
 
-    // Debounce the actual API call (wait 600ms after last keystroke)
-    const debounceKey = `${playerId}-${type}`;
-    if (eventDebounceRef.current[debounceKey]) {
-      clearTimeout(eventDebounceRef.current[debounceKey]);
-    }
-    eventDebounceRef.current[debounceKey] = setTimeout(async () => {
-      try {
-        const res = await fetch(`${API_URL}/matches/${id}/player-events`, {
-          method: 'PUT',
-          headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ user_id: playerId, type, count: countVal })
-        });
-        if (!res.ok) {
-          const errData = await res.json().catch(() => ({}));
-          console.error('Erro ao atualizar eventos do atleta:', errData.error || res.statusText);
-        }
-      } catch (err) {
-        console.error('Falha de rede ao salvar eventos:', err);
-      } finally {
-        delete eventDebounceRef.current[debounceKey];
-        // So recarrega do servidor quando nao ha mais nenhum input pendente, senao o
-        // refetch sobrescreve o numero que o usuario ainda esta digitando em outro campo
-        if (Object.keys(eventDebounceRef.current).length === 0) loadMatch();
-      }
-    }, 600);
+    agendarEnvio(`${playerId}-${type}`, () =>
+      api(`/matches/${id}/player-events`, { method: 'PUT', user, body: { user_id: playerId, type, count: countVal } })
+    );
   };
 
   const removeEvent = async (type, eventId) => {
-    await fetch(`${API_URL}/${type}/${eventId}`, { method: 'DELETE', headers: authHeaders(user) });
-    loadMatch();
+    try {
+      await api(`/${type}/${eventId}`, { method: 'DELETE', user });
+    } catch (err) {
+      avisarErro('Erro ao excluir o lançamento', err);
+    }
+    recarregarSeOcioso();
   };
 
   const handleDeleteMatch = async () => {
-    if (window.confirm('Tem certeza que deseja excluir esta partida? Todos os gols, assistências e notas dela serão apagados permanentemente.')) {
-      await fetch(`${API_URL}/matches/${id}`, { method: 'DELETE', headers: authHeaders(user) });
+    if (!window.confirm('Tem certeza que deseja excluir esta partida? Todos os gols, assistências e notas dela serão apagados permanentemente.')) return;
+    try {
+      await api(`/matches/${id}`, { method: 'DELETE', user });
+      // Só sai da tela se a partida foi mesmo excluída
       navigate('/matches');
+    } catch (err) {
+      avisarErro('Erro ao excluir a partida', err);
     }
   };
 
   const handleSwitchTeam = async (userId) => {
-    await fetch(`${API_URL}/matches/${id}/switch-team`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ user_id: userId })
-    });
-    setFieldActionPlayer(null);
-    loadMatch();
+    setMexendoNaEscalacao(true);
+    try {
+      await api(`/matches/${id}/switch-team`, { method: 'PUT', user, body: { user_id: userId } });
+      recarregarSeOcioso();
+    } catch (err) {
+      avisarErro('Erro ao trocar o atleta de time', err);
+    } finally {
+      setMexendoNaEscalacao(false);
+    }
   };
 
   const handleReplacePlayer = async (oldUserId, newUserId) => {
-    await fetch(`${API_URL}/matches/${id}/replace-player`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ old_user_id: oldUserId, new_user_id: newUserId })
-    });
+    try {
+      await api(`/matches/${id}/replace-player`, {
+        method: 'PUT',
+        user,
+        body: { old_user_id: oldUserId, new_user_id: newUserId }
+      });
+    } catch (err) {
+      avisarErro('Erro ao substituir o atleta', err);
+      return;
+    }
     setSubstituteTarget(null);
-    setFieldActionPlayer(null);
-    loadMatch();
+    recarregarSeOcioso();
   };
 
-  const handleUpdateMatchInfo = async (e) => {
-    e.preventDefault();
-    await fetch(`${API_URL}/matches/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify(matchEditForm)
-    });
+  const handleUpdateMatchInfo = async (form) => {
+    try {
+      await api(`/matches/${id}`, { method: 'PUT', user, body: form });
+    } catch (err) {
+      avisarErro('Erro ao editar a partida', err);
+      return;
+    }
     setEditMatchModal(false);
-    loadMatch();
+    recarregarSeOcioso();
   };
 
   const handleAddPlayerToTeam = async (userId) => {
-    await fetch(`${API_URL}/matches/${id}/add-player`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ user_id: userId, team_id: showAddPlayerModal })
-    });
+    try {
+      await api(`/matches/${id}/add-player`, {
+        method: 'PUT',
+        user,
+        body: { user_id: userId, team_id: showAddPlayerModal }
+      });
+    } catch (err) {
+      avisarErro('Erro ao adicionar o atleta', err);
+      return;
+    }
     setShowAddPlayerModal(null);
-    loadMatch();
+    recarregarSeOcioso();
   };
 
   // Create player manually on this screen
-  const handleCreateManualPlayer = async (e) => {
-    e.preventDefault();
-    if (!newPlayerName.trim()) return;
-
+  const handleCreateManualPlayer = async ({ username, nickname, position }) => {
     try {
-      const res = await fetch(`${API_URL}/users`, {
-        method: 'POST',
-        headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-        body: JSON.stringify({
-          username: newPlayerName.trim(),
-          nickname: newPlayerNickname.trim() || newPlayerName.trim(),
-          position: newPlayerPosition
-        })
-      });
-      const created = await res.json();
-      if (created && created.id) {
-        const playersRes = await fetch(`${API_URL}/stats`);
-        const updatedPlayers = await playersRes.json();
-        setAllPlayers(updatedPlayers);
+      const created = await api('/users', { method: 'POST', user, body: { username, nickname, position } });
+      await loadPlayers();
 
-        // If teams not created yet, add directly to convocação
-        if (!teamsReady) {
-          setSelectedPlayers(prev => Array.from(new Set([...prev, created.id])));
-        }
-
-        setNewPlayerName('');
-        setNewPlayerNickname('');
-        setNewPlayerPosition('MEI');
-        setShowNewPlayerModal(false);
+      // If teams not created yet, add directly to convocação
+      if (!teamsReady && created && created.id) {
+        setSelectedPlayers(prev => Array.from(new Set([...prev, created.id])));
       }
+      setShowNewPlayerModal(false);
     } catch (err) {
-      console.error('Erro ao cadastrar atleta:', err);
-      alert('Erro ao cadastrar atleta.');
+      avisarErro('Erro ao cadastrar atleta', err);
     }
   };
 
   const submitRatings = async () => {
+    if (enviandoNotas) return;
+    // Só vão as notas dos atletas desta partida (o estado pode ter chaves de quem saiu)
+    const idsDaPartida = new Set(jogadoresDaPartida.map(p => String(p.id)));
     const notas = Object.fromEntries(
-      Object.entries(ratings).filter(([, nota]) => nota >= 0 && nota <= 10)
+      Object.entries(ratings).filter(([atletaId, nota]) =>
+        idsDaPartida.has(String(atletaId)) && typeof nota === 'number' && nota >= 0 && nota <= 10
+      )
     );
 
     if (Object.keys(notas).length === 0) {
@@ -517,19 +772,22 @@ export default function MatchDetails() {
       return;
     }
 
-    const res = await fetch(`${API_URL}/ratings`, {
-      method: 'POST',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ match_id: id, ratings: notas })
-    });
-
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) {
-      alert(data.error || 'Não foi possível enviar sua avaliação.');
-      return;
+    setEnviandoNotas(true);
+    try {
+      const data = await api('/ratings', { method: 'POST', user, body: { match_id: id, ratings: notas } });
+      alert(`Avaliação enviada! Você deu nota para ${data?.saved ?? Object.keys(notas).length} atleta(s). Dá para corrigir enquanto o prazo não terminar.`);
+      setShowRating(false);
+      recarregarSeOcioso();
+    } catch (err) {
+      avisarErro('Erro ao enviar a avaliação', err);
+    } finally {
+      setEnviandoNotas(false);
     }
+  };
 
-    alert(`Avaliação enviada! Você deu nota para ${data.saved} atleta(s). Dá para corrigir enquanto o prazo não terminar.`);
+  // O prazo acabou com o painel de notas aberto: avisa antes de ele sumir
+  const aoVencerPrazoNaAvaliacao = () => {
+    alert('O prazo de avaliação terminou. As notas não podem mais ser enviadas.');
     setShowRating(false);
     loadMatch();
   };
@@ -541,18 +799,12 @@ export default function MatchDetails() {
     );
     if (!confirmado) return;
 
-    const res = await fetch(`${API_URL}/matches/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ status: 'completed' })
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || 'Não foi possível encerrar a partida.');
-      return;
+    try {
+      await api(`/matches/${id}`, { method: 'PUT', user, body: { status: 'completed' } });
+      recarregarSeOcioso();
+    } catch (err) {
+      avisarErro('Erro ao encerrar a partida', err);
     }
-    loadMatch();
   };
 
   // Reabrir serve para desfazer um encerramento por engano. O prazo é zerado e
@@ -563,18 +815,12 @@ export default function MatchDetails() {
     );
     if (!confirmado) return;
 
-    const res = await fetch(`${API_URL}/matches/${id}`, {
-      method: 'PUT',
-      headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ status: 'scheduled' })
-    });
-
-    if (!res.ok) {
-      const data = await res.json().catch(() => ({}));
-      alert(data.error || 'Não foi possível reabrir a partida.');
-      return;
+    try {
+      await api(`/matches/${id}`, { method: 'PUT', user, body: { status: 'scheduled' } });
+      recarregarSeOcioso();
+    } catch (err) {
+      avisarErro('Erro ao reabrir a partida', err);
     }
-    loadMatch();
   };
 
   const exportWhatsAppCard = async () => {
@@ -587,8 +833,8 @@ export default function MatchDetails() {
 
       await waitForImages(node);
 
-      const dataUrl = await toPng(node, { 
-        cacheBust: false, 
+      const dataUrl = await toPng(node, {
+        cacheBust: false,
         // Botoes de edicao existem so na tela: nao entram na arte compartilhada
         filter: (n) => !n.classList?.contains('no-export'),
         quality: 1,
@@ -624,109 +870,84 @@ export default function MatchDetails() {
   // Confirm WhatsApp Convocação selection & auto-create non-existing players
   const handleApplyWhatsAppList = async (selectedItems = []) => {
     setIsCreatingFromWhatsApp(true);
-    try {
-      const matchedIds = selectedItems
-        .filter(item => item.matchedPlayer)
-        .map(item => item.matchedPlayer.id);
+    const matchedIds = selectedItems
+      .filter(item => item.matchedPlayer)
+      .map(item => item.matchedPlayer.id);
 
-      const newItems = selectedItems.filter(item => !item.matchedPlayer && item.suggestedName && item.suggestedName.trim());
+    // Linha com atletas empatados e sem escolha não vira cadastro novo
+    const newItems = selectedItems.filter(item =>
+      !item.matchedPlayer &&
+      !((item.candidatos || []).length > 1 && !item.criarNovo) &&
+      item.suggestedName && item.suggestedName.trim()
+    );
 
-      const newlyCreatedIds = [];
-
-      for (const item of newItems) {
-        const res = await fetch(`${API_URL}/users`, {
-          method: 'POST',
-          headers: authHeaders(user, { 'Content-Type': 'application/json' }),
-          body: JSON.stringify({
-            username: item.suggestedName.trim(),
-            nickname: item.suggestedName.trim(),
-            position: 'MEI'
-          })
-        });
-        const created = await res.json();
-        if (created && created.id) {
-          newlyCreatedIds.push(created.id);
-        }
+    const newlyCreatedIds = [];
+    let falha = null;
+    for (const item of newItems) {
+      try {
+        const nome = item.suggestedName.trim();
+        const created = await api('/users', { method: 'POST', user, body: { username: nome, nickname: nome, position: 'MEI' } });
+        if (created && created.id) newlyCreatedIds.push(created.id);
+      } catch (err) {
+        falha = err;
+        break;
       }
-
-      // Reload roster from backend to reflect newly created athletes
-      const playersRes = await fetch(`${API_URL}/stats`);
-      const updatedPlayers = await playersRes.json();
-      setAllPlayers(updatedPlayers);
-
-      // Merge with currently selected players without duplicates
-      const combined = Array.from(new Set([...selectedPlayers, ...matchedIds, ...newlyCreatedIds]));
-      setSelectedPlayers(combined);
-      setShowWhatsAppModal(false);
-    } catch (err) {
-      console.error('Erro ao processar lista do WhatsApp:', err);
-      alert('Ocorreu um erro ao cadastrar novos atletas.');
-    } finally {
-      setIsCreatingFromWhatsApp(false);
     }
+
+    // Mesmo se um cadastro falhar no meio, quem já foi cadastrado entra na convocação
+    // (repetir a confirmação não duplica: o servidor devolve o atleta que já existe)
+    await loadPlayers();
+    setSelectedPlayers(prev => Array.from(new Set([...prev, ...matchedIds, ...newlyCreatedIds])));
+    setIsCreatingFromWhatsApp(false);
+
+    if (falha) {
+      avisarErro('Erro ao cadastrar atletas da lista', falha);
+      return;
+    }
+    setShowWhatsAppModal(false);
   };
 
-  // Contra rival os dois times já existem desde a criação: o nosso e o adversário, que
-  // nunca tem jogadores. A escalação só está pronta quando o nosso time recebeu atletas.
-  const isRival = match.type === 'rival';
-  const nossoTime = isRival ? (match.teams || []).find(t => !t.is_opponent) : null;
-  const teamsReady = isRival
-    ? !!(nossoTime && nossoTime.players.length > 0)
-    : !!(match.teams && match.teams.length >= 2);
-  // Times que aparecem com jogadores na tela: contra rival, só o nosso
-  const timesEscalados = isRival ? (nossoTime ? [nossoTime] : []) : (match.teams || []);
-  // Contra rival só existe o nosso time em campo, então não há o que alternar
-  const abaDoCampo = isRival ? 'team0' : pitchTab;
-
-  // Calculate team OVR averages
-  const getTeamOVR = (team) => {
-    if (!team || !team.players || team.players.length === 0) return 0;
-    const sum = team.players.reduce((acc, p) => acc + calcOVR(p), 0);
-    return Math.round(sum / team.players.length);
-  };
-
-  // IDs of all players currently playing in this match
-  const matchPlayerIds = teamsReady ? match.teams.flatMap(t => t.players).map(p => p.id) : [];
-  // Bench players available for replacement
-  const benchPlayers = allPlayers.filter(p => !matchPlayerIds.includes(p.id));
-
-  // Count goals and assists per player
-  const getPlayerEventCount = (playerId, type) => {
-    if (type === 'goals') return (match.goals || []).filter(g => g.user_id === playerId).length;
-    if (type === 'assists') return (match.assists || []).filter(a => a.user_id === playerId).length;
-    return 0;
-  };
-
-  const allMatchPlayers = teamsReady ? match.teams.flatMap(t => t.players) : [];
-
-  // ---------------------------------------------------------------------------
-  // Permissões e prazo de avaliação
-  // ---------------------------------------------------------------------------
-  const isAdmin = isAdminUser(user);
-  const partidaEncerrada = match.status === 'completed';
-
-  // Placar, gols, assistências e a agenda são só do administrador.
-  const podeEditarPlacar = isAdmin;
-  // A escalação fica livre para o grupo montar até o apito final.
-  const podeMexerNaEscalacao = isAdmin || !partidaEncerrada;
-
-  const euJoguei = !!(user && allMatchPlayers.some(p => p.id === user.id));
-  const janelaAberta = !!match.rating_open;
-  const podeAvaliar = partidaEncerrada && janelaAberta && euJoguei;
-  const jaAvaliei = !!(match.my_ratings && Object.keys(match.my_ratings).length > 0);
-  const quantosAvaliaram = (match.raters || []).length;
+  // Campo do placar de um time no cabeçalho
+  const campoDoPlacar = (time, cor) => (
+    <input
+      type="number"
+      min="0"
+      max="99"
+      value={placarDigitado[time.id] ?? String(time.score ?? 0)}
+      onFocus={e => e.target.select()}
+      onChange={e => handleUpdateTeamScore(time.id, e.target.value, e.target)}
+      onBlur={() => esquecerPlacarDigitado(time.id)}
+      disabled={!podeEditarPlacar}
+      title={DICA_PLACAR}
+      aria-label={`Placar de ${time.name}`}
+      style={{
+        width: '54px',
+        height: '52px',
+        textAlign: 'center',
+        fontSize: '1.8rem',
+        fontWeight: '900',
+        background: 'rgba(0,0,0,0.7)',
+        border: `2px solid ${cor}`,
+        borderRadius: '14px',
+        color: cor,
+        padding: 0,
+        margin: 0,
+        boxSizing: 'border-box'
+      }}
+    />
+  );
 
   return (
     <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4 }}>
-      
+
       {/* Top Bar with Back, Create Player and Delete Match */}
-      <div className="flex justify-between items-center mb-8 flex-wrap gap-4">
+      <div className="flex justify-between items-center mb-8 gap-4">
         <Link to="/matches" style={{ color: 'var(--text-muted)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.92rem', fontWeight: '600' }}>
           <ArrowLeft size={18} /> Voltar para Histórico
         </Link>
 
         <div className="flex gap-3 items-center">
-          <button 
+          <button
             onClick={() => setShowNewPlayerModal(true)}
             className="btn"
             style={{ width: 'auto', padding: '9px 18px', fontSize: '0.85rem', borderRadius: '12px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}
@@ -734,7 +955,7 @@ export default function MatchDetails() {
             <UserPlus size={16} /> + Novo Jogador
           </button>
 
-          <button 
+          <button
             onClick={handleDeleteMatch}
             hidden={!isAdmin}
             className="btn btn-secondary"
@@ -745,20 +966,30 @@ export default function MatchDetails() {
         </div>
       </div>
 
+      {/* A partida está na tela, mas a última atualização falhou */}
+      {erroCarga && erroCarga.mensagem && (
+        <div role="alert" className="glass-card mb-4" style={{ padding: '10px 14px', borderColor: 'rgba(239, 68, 68, 0.4)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '0.82rem' }}>
+          <span>Não foi possível atualizar a partida. {erroCarga.mensagem}</span>
+          <button className="btn btn-secondary" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', flexShrink: 0 }} onClick={loadMatch}>
+            <RefreshCw size={14} /> Tentar de novo
+          </button>
+        </div>
+      )}
+
       {/* Header Match Score Banner (Symmetrical 3-Column Flex with generous padding) */}
       <div className="glass-card" style={{ padding: '24px 18px', marginBottom: '24px', background: 'linear-gradient(135deg, rgba(20,22,34,0.92), rgba(10,32,18,0.9))', borderRadius: '22px', textAlign: 'center' }}>
         <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', color: 'var(--primary)', fontWeight: '800', fontSize: '0.75rem', letterSpacing: '0.5px', textTransform: 'uppercase', marginBottom: '14px' }}>
-          PARTIDA DE {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
+          PARTIDA DE {dataDaPartida.toLocaleDateString('pt-BR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         </div>
 
         {teamsReady ? (
-          <div style={{ 
-            display: 'flex', 
-            justifyContent: 'space-between', 
-            alignItems: 'center', 
-            gap: '10px', 
-            maxWidth: '800px', 
-            margin: '0 auto 12px' 
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '10px',
+            maxWidth: '800px',
+            margin: '0 auto 12px'
           }}>
             {/* Left: Time 1 */}
             <div style={{ flex: '1 1 0', textAlign: 'center', minWidth: 0 }}>
@@ -766,60 +997,16 @@ export default function MatchDetails() {
                 <span className="desktop-only">{match.teams[0]?.name || 'SEM COLETE'}</span>
                 <span className="mobile-only">{formatShortTeamName(match.teams[0]?.name || 'SEM COLETE')}</span>
               </div>
-              <div className="text-muted text-xs font-bold uppercase tracking-wider mt-1">
+              <div className="text-muted font-bold mt-1">
                 OVR {getTeamOVR(match.teams[0])}
               </div>
             </div>
-            
+
             {/* Center: Interactive Scoreboard */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', flexShrink: 0 }}>
-              <input 
-                type="number" 
-                min="0" 
-                value={match.teams[0]?.score ?? 0} 
-                onFocus={e => e.target.select()}
-                onChange={e => handleUpdateTeamScore(match.teams[0].id, e.target.value, e.target)}
-                disabled={!podeEditarPlacar}
-                title="Alterar placar time 1"
-                style={{ 
-                  width: '54px', 
-                  height: '52px', 
-                  textAlign: 'center', 
-                  fontSize: '1.8rem', 
-                  fontWeight: '900', 
-                  background: 'rgba(0,0,0,0.7)', 
-                  border: '2px solid #00f59b', 
-                  borderRadius: '14px', 
-                  color: '#00f59b', 
-                  padding: 0, 
-                  margin: 0,
-                  boxSizing: 'border-box'
-                }} 
-              />
+              {match.teams[0] && campoDoPlacar(match.teams[0], '#00f59b')}
               <span style={{ fontSize: '1.3rem', fontWeight: '900', color: 'var(--text-muted)' }}>x</span>
-              <input 
-                type="number" 
-                min="0" 
-                value={match.teams[1]?.score ?? 0} 
-                onFocus={e => e.target.select()}
-                onChange={e => handleUpdateTeamScore(match.teams[1].id, e.target.value, e.target)}
-                disabled={!podeEditarPlacar}
-                title="Alterar placar time 2"
-                style={{ 
-                  width: '54px', 
-                  height: '52px', 
-                  textAlign: 'center', 
-                  fontSize: '1.8rem', 
-                  fontWeight: '900', 
-                  background: 'rgba(0,0,0,0.7)', 
-                  border: '2px solid #ffffff', 
-                  borderRadius: '14px', 
-                  color: '#ffffff', 
-                  padding: 0, 
-                  margin: 0,
-                  boxSizing: 'border-box'
-                }} 
-              />
+              {match.teams[1] && campoDoPlacar(match.teams[1], '#ffffff')}
             </div>
 
             {/* Right: Time 2 */}
@@ -828,39 +1015,39 @@ export default function MatchDetails() {
                 <span className="desktop-only">{match.teams[1]?.name || 'COM COLETE'}</span>
                 <span className="mobile-only">{formatShortTeamName(match.teams[1]?.name || 'COM COLETE')}</span>
               </div>
-              <div className="text-muted text-xs font-bold uppercase tracking-wider mt-1">
+              <div className="text-muted font-bold mt-1">
                 {isRival ? 'Adversário' : `OVR ${getTeamOVR(match.teams[1])}`}
               </div>
             </div>
           </div>
         ) : (
-          <div className="text-muted text-base my-3">{isRival ? `Jogo contra ${match.opponent} — escale o time abaixo!` : 'Times a definir — faça a convocação e sorteie as equipes abaixo!'}</div>
+          <div className="text-muted">{isRival ? `Jogo contra ${match.opponent} — escale o time abaixo!` : 'Times a definir — faça a convocação e sorteie as equipes abaixo!'}</div>
         )}
 
         <div className="flex justify-center gap-3 mt-4">
-          <span style={{ 
-            background: match.status === 'completed' ? 'rgba(0, 245, 155, 0.2)' : 'rgba(251, 191, 36, 0.2)', 
-            color: match.status === 'completed' ? 'var(--primary)' : '#fbbf24', 
+          <span style={{
+            background: match.status === 'completed' ? 'rgba(0, 245, 155, 0.2)' : 'rgba(251, 191, 36, 0.2)',
+            color: match.status === 'completed' ? 'var(--primary)' : '#fbbf24',
             border: `1px solid ${match.status === 'completed' ? 'rgba(0, 245, 155, 0.4)' : 'rgba(251, 191, 36, 0.4)'}`,
-            padding: '6px 20px', 
-            borderRadius: '20px', 
-            fontWeight: 'bold', 
-            fontSize: '0.82rem' 
+            padding: '6px 20px',
+            borderRadius: '20px',
+            fontWeight: 'bold',
+            fontSize: '0.82rem'
           }}>
             {match.status === 'completed' ? <><CheckCircle2 size={14} style={{ marginRight: '5px' }} />Partida Encerrada</> : <><Clock size={14} style={{ marginRight: '5px' }} />Convocação & Em Andamento</>}
           </span>
         </div>
       </div>
-      
+
       {/* 1. Convocação dos Jogadores */}
       {!teamsReady && (
         <div className="glass-card" style={{ padding: '20px 16px', marginBottom: '24px' }}>
           {/* Top: Textos da Convocação no Topo */}
           <div style={{ marginBottom: '16px' }}>
-            <h3 className="font-extrabold text-xl text-main flex items-center gap-2" style={{ margin: '0 0 6px' }}>
+            <h3 className="font-extrabold text-main flex items-center gap-2" style={{ margin: '0 0 6px' }}>
               <Users color="var(--primary)" size={22} /> 1. Convocação dos Jogadores
             </h3>
-            <p className="text-muted text-sm" style={{ margin: 0, lineHeight: 1.4 }}>
+            <p className="text-muted" style={{ margin: 0, lineHeight: 1.4 }}>
               {isRival ? 'Selecione os atletas que vão entrar em campo ou cole a lista rápida do grupo.' : 'Selecione os atletas confirmados para o sorteio ou cole a lista rápida do grupo.'}
             </p>
           </div>
@@ -868,18 +1055,18 @@ export default function MatchDetails() {
           {/* Middle: Botões de Ação Abaixo do Texto (100% na tela e clicáveis) */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px', marginBottom: '22px' }}>
             {/* WhatsApp Import Button */}
-            <button 
-              className="btn btn-secondary" 
-              style={{ 
-                padding: '12px 14px', 
-                fontSize: '0.86rem', 
+            <button
+              className="btn btn-secondary"
+              style={{
+                padding: '12px 14px',
+                fontSize: '0.86rem',
                 fontWeight: '800',
-                color: '#25D366', 
-                borderColor: 'rgba(37, 211, 102, 0.5)', 
-                background: 'rgba(37, 211, 102, 0.12)', 
-                display: 'inline-flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
+                color: '#25D366',
+                borderColor: 'rgba(37, 211, 102, 0.5)',
+                background: 'rgba(37, 211, 102, 0.12)',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 gap: '8px',
                 borderRadius: '12px'
               }}
@@ -889,15 +1076,15 @@ export default function MatchDetails() {
             </button>
 
             {/* Manual Player Quick Add */}
-            <button 
-              className="btn btn-secondary" 
-              style={{ 
-                padding: '12px 14px', 
-                fontSize: '0.86rem', 
+            <button
+              className="btn btn-secondary"
+              style={{
+                padding: '12px 14px',
+                fontSize: '0.86rem',
                 fontWeight: '700',
-                display: 'inline-flex', 
-                alignItems: 'center', 
-                justifyContent: 'center', 
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 gap: '8px',
                 borderRadius: '12px'
               }}
@@ -907,6 +1094,16 @@ export default function MatchDetails() {
             </button>
           </div>
 
+          {/* O elenco não carregou: sem isto a convocação aparecia vazia sem explicação */}
+          {erroElenco && (
+            <div role="alert" className="mb-4" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '10px', fontSize: '0.82rem', color: '#fbbf24' }}>
+              <span>Não foi possível carregar o elenco. {erroElenco}</span>
+              <button className="btn btn-secondary" style={{ width: 'auto', padding: '6px 12px', fontSize: '0.78rem', flexShrink: 0 }} onClick={loadPlayers}>
+                <RefreshCw size={14} /> Tentar de novo
+              </button>
+            </div>
+          )}
+
           {/* Grid de Atletas Convocados: 2 colunas perfeitas no celular */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(130px, 1fr))', gap: '10px', marginBottom: '28px' }}>
             {allPlayers.map(p => {
@@ -914,12 +1111,12 @@ export default function MatchDetails() {
               const displayName = getPrimaryName(p);
 
               return (
-                <div 
-                  key={p.id} 
+                <div
+                  key={p.id}
                   onClick={() => handleTogglePlayer(p.id)}
                   style={{
-                    padding: '12px 10px', 
-                    borderRadius: '14px', 
+                    padding: '12px 10px',
+                    borderRadius: '14px',
                     cursor: 'pointer',
                     background: isSelected ? 'rgba(0, 245, 155, 0.15)' : 'rgba(255,255,255,0.03)',
                     border: `1.5px solid ${isSelected ? 'var(--primary)' : 'var(--border)'}`,
@@ -938,16 +1135,18 @@ export default function MatchDetails() {
               );
             })}
           </div>
-          
+
           <div style={{ paddingTop: '28px', borderTop: '1px solid var(--border)' }}>
-            <h4 className="font-extrabold text-lg text-main flex items-center gap-2 mb-3">
+            <h4 className="font-extrabold text-main flex items-center gap-2 mb-3">
               {isRival ? <><Swords color="var(--primary)" size={20} /> 2. Escalação contra {match.opponent}</> : <><Shuffle color="var(--primary)" size={20} /> 2. Sorteio Ponderado por OVR (COM COLETE vs SEM COLETE)</>}
             </h4>
-            <p className="text-muted text-xs mb-4">
+            <p className="text-muted mb-4">
               {isRival ? 'Todos os convocados formam o time do plugshawty FC. Dá para ajustar a escalação depois.' : 'O algoritmo equilibra automaticamente os dois times pelo OVR de cada atleta, que já reflete o desempenho nas partidas.'}
             </p>
-            <button className="btn py-4 text-base font-extrabold w-full" onClick={isRival ? saveRivalLineup : generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
-              {isRival ? <><Swords size={20} /> Confirmar Escalação ({selectedPlayers.length} Atletas)</> : <><Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)</>}
+            <button className="btn font-extrabold w-full" onClick={isRival ? saveRivalLineup : generateTeamsAuto} disabled={selectedPlayers.length === 0 || !podeMexerNaEscalacao || salvandoEscalacao} style={{ borderRadius: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }}>
+              {isRival
+                ? <><Swords size={20} /> {salvandoEscalacao ? 'Salvando escalação...' : `Confirmar Escalação (${selectedPlayers.length} Atletas)`}</>
+                : <><Shuffle size={20} /> Sortear Equipes Equilibradas ({selectedPlayers.length} Convocados)</>}
             </button>
 
             {/* Alternativa ao sorteio: escolher o time de cada convocado */}
@@ -965,67 +1164,12 @@ export default function MatchDetails() {
         </div>
       )}
 
-      {/* Manual New Player Modal */}
+      {/* Cadastro rápido de atleta */}
       {showNewPlayerModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '440px', padding: '28px' }}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-extrabold text-lg text-main flex items-center gap-2">
-                <UserPlus color="var(--primary)" size={20} /> Cadastrar Novo Atleta
-              </h3>
-              <button onClick={() => setShowNewPlayerModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
-            </div>
-
-            <form onSubmit={handleCreateManualPlayer}>
-              <div className="mb-4">
-                <label className="label text-xs font-bold">Nome Completo</label>
-                <input 
-                  type="text" 
-                  className="input" 
-                  placeholder="Ex: João da Silva" 
-                  value={newPlayerName} 
-                  onChange={e => setNewPlayerName(e.target.value)} 
-                  required 
-                  style={{ marginBottom: 0 }}
-                />
-              </div>
-
-              <div className="mb-4">
-                <label className="label text-xs font-bold">Apelido Principal de Jogo (Opcional)</label>
-                <input 
-                  type="text" 
-                  className="input" 
-                  placeholder="Ex: Mursilha Jr, Caça Rato, Olise" 
-                  value={newPlayerNickname} 
-                  onChange={e => setNewPlayerNickname(e.target.value)} 
-                  style={{ marginBottom: 0 }}
-                />
-              </div>
-
-              <div className="mb-6">
-                <label className="label text-xs font-bold">Posição de Jogo</label>
-                <select 
-                  className="input" 
-                  value={newPlayerPosition} 
-                  onChange={e => setNewPlayerPosition(e.target.value)}
-                  style={{ marginBottom: 0, height: '42px' }}
-                >
-                  <option value="GOL">GOL — Goleiro</option>
-                  <option value="ZAG">ZAG — Zagueiro</option>
-                  <option value="LAT">LAT — Lateral</option>
-                  <option value="VOL">VOL — Volante</option>
-                  <option value="MEI">MEI — Meio-Campo</option>
-                  <option value="ATA">ATA — Atacante</option>
-                </select>
-              </div>
-
-              <div className="flex gap-3">
-                <button type="submit" className="btn flex-1">Cadastrar Atleta</button>
-                <button type="button" className="btn btn-secondary" style={{ width: 'auto' }} onClick={() => setShowNewPlayerModal(false)}>Cancelar</button>
-              </div>
-            </form>
-          </div>
-        </div>
+        <NovoAtletaModal
+          onClose={() => setShowNewPlayerModal(false)}
+          onSave={handleCreateManualPlayer}
+        />
       )}
 
       {/* WhatsApp Convocação Modal */}
@@ -1038,55 +1182,55 @@ export default function MatchDetails() {
       />
 
       {/* Teams Ready: Lineup List & Tactical Pitch View */}
-      {teamsReady && !showRating && (
+      {teamsReady && !mostrandoAvaliacao && (
         <>
           {/* Header Controls: View Switcher Separado da Barra de Ações */}
           <div style={{ marginTop: '24px', marginBottom: '22px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {/* Linha 1: Seletor de Modo de Visualização (Abas) */}
             <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <div 
-                style={{ 
-                  display: 'flex', 
+              <div
+                style={{
+                  display: 'flex',
                   gap: '8px',
-                  background: 'rgba(14, 16, 23, 0.92)', 
-                  padding: '6px', 
-                  borderRadius: '16px', 
+                  background: 'rgba(14, 16, 23, 0.92)',
+                  padding: '6px',
+                  borderRadius: '16px',
                   border: '1px solid var(--border)',
                   width: '100%',
                   maxWidth: '440px',
                   boxShadow: '0 4px 20px rgba(0,0,0,0.4)'
                 }}
               >
-                <button 
-                  className={`btn ${viewMode === 'list' ? '' : 'btn-secondary'}`} 
-                  style={{ 
-                    padding: '11px 16px', 
-                    fontSize: '0.84rem', 
-                    flex: 1, 
-                    borderRadius: '12px', 
-                    display: 'inline-flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
+                <button
+                  className={`btn ${viewMode === 'list' ? '' : 'btn-secondary'}`}
+                  style={{
+                    padding: '11px 16px',
+                    fontSize: '0.84rem',
+                    flex: 1,
+                    borderRadius: '12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     gap: '8px',
                     fontWeight: viewMode === 'list' ? '800' : '600'
-                  }} 
+                  }}
                   onClick={() => setViewMode('list')}
                 >
                   <LayoutList size={16} /> Lista Detalhada
                 </button>
-                <button 
-                  className={`btn ${viewMode === 'pitch' ? '' : 'btn-secondary'}`} 
-                  style={{ 
-                    padding: '11px 16px', 
-                    fontSize: '0.84rem', 
-                    flex: 1, 
-                    borderRadius: '12px', 
-                    display: 'inline-flex', 
-                    alignItems: 'center', 
-                    justifyContent: 'center', 
+                <button
+                  className={`btn ${viewMode === 'pitch' ? '' : 'btn-secondary'}`}
+                  style={{
+                    padding: '11px 16px',
+                    fontSize: '0.84rem',
+                    flex: 1,
+                    borderRadius: '12px',
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
                     gap: '8px',
                     fontWeight: viewMode === 'pitch' ? '800' : '600'
-                  }} 
+                  }}
                   onClick={() => setViewMode('pitch')}
                 >
                   <MapPin size={16} /> Campo Tático
@@ -1097,13 +1241,13 @@ export default function MatchDetails() {
             {/* Linha 2: Seletor de Time no Campo Tático (Fora da exportação da imagem) */}
             {viewMode === 'pitch' && !isRival && (
               <div style={{ display: 'flex', justifyContent: 'center', gap: '8px', flexWrap: 'wrap' }}>
-                <button 
+                <button
                   type="button"
                   onClick={() => setPitchTab('both')}
                   className={`btn ${pitchTab === 'both' ? '' : 'btn-secondary'}`}
-                  style={{ 
-                    padding: '8px 16px', 
-                    fontSize: '0.82rem', 
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '0.82rem',
                     borderRadius: '12px',
                     fontWeight: pitchTab === 'both' ? '800' : '600'
                   }}
@@ -1111,13 +1255,13 @@ export default function MatchDetails() {
                   Ambos os Times
                 </button>
 
-                <button 
+                <button
                   type="button"
                   onClick={() => setPitchTab('team0')}
                   className={`btn ${pitchTab === 'team0' ? '' : 'btn-secondary'}`}
-                  style={{ 
-                    padding: '8px 16px', 
-                    fontSize: '0.82rem', 
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '0.82rem',
                     borderRadius: '12px',
                     fontWeight: pitchTab === 'team0' ? '800' : '600',
                     borderColor: pitchTab === 'team0' ? '#00f59b' : 'rgba(0, 245, 155, 0.35)',
@@ -1128,13 +1272,13 @@ export default function MatchDetails() {
                   {match.teams[0]?.name || 'COM COLETE'} (OVR {getTeamOVR(match.teams[0])})
                 </button>
 
-                <button 
+                <button
                   type="button"
                   onClick={() => setPitchTab('team1')}
                   className={`btn ${pitchTab === 'team1' ? '' : 'btn-secondary'}`}
-                  style={{ 
-                    padding: '8px 16px', 
-                    fontSize: '0.82rem', 
+                  style={{
+                    padding: '8px 16px',
+                    fontSize: '0.82rem',
                     borderRadius: '12px',
                     fontWeight: pitchTab === 'team1' ? '800' : '600',
                     borderColor: pitchTab === 'team1' ? '#ffffff' : 'rgba(255, 255, 255, 0.35)',
@@ -1149,25 +1293,25 @@ export default function MatchDetails() {
 
             {/* Linha 3: Ação de Exportar para WhatsApp (Dedicado e 100% visível em qualquer celular) */}
             <div style={{ display: 'flex', justifyContent: 'center' }}>
-              <button 
-                className="btn btn-secondary" 
-                style={{ 
-                  width: '100%', 
+              <button
+                className="btn btn-secondary"
+                style={{
+                  width: '100%',
                   maxWidth: '440px',
-                  padding: '12px 18px', 
-                  fontSize: '0.86rem', 
-                  fontWeight: '800', 
-                  display: 'inline-flex', 
-                  alignItems: 'center', 
-                  justifyContent: 'center', 
-                  gap: '8px', 
+                  padding: '12px 18px',
+                  fontSize: '0.86rem',
+                  fontWeight: '800',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
                   borderRadius: '14px',
                   borderColor: 'rgba(0, 245, 155, 0.45)',
                   background: 'rgba(0, 245, 155, 0.08)',
                   color: '#00f59b',
                   boxShadow: '0 0 16px rgba(0, 245, 155, 0.15)'
-                }} 
-                onClick={exportWhatsAppCard} 
+                }}
+                onClick={exportWhatsAppCard}
                 disabled={isExporting}
               >
                 <Share2 size={18} /> {isExporting ? 'Baixando Imagem...' : 'Exportar Escalação (WhatsApp)'}
@@ -1175,22 +1319,22 @@ export default function MatchDetails() {
             </div>
           </div>
 
+          {/* Tudo aqui dentro vira a arte em PNG. Controles que só existem na tela levam a
+              classe "no-export" para ficarem de fora da imagem. */}
           <div ref={cardRef} style={{ maxWidth: viewMode === 'pitch' ? '540px' : '960px', width: '100%', margin: '0 auto', padding: '24px 14px 20px', background: '#08090e', borderRadius: '0px', border: '1px solid var(--border)' }}>
             <div style={{ textAlign: 'center', marginBottom: '20px' }}>
               <h4 style={{ color: 'var(--primary)', fontWeight: '900', fontSize: '1.35rem', margin: 0, letterSpacing: '-0.3px', textTransform: 'uppercase' }}>
                 {isRival ? `plugshawty FC x ${match.opponent}` : 'Escalação Oficial da Partida'}
               </h4>
               <div style={{ color: '#ffffff', fontSize: '0.88rem', marginTop: '6px', fontWeight: '700', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                {new Date(match.date + 'T12:00:00').toLocaleDateString('pt-BR')} — {match.time || '15h'} — {match.location || 'Arena Petrópolis'}
-                <button 
-                  onClick={() => {
-                    setMatchEditForm({ date: match.date || '', time: match.time || '', location: match.location || '', opponent: match.opponent || '' });
-                    setEditMatchModal(true);
-                  }}
+                {dataDaPartida.toLocaleDateString('pt-BR')} — {match.time || '15h'} — {match.location || 'Arena Petrópolis'}
+                <button
+                  onClick={() => setEditMatchModal(true)}
                   hidden={!isAdmin}
                   className="no-export"
                   style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', padding: 0 }}
                   title="Editar Partida"
+                  aria-label="Editar Partida"
                 >
                   <Edit2 size={16} />
                 </button>
@@ -1200,7 +1344,7 @@ export default function MatchDetails() {
             {/* VIEW MODE TRANSITION */}
             <AnimatePresence mode="wait">
               {viewMode === 'list' ? (
-                <motion.div 
+                <motion.div
                   key="list-view"
                   initial={{ opacity: 0, y: 14 }}
                   animate={{ opacity: 1, y: 0 }}
@@ -1209,12 +1353,12 @@ export default function MatchDetails() {
                   style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '16px' }}
                 >
                 {timesEscalados.map((team, idx) => (
-                  <div 
-                    key={team.id} 
-                    className="glass-card" 
-                    style={{ 
-                      position: 'relative', 
-                      overflow: 'hidden', 
+                  <div
+                    key={team.id}
+                    className="glass-card"
+                    style={{
+                      position: 'relative',
+                      overflow: 'hidden',
                       padding: '18px 14px',
                       borderRadius: '20px',
                       borderColor: idx === 0 ? 'rgba(0, 245, 155, 0.4)' : 'rgba(255, 255, 255, 0.25)',
@@ -1222,15 +1366,15 @@ export default function MatchDetails() {
                     }}
                   >
                     <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '4px', background: idx === 0 ? '#00f59b' : '#ffffff' }}></div>
-                    
+
                     <div className="flex justify-between items-center mb-4">
-                      <h3 className="font-extrabold text-lg" style={{ color: idx === 0 ? '#00f59b' : '#ffffff', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                      <h3 className="font-extrabold" style={{ color: idx === 0 ? '#00f59b' : '#ffffff', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                         <Shield size={20} /> {team.name}
                       </h3>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button 
-                          onClick={() => setShowAddPlayerModal(team.id)} 
-                          className="btn btn-secondary" 
+                        <button
+                          onClick={() => setShowAddPlayerModal(team.id)}
+                          className="btn btn-secondary no-export"
                           style={{ padding: '4px 8px', fontSize: '0.70rem', display: 'flex', alignItems: 'center', gap: '4px', borderRadius: '6px', minWidth: 'auto', width: 'auto' }}
                           title="Adicionar jogador a este time"
                           hidden={!podeMexerNaEscalacao}
@@ -1242,7 +1386,7 @@ export default function MatchDetails() {
                         </span>
                       </div>
                     </div>
-                    
+
                     {/* Player rows with 100% visible name and clean touch controls */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
                       {team.players.map(p => {
@@ -1251,13 +1395,13 @@ export default function MatchDetails() {
                         const displayName = getPrimaryName(p);
 
                         return (
-                          <div 
-                            key={p.id} 
+                          <div
+                            key={p.id}
                             onClick={() => openPlayerDetails(p)}
-                            style={{ 
-                              padding: '12px 12px', 
-                              background: 'rgba(255,255,255,0.03)', 
-                              borderRadius: '14px', 
+                            style={{
+                              padding: '12px 12px',
+                              background: 'rgba(255,255,255,0.03)',
+                              borderRadius: '14px',
                               border: '1px solid var(--border)',
                               display: 'flex',
                               flexDirection: 'column',
@@ -1294,23 +1438,25 @@ export default function MatchDetails() {
                               {/* Botões de Ação Rápida: Trocar de Time, Substituir e Tirar da partida.
                                   Ficam fora da arte exportada para o WhatsApp. */}
                               <div className="no-export" style={{ display: 'flex', alignItems: 'center', gap: '6px', flexShrink: 0 }} onClick={e => e.stopPropagation()}>
-                                <button 
-                                  className="btn btn-secondary" 
-                                  style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
-                                  title="Trocar de time (COM COLETE ⇄ SEM COLETE)" 
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }}
+                                  title="Trocar de time (COM COLETE ⇄ SEM COLETE)"
+                                  aria-label={`Trocar ${displayName} de time`}
                                   hidden={isRival}
                                   onClick={(e) => { e.stopPropagation(); handleSwitchTeam(p.id); }}
-                                  disabled={!podeMexerNaEscalacao}
+                                  disabled={!podeMexerNaEscalacao || mexendoNaEscalacao}
                                 >
                                   <RefreshCw size={14} />
                                 </button>
 
-                                <button 
-                                  className="btn btn-secondary" 
-                                  style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }} 
-                                  title="Substituir por outro atleta do elenco" 
+                                <button
+                                  className="btn btn-secondary"
+                                  style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', borderRadius: '9px' }}
+                                  title="Substituir por outro atleta do elenco"
+                                  aria-label={`Substituir ${displayName} por outro atleta do elenco`}
                                   onClick={(e) => { e.stopPropagation(); setSubstituteTarget({ user_id: p.id, name: displayName, team_name: team.name }); }}
-                                  disabled={!podeMexerNaEscalacao}
+                                  disabled={!podeMexerNaEscalacao || mexendoNaEscalacao}
                                 >
                                   <UserPlus size={14} />
                                 </button>
@@ -1319,8 +1465,9 @@ export default function MatchDetails() {
                                   className="btn btn-secondary"
                                   style={{ width: '34px', height: '34px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#ef4444', borderColor: 'rgba(239, 68, 68, 0.35)', borderRadius: '9px' }}
                                   title="Tirar da partida"
+                                  aria-label={`Tirar ${displayName} da partida`}
                                   onClick={(e) => { e.stopPropagation(); handleRemovePlayer(p); }}
-                                  disabled={!podeMexerNaEscalacao}
+                                  disabled={!podeMexerNaEscalacao || mexendoNaEscalacao}
                                 >
                                   <UserMinus size={14} />
                                 </button>
@@ -1330,45 +1477,46 @@ export default function MatchDetails() {
                             {/* Linha 2: Contadores de Gols e Assistências Claros e Espaçosos */}
                             <div style={{ display: 'flex', alignItems: 'center', gap: '8px', paddingTop: '8px', borderTop: '1px solid rgba(255,255,255,0.05)' }} onClick={e => e.stopPropagation()}>
                               {/* Goals Counter Pill with ⚽ Emoji lado a lado */}
-                              <div 
-                                style={{ 
-                                  display: 'flex', 
-                                  alignItems: 'center', 
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
                                   justifyContent: 'space-between',
-                                  gap: '6px', 
-                                  background: 'rgba(0, 245, 155, 0.08)', 
-                                  border: '1px solid rgba(0, 245, 155, 0.3)', 
-                                  borderRadius: '10px', 
+                                  gap: '6px',
+                                  background: 'rgba(0, 245, 155, 0.08)',
+                                  border: '1px solid rgba(0, 245, 155, 0.3)',
+                                  borderRadius: '10px',
                                   padding: '4px 10px',
                                   height: '38px',
                                   flex: 1,
                                   minWidth: 0
-                                }} 
+                                }}
                                 title="Gols marcados pelo atleta"
                               >
                                 <span style={{ fontSize: '0.8rem', fontWeight: 800, color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                                   <Goal size={14} />
                                   <span>Gols</span>
                                 </span>
-                                <input 
-                                  type="number" 
-                                  min="0" 
+                                <input
+                                  type="number"
+                                  min="0"
                                   max="30"
                                   value={gCount}
                                   onFocus={e => e.target.select()}
                                   onChange={e => handleSetPlayerEventCount(p.id, 'goal', e.target.value, e.target)}
                                   disabled={!podeEditarPlacar}
-                                  style={{ 
-                                    width: '32px', 
-                                    height: '28px', 
-                                    textAlign: 'center', 
-                                    fontSize: '1rem', 
-                                    fontWeight: '900', 
-                                    background: 'rgba(0,0,0,0.4)', 
+                                  aria-label={`Gols de ${displayName}`}
+                                  style={{
+                                    width: '32px',
+                                    height: '28px',
+                                    textAlign: 'center',
+                                    fontSize: '1rem',
+                                    fontWeight: '900',
+                                    background: 'rgba(0,0,0,0.4)',
                                     borderRadius: '6px',
-                                    border: '1px solid rgba(0, 245, 155, 0.3)', 
-                                    color: 'var(--primary)', 
-                                    padding: 0, 
+                                    border: '1px solid rgba(0, 245, 155, 0.3)',
+                                    color: 'var(--primary)',
+                                    padding: 0,
                                     margin: 0,
                                     outline: 'none',
                                     flexShrink: 0
@@ -1377,45 +1525,46 @@ export default function MatchDetails() {
                               </div>
 
                               {/* Assists Counter Pill with 👟 Emoji e palavra lado a lado */}
-                              <div 
-                                style={{ 
-                                  display: 'flex', 
-                                  alignItems: 'center', 
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
                                   justifyContent: 'space-between',
-                                  gap: '6px', 
-                                  background: 'rgba(251, 191, 36, 0.08)', 
-                                  border: '1px solid rgba(251, 191, 36, 0.3)', 
-                                  borderRadius: '10px', 
+                                  gap: '6px',
+                                  background: 'rgba(251, 191, 36, 0.08)',
+                                  border: '1px solid rgba(251, 191, 36, 0.3)',
+                                  borderRadius: '10px',
                                   padding: '4px 10px',
                                   height: '38px',
                                   flex: 1,
                                   minWidth: 0
-                                }} 
+                                }}
                                 title="Assistências do atleta"
                               >
                                 <span style={{ fontSize: '0.8rem', fontWeight: 800, color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '5px', whiteSpace: 'nowrap', flexShrink: 0 }}>
                                   <Footprints size={14} />
                                   <span>Assist.</span>
                                 </span>
-                                <input 
-                                  type="number" 
-                                  min="0" 
+                                <input
+                                  type="number"
+                                  min="0"
                                   max="30"
                                   value={aCount}
                                   onFocus={e => e.target.select()}
                                   onChange={e => handleSetPlayerEventCount(p.id, 'assist', e.target.value, e.target)}
                                   disabled={!podeEditarPlacar}
-                                  style={{ 
-                                    width: '32px', 
-                                    height: '28px', 
-                                    textAlign: 'center', 
-                                    fontSize: '1rem', 
-                                    fontWeight: '900', 
-                                    background: 'rgba(0,0,0,0.4)', 
+                                  aria-label={`Assistências de ${displayName}`}
+                                  style={{
+                                    width: '32px',
+                                    height: '28px',
+                                    textAlign: 'center',
+                                    fontSize: '1rem',
+                                    fontWeight: '900',
+                                    background: 'rgba(0,0,0,0.4)',
                                     borderRadius: '6px',
-                                    border: '1px solid rgba(251, 191, 36, 0.3)', 
-                                    color: '#fbbf24', 
-                                    padding: 0, 
+                                    border: '1px solid rgba(251, 191, 36, 0.3)',
+                                    color: '#fbbf24',
+                                    padding: 0,
                                     margin: 0,
                                     outline: 'none',
                                     flexShrink: 0
@@ -1443,14 +1592,14 @@ export default function MatchDetails() {
           </AnimatePresence>
 
           {/* Rodapé Oficial de Matchday (Alinhamento perfeito, sem quebra de ponto) */}
-          <div 
-            style={{ 
-              marginTop: '14px', 
-              paddingTop: '10px', 
-              borderTop: '1px solid rgba(255, 255, 255, 0.08)', 
-              display: 'flex', 
+          <div
+            style={{
+              marginTop: '14px',
+              paddingTop: '10px',
+              borderTop: '1px solid rgba(255, 255, 255, 0.08)',
+              display: 'flex',
               flexDirection: 'column',
-              alignItems: 'center', 
+              alignItems: 'center',
               justifyContent: 'center',
               gap: '4px',
               fontSize: '0.68rem',
@@ -1463,7 +1612,7 @@ export default function MatchDetails() {
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', whiteSpace: 'nowrap' }}>
               <span style={{ color: 'var(--primary)', fontWeight: '900' }}>PLUGSHAWTYCAFETOES FC</span>
               <span style={{ opacity: 0.35, fontSize: '0.62rem' }}>•</span>
-              <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>TEMPORADA 2026</span>
+              <span style={{ color: 'rgba(255, 255, 255, 0.65)' }}>TEMPORADA {anoDaPartida}</span>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', fontSize: '0.64rem', color: 'rgba(255, 255, 255, 0.45)', whiteSpace: 'nowrap' }}>
               <span>{isRival ? `VS ${match.opponent}` : (match.teams && match.teams[0]?.players && match.teams[1]?.players ? `${match.teams[0].players.length} VS ${match.teams[1].players.length}` : '')}</span>
@@ -1476,23 +1625,27 @@ export default function MatchDetails() {
         {/* Dica para o usuário (Apenas na tela, fora da imagem exportada) */}
         {viewMode === 'pitch' && (
           <div style={{ textAlign: 'left', marginTop: '14px', fontSize: '0.8rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', gap: '10px', padding: '0 10px' }}>
-            <Lightbulb size={24} color="#fbbf24" style={{ flexShrink: 0, marginTop: '2px' }} /> 
+            <Lightbulb size={24} color="#fbbf24" style={{ flexShrink: 0, marginTop: '2px' }} />
             <span>Toque em qualquer atleta no campo para ver suas estatísticas completas, OVR e histórico da temporada.</span>
           </div>
         )}
 
         {/* Resumo de Gols e Assistências da Partida (Apenas na tela, fora da imagem exportada) */}
         {match.goals && match.goals.length > 0 && (
-          <div className="mt-8 pt-5 border-t border-border">
+          <div className="mt-8">
             <h5 className="font-extrabold mb-3 flex items-center gap-2 text-primary" style={{ fontSize: '0.95rem' }}><Goal size={18} /> Gols Registrados na Partida ({match.goals.length})</h5>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {match.goals.map((g) => (
                 <span key={g.id} style={{ background: 'rgba(0,245,155,0.1)', padding: '5px 12px', borderRadius: '12px', fontSize: '0.82rem', border: '1px solid rgba(0,245,155,0.3)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                   <Goal size={13} color="var(--primary)" /> <strong>{getPrimaryName(g)}</strong>
-                  {match.status !== 'completed' && (
-                    <button 
+                  {/* Excluir é do administrador, e só para gol já gravado: o otimista (id
+                      negativo) ainda não existe no servidor */}
+                  {podeEditarPlacar && g.id > 0 && (
+                    <button
+                      type="button"
                       onClick={() => removeEvent('goals', g.id)}
                       title="Excluir este gol"
+                      aria-label={`Excluir este gol de ${getPrimaryName(g)}`}
                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}
                     >
                       ×
@@ -1506,16 +1659,18 @@ export default function MatchDetails() {
 
         {/* Match Assists Timeline Summary */}
         {match.assists && match.assists.length > 0 && (
-          <div className="mt-4 pt-4 border-t border-border">
-            <h5 className="font-extrabold mb-3 flex items-center gap-2 text-yellow-400" style={{ fontSize: '0.95rem' }}><Award size={18} /> Assistências Registradas na Partida ({match.assists.length})</h5>
+          <div className="mt-4">
+            <h5 className="font-extrabold mb-3 flex items-center gap-2" style={{ fontSize: '0.95rem' }}><Award size={18} /> Assistências Registradas na Partida ({match.assists.length})</h5>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
               {match.assists.map((a) => (
                 <span key={a.id} style={{ background: 'rgba(251,191,36,0.1)', padding: '5px 12px', borderRadius: '12px', fontSize: '0.82rem', border: '1px solid rgba(251,191,36,0.3)', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                   <Footprints size={13} color="#fbbf24" /> <strong>{getPrimaryName(a)}</strong>
-                  {match.status !== 'completed' && (
-                    <button 
+                  {podeEditarPlacar && a.id > 0 && (
+                    <button
+                      type="button"
                       onClick={() => removeEvent('assists', a.id)}
                       title="Excluir esta assistência"
+                      aria-label={`Excluir esta assistência de ${getPrimaryName(a)}`}
                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 2px', fontSize: '15px', fontWeight: 'bold', display: 'flex', alignItems: 'center' }}
                     >
                       ×
@@ -1526,250 +1681,117 @@ export default function MatchDetails() {
             </div>
           </div>
         )}
-          
+
           {/* Encerramento da partida e prazo de avaliação */}
-          {!showRating && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.2 }}
-              style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', marginTop: '28px' }}
-            >
-              {/* Partida ainda em aberto */}
-              {!partidaEncerrada && (isAdmin ? (
-                <button
-                  className="btn py-4 text-lg font-extrabold"
-                  style={{ width: '100%', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', boxShadow: '0 4px 20px rgba(0, 245, 155, 0.25)' }}
-                  onClick={handleFinishMatch}
-                >
-                  <CheckCircle2 size={22} /> Encerrar Partida & Abrir Avaliação
-                </button>
-              ) : (
-                <div className="text-center text-muted" style={{ fontSize: '0.84rem', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                  <Clock size={15} /> As notas abrem quando o administrador encerrar a partida.
-                </div>
-              ))}
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.2 }}
+            style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', marginTop: '28px' }}
+          >
+            {/* Partida ainda em aberto */}
+            {!partidaEncerrada && (isAdmin ? (
+              <button
+                className="btn font-extrabold"
+                style={{ width: '100%', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '10px', boxShadow: '0 4px 20px rgba(0, 245, 155, 0.25)' }}
+                onClick={handleFinishMatch}
+              >
+                <CheckCircle2 size={22} /> Encerrar Partida & Abrir Avaliação
+              </button>
+            ) : (
+              <div className="text-center text-muted" style={{ fontSize: '0.84rem', maxWidth: '440px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                <Clock size={15} /> As notas abrem quando o administrador encerrar a partida.
+              </div>
+            ))}
 
-              {/* Partida encerrada, prazo correndo */}
-              {partidaEncerrada && janelaAberta && (
-                <div className="glass-card" style={{ width: '100%', maxWidth: '440px', padding: '16px', borderColor: 'rgba(251, 191, 36, 0.4)', textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.78rem', color: '#fbbf24', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                    <Clock size={14} /> Avaliações abertas por mais <ContadorPrazo terminaEm={match.rating_ends_at} agoraServidor={match.server_now} />
+            {/* Partida encerrada, prazo correndo */}
+            {partidaEncerrada && janelaAberta && (
+              <div className="glass-card" style={{ width: '100%', maxWidth: '440px', padding: '16px', borderColor: 'rgba(251, 191, 36, 0.4)', textAlign: 'center' }}>
+                <div style={{ fontSize: '0.78rem', color: '#fbbf24', fontWeight: 800, textTransform: 'uppercase', letterSpacing: '0.5px', display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  {/* Quando o prazo zera, recarrega a partida: o servidor diz que a votação
+                      fechou e o botão "Avaliar" some */}
+                  <Clock size={14} /> Avaliações abertas por mais <ContadorPrazo terminaEm={match.rating_ends_at} agoraServidor={match.server_now} onExpire={loadMatch} />
+                </div>
+
+                <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '6px' }}>
+                  {quantosAvaliaram} de {jogadoresDaPartida.length} atletas já avaliaram
+                </div>
+
+                {euJoguei ? (
+                  <button
+                    className="btn font-extrabold"
+                    style={{ width: '100%', marginTop: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                    onClick={() => setShowRating(true)}
+                  >
+                    <Star size={18} fill="#000" /> {jaAvaliei ? 'Revisar minha avaliação' : 'Avaliar os atletas'}
+                  </button>
+                ) : (
+                  <div className="text-muted" style={{ fontSize: '0.78rem', marginTop: '10px' }}>
+                    Só quem entrou em campo nesta partida pode dar notas.
                   </div>
+                )}
+              </div>
+            )}
 
-                  <div style={{ fontSize: '0.76rem', color: 'var(--text-muted)', marginTop: '6px' }}>
-                    {quantosAvaliaram} de {allMatchPlayers.length} atletas já avaliaram
-                  </div>
+            {/* Partida encerrada e votação fechada (prazo vencido ou finalizada pelo admin) */}
+            {partidaEncerrada && !janelaAberta && (
+              <div className="text-center text-muted" style={{ fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                <CheckCircle2 size={15} /> Partida encerrada. A votação já foi encerrada
+                {quantosAvaliaram > 0 && ` — ${quantosAvaliaram} atleta(s) avaliaram`}.
+              </div>
+            )}
 
-                  {euJoguei ? (
-                    <button
-                      className="btn py-3 font-extrabold"
-                      style={{ width: '100%', marginTop: '12px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                      onClick={() => setShowRating(true)}
-                    >
-                      <Star size={18} fill="#000" /> {jaAvaliei ? 'Revisar minha avaliação' : 'Avaliar os atletas'}
-                    </button>
-                  ) : (
-                    <div className="text-muted" style={{ fontSize: '0.78rem', marginTop: '10px' }}>
-                      Só quem entrou em campo nesta partida pode dar notas.
-                    </div>
-                  )}
-                </div>
-              )}
+            {/* Finalizar a votação antes do prazo ou mudar a duração */}
+            {isAdmin && partidaEncerrada && (
+              <RatingWindowAdmin match={match} user={user} onChanged={loadMatch} />
+            )}
 
-              {/* Partida encerrada e votação fechada (prazo vencido ou finalizada pelo admin) */}
-              {partidaEncerrada && !janelaAberta && (
-                <div className="text-center text-muted" style={{ fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                  <CheckCircle2 size={15} /> Partida encerrada. A votação já foi encerrada
-                  {quantosAvaliaram > 0 && ` — ${quantosAvaliaram} atleta(s) avaliaram`}.
-                </div>
-              )}
-
-              {/* Finalizar a votação antes do prazo ou mudar a duração */}
-              {isAdmin && partidaEncerrada && (
-                <RatingWindowAdmin match={match} user={user} onChanged={loadMatch} />
-              )}
-
-              {/* Desfazer um encerramento por engano */}
-              {isAdmin && partidaEncerrada && (
-                <button
-                  className="btn btn-secondary"
-                  style={{ width: 'auto', padding: '8px 16px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                  onClick={handleReopenMatch}
-                >
-                  <RefreshCw size={14} /> Reabrir partida
-                </button>
-              )}
-            </motion.div>
-          )}
+            {/* Desfazer um encerramento por engano */}
+            {isAdmin && partidaEncerrada && (
+              <button
+                className="btn btn-secondary"
+                style={{ width: 'auto', padding: '8px 16px', fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                onClick={handleReopenMatch}
+              >
+                <RefreshCw size={14} /> Reabrir partida
+              </button>
+            )}
+          </motion.div>
         </>
-      )}
-
-      {/* Field Player Quick Action Modal (when clicking player on the tactical pitch) */}
-      {fieldActionPlayer && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(8px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '380px', padding: '26px', textAlign: 'center' }}>
-            <div className="flex justify-between items-center mb-3">
-              <h4 className="font-extrabold text-lg text-main" style={{ margin: 0 }}>{getPrimaryName(fieldActionPlayer.player)}</h4>
-              <button onClick={() => setFieldActionPlayer(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
-            </div>
-            
-            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '18px' }}>
-              {fieldActionPlayer.teamName} • {fieldActionPlayer.player.position || 'MEI'}
-            </div>
-
-            {/* Quick Number Inputs for Field Player */}
-            <div style={{ display: 'flex', justifyContent: 'center', gap: '20px', marginBottom: '20px', padding: '12px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px', border: '1px solid var(--border)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '5px' }}><Goal size={14} /> Gols:</span>
-                <input 
-                  type="number" 
-                  min="0" 
-                  max="30"
-                  value={getPlayerEventCount(fieldActionPlayer.player.id, 'goals')}
-                  disabled={!podeEditarPlacar}
-                  onFocus={e => e.target.select()}
-                  onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'goal', e.target.value, e.target)}
-                  style={{ width: '48px', height: '34px', textAlign: 'center', fontSize: '0.9rem', fontWeight: '800', background: 'rgba(0, 245, 155, 0.12)', border: '1px solid rgba(0, 245, 155, 0.4)', borderRadius: '8px', color: 'var(--primary)', padding: 0, margin: 0 }}
-                />
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '5px' }}><Footprints size={14} /> Assist.:</span>
-                <input 
-                  type="number" 
-                  min="0" 
-                  max="30"
-                  value={getPlayerEventCount(fieldActionPlayer.player.id, 'assists')}
-                  disabled={!podeEditarPlacar}
-                  onFocus={e => e.target.select()}
-                  onChange={e => handleSetPlayerEventCount(fieldActionPlayer.player.id, 'assist', e.target.value, e.target)}
-                  style={{ width: '48px', height: '34px', textAlign: 'center', fontSize: '0.9rem', fontWeight: '800', background: 'rgba(251, 191, 36, 0.12)', border: '1px solid rgba(251, 191, 36, 0.4)', borderRadius: '8px', color: '#fbbf24', padding: 0, margin: 0 }}
-                />
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao || isRival} onClick={() => handleSwitchTeam(fieldActionPlayer.player.id)} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                <RefreshCw size={15} /> Trocar de Equipe
-              </button>
-              <button className="btn btn-secondary" hidden={!podeMexerNaEscalacao} onClick={() => {
-                setSubstituteTarget({ user_id: fieldActionPlayer.player.id, name: getPrimaryName(fieldActionPlayer.player) });
-                setFieldActionPlayer(null);
-              }} style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}>
-                <UserPlus size={15} /> Substituir por Reserva
-              </button>
-            </div>
-          </div>
-        </div>
       )}
 
       {/* Edit Match Modal */}
       {editMatchModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card w-full max-w-sm p-6" style={{ background: '#0a0a0f' }}>
-            <div className="flex justify-between items-center mb-4">
-              <h4 className="font-extrabold text-lg text-main" style={{ margin: 0 }}>Editar Partida</h4>
-              <button onClick={() => setEditMatchModal(false)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
-            </div>
-            
-            <form onSubmit={handleUpdateMatchInfo}>
-              <div className="mb-4">
-                <label className="block text-sm font-bold text-muted mb-2">Data da Partida</label>
-                <input type="date" className="input" required value={matchEditForm.date} onChange={e => setMatchEditForm({...matchEditForm, date: e.target.value})} />
-              </div>
-              <div className="mb-4">
-                <label className="block text-sm font-bold text-muted mb-2">Horário</label>
-                <input type="text" className="input" placeholder="ex: 15h, 19:30" required value={matchEditForm.time} onChange={e => setMatchEditForm({...matchEditForm, time: e.target.value})} />
-              </div>
-              <div className="mb-6">
-                <label className="block text-sm font-bold text-muted mb-2">Local / Arena</label>
-                <input type="text" className="input" placeholder="ex: Arena Petrópolis" required value={matchEditForm.location} onChange={e => setMatchEditForm({...matchEditForm, location: e.target.value})} />
-              </div>
-              {isRival && (
-                <div className="mb-6">
-                  <label className="block text-sm font-bold text-muted mb-2">Time Adversário</label>
-                  <input type="text" className="input" placeholder="ex: Real Madruga FC" required maxLength={40} value={matchEditForm.opponent} onChange={e => setMatchEditForm({...matchEditForm, opponent: e.target.value})} />
-                </div>
-              )}
-              <button type="submit" className="btn w-full">Salvar Alterações</button>
-            </form>
-          </motion.div>
-        </div>
+        <EditarPartidaModal
+          match={match}
+          isRival={isRival}
+          onClose={() => setEditMatchModal(false)}
+          onSave={handleUpdateMatchInfo}
+        />
       )}
 
       {/* Add Player to Team Modal */}
       {showAddPlayerModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <motion.div initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="glass-card w-full max-w-sm p-6" style={{ background: '#0a0a0f', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
-            <div className="flex justify-between items-center mb-4">
-              <h4 className="font-extrabold text-lg text-main" style={{ margin: 0 }}>Adicionar Jogador</h4>
-              <button onClick={() => setShowAddPlayerModal(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
-            </div>
-            <p className="text-muted text-xs mb-4">Selecione um jogador para entrar neste time:</p>
-
-            <div style={{ overflowY: 'auto', flex: 1, paddingRight: '4px', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {allPlayers.filter(p => !allMatchPlayers.some(mp => mp.id === p.id)).length > 0 ? (
-                allPlayers.filter(p => !allMatchPlayers.some(mp => mp.id === p.id)).map(p => (
-                  <div 
-                    key={p.id} 
-                    onClick={() => handleAddPlayerToTeam(p.id)}
-                    style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    className="hover:border-primary"
-                  >
-                    <span className="font-bold text-sm">{getPrimaryName(p)}</span>
-                    <span className="text-xs font-bold text-muted bg-white/5 px-2 py-1 rounded">OVR {calcOVR(p)}</span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center text-muted text-sm py-4">Todos os jogadores já estão na partida.</div>
-              )}
-            </div>
-            
-            <button className="btn btn-secondary w-full mt-4" onClick={() => setShowAddPlayerModal(null)}>Cancelar</button>
-          </motion.div>
-        </div>
+        <AdicionarJogadorModal
+          players={foraDaPartida}
+          onClose={() => setShowAddPlayerModal(null)}
+          onEscolher={handleAddPlayerToTeam}
+        />
       )}
 
       {/* Substitute Player Modal */}
       {substituteTarget && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(10px)', zIndex: 120, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
-          <div className="glass-card" style={{ width: '100%', maxWidth: '440px', padding: '24px' }}>
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-bold text-lg text-main">Substituir {substituteTarget.name}</h3>
-              <button onClick={() => setSubstituteTarget(null)} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}><X size={20} /></button>
-            </div>
-            <p className="text-muted text-xs mb-4">Escolha um jogador do elenco para entrar no lugar de <strong>{substituteTarget.name}</strong>:</p>
-
-            <div style={{ maxHeight: '280px', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', marginBottom: '20px' }}>
-              {benchPlayers.length > 0 ? (
-                benchPlayers.map(p => (
-                  <div 
-                    key={p.id} 
-                    onClick={() => handleReplacePlayer(substituteTarget.user_id, p.id)}
-                    style={{ padding: '10px 14px', borderRadius: '10px', background: 'rgba(255,255,255,0.04)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-                    className="hover:border-primary"
-                  >
-                    <div>
-                      <span className="font-bold text-main">{getPrimaryName(p)}</span>
-                      <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>{p.position || 'CM'}</span>
-                    </div>
-                    <span style={{ fontSize: '12px', fontWeight: 'bold', color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>Entrar <ArrowRight size={13} /></span>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center text-muted text-sm py-4">Nenhum jogador reserva disponível fora da partida.</div>
-              )}
-            </div>
-
-            <button className="btn btn-secondary w-full" onClick={() => setSubstituteTarget(null)}>Cancelar</button>
-          </div>
-        </div>
+        <SubstituirJogadorModal
+          alvo={substituteTarget}
+          players={foraDaPartida}
+          onClose={() => setSubstituteTarget(null)}
+          onEscolher={(novoUserId) => handleReplacePlayer(substituteTarget.user_id, novoUserId)}
+        />
       )}
 
       {/* Vestiário (Avaliação da Partida) */}
       <RatingModal
-        isOpen={showRating && podeAvaliar}
+        isOpen={mostrandoAvaliacao}
         onClose={() => setShowRating(false)}
         match={match}
         ratings={ratings}
@@ -1778,6 +1800,8 @@ export default function MatchDetails() {
         jaAvaliei={jaAvaliei}
         user={user}
         getPlayerEventCount={getPlayerEventCount}
+        isSubmitting={enviandoNotas}
+        onPrazoEncerrado={aoVencerPrazoNaAvaliacao}
       />
 
       {/* Montagem manual dos times (alternativa ao sorteio) */}
@@ -1809,9 +1833,12 @@ export default function MatchDetails() {
         isMyPlayer={isMyPlayer}
         isAdmin={isAdmin}
         onEdit={() => {
+          // Leva o id do atleta aberto: a tela de atletas abre a edição dele
+          const playerId = selectedPlayerModal?.id;
           setSelectedPlayerModal(null);
-          navigate('/players', { state: { autoEdit: true } });
+          navigate('/players', { state: { autoEdit: true, playerId } });
         }}
+        allStats={allPlayers}
       />
     </motion.div>
   );

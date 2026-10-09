@@ -7,5 +7,10 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173
+  },
+  // Testes de fumaça das telas (npm test): navegador simulado com jsdom
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/test/setup.js']
   }
 })

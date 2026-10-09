@@ -89,7 +89,15 @@ export function getCardTier(ovr) {
 }
 
 /**
+ * Posições que concorrem à medalha Xerife. O cadastro usa 'LAT' para os laterais;
+ * 'LE' e 'LD' ficam para atletas antigos, gravados antes da posição única.
+ */
+const POSICOES_DEFENSIVAS = ['ZAG', 'LAT', 'LE', 'LD', 'VOL', 'GOL'];
+
+/**
  * Regras automatizadas de conquistas e medalhas para jogadores (Skill: pelada-achievements).
+ * Fonte única das medalhas: o ranking, o elenco e o perfil do atleta usam esta função.
+ * `allStats` é o elenco inteiro do mesmo período, para comparar quem é o maior.
  */
 export function getPlayerAchievements(player, allStats = [], period = 'all') {
   if (!player || !allStats || allStats.length === 0) return [];
@@ -160,8 +168,8 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     });
   }
 
-  if (['ZAG', 'LE', 'LD', 'VOL', 'GOL'].includes(player.position) && player.avg_rating && player.avg_rating >= 6.8 && (player.matches_count || 0) >= 2) {
-    const defenders = allStats.filter(s => ['ZAG', 'LE', 'LD', 'VOL', 'GOL'].includes(s.position) && (s.matches_count || 0) >= 2);
+  if (POSICOES_DEFENSIVAS.includes(player.position) && player.avg_rating && player.avg_rating >= 6.8 && (player.matches_count || 0) >= 2) {
+    const defenders = allStats.filter(s => POSICOES_DEFENSIVAS.includes(s.position) && (s.matches_count || 0) >= 2);
     const topDefRating = Math.max(...defenders.map(d => d.avg_rating || 0));
     if (player.avg_rating === topDefRating) {
       achievements.push({

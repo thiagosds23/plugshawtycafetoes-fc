@@ -10,7 +10,10 @@ export async function waitForImages(node, timeoutMs = 6000) {
   const images = Array.from(node.querySelectorAll('img'));
 
   await Promise.all(images.map(img => {
-    if (img.complete && img.naturalWidth > 0) return Promise.resolve();
+    // `complete` também vale para a foto que já falhou (naturalWidth 0): ela não vai
+    // mais disparar load nem error, então esperar por ela só segurava a exportação
+    // até o tempo limite
+    if (img.complete) return Promise.resolve();
     return new Promise(resolve => {
       let settled = false;
       const done = () => {
