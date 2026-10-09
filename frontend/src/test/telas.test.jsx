@@ -13,6 +13,9 @@ import Dashboard from '../components/Dashboard';
 import Matches from '../components/Matches';
 import Players from '../components/Players';
 import MatchDetails from '../components/MatchDetails';
+import AvisoServidorLento from '../components/AvisoServidorLento';
+import { fetchAcompanhado } from '../utils/api';
+import { act } from 'react';
 
 const ANO = new Date().getFullYear();
 const HORA = 3600 * 1000;
@@ -230,5 +233,40 @@ describe('Tela da partida', () => {
     const trocar = screen.queryAllByTitle(/Trocar de time/);
     expect(trocar.every(b => b.hidden || b.closest('[hidden]'))).toBe(true);
     expect(screen.getAllByTitle('Tirar da partida').length).toBe(2);
+  });
+});
+
+describe('Servidor acordando', () => {
+  it('avisa quando a resposta demora e some quando ela chega', async () => {
+    vi.useFakeTimers();
+    try {
+      let responder;
+      vi.spyOn(globalThis, 'fetch').mockImplementation(() => new Promise(r => { responder = r; }));
+      render(<AvisoServidorLento />);
+
+      const pedido = fetchAcompanhado('/matches');
+      await act(async () => { vi.advanceTimersByTime(3000); });
+      expect(screen.queryByRole('status')).toBeNull();
+
+      await act(async () => { vi.advanceTimersByTime(1500); });
+      expect(screen.getByRole('status').textContent).toMatch(/Acordando o servidor/);
+
+      await act(async () => { responder(new Response('[]')); await pedido; });
+      expect(screen.queryByRole('status')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('resposta rápida não mostra aviso', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response('[]'));
+      render(<AvisoServidorLento />);
+      await act(async () => { await fetchAcompanhado('/matches'); vi.advanceTimersByTime(10000); });
+      expect(screen.queryByRole('status')).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

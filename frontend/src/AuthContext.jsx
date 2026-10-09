@@ -1,5 +1,6 @@
 import React, { createContext, useState, useEffect, useCallback } from 'react';
 import { API_URL, authHeaders } from './config';
+import { fetchAcompanhado } from './utils/api';
 
 // eslint-disable-next-line react-refresh/only-export-components -- o contexto é usado em todo o app
 export const AuthContext = createContext();
@@ -44,7 +45,7 @@ export const AuthProvider = ({ children }) => {
   const token = user?.token;
   useEffect(() => {
     if (!userId || !token) return;
-    fetch(`${API_URL}/users/${userId}`, { headers: authHeaders({ token }) })
+    fetchAcompanhado(`${API_URL}/users/${userId}`, { headers: authHeaders({ token }) })
       .then(res => (res.ok ? res.json() : null))
       .then(freshUser => {
         if (freshUser && freshUser.id) {

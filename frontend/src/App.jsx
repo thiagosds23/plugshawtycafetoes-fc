@@ -5,6 +5,7 @@ import { AuthProvider, AuthContext } from './AuthContext';
 import { LogOut, Trophy, Calendar, Users } from 'lucide-react';
 
 import Login from './components/Login';
+import AvisoServidorLento from './components/AvisoServidorLento';
 import { formatPhotoUrl } from './config';
 import { getPrimaryName } from './utils/formatters';
 
@@ -252,6 +253,7 @@ function App() {
       <BrowserRouter>
         {/* Quem pediu ao sistema para reduzir movimento recebe as animações simplificadas */}
         <MotionConfig reducedMotion="user">
+          <AvisoServidorLento />
           <AppContent />
         </MotionConfig>
       </BrowserRouter>

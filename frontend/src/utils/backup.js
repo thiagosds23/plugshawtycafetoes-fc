@@ -1,4 +1,5 @@
 import { API_URL, authHeaders } from '../config';
+import { fetchAcompanhado } from './api';
 
 /**
  * Baixa o backup completo do clube (GET /admin/backup, só administrador) como arquivo.
@@ -13,7 +14,7 @@ import { API_URL, authHeaders } from '../config';
 export async function baixarBackup(user) {
   let res;
   try {
-    res = await fetch(`${API_URL}/admin/backup`, { headers: authHeaders(user) });
+    res = await fetchAcompanhado(`${API_URL}/admin/backup`, { headers: authHeaders(user) });
   } catch {
     throw new Error('Sem conexão com o servidor. Verifique sua internet e tente de novo.');
   }

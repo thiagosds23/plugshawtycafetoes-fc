@@ -221,7 +221,8 @@ pelo cliente** (o antigo `x-user-id` deixava qualquer um virar admin pelo localS
   novo quando o alvo é o próprio usuário — o front precisa trocar o token salvo.
 - PIN novo: exatamente 4 dígitos, guardado com scrypt (`hashPin`). 5 erros bloqueiam o PIN
   daquele atleta por 15 minutos (em memória). PINs antigos em texto puro foram convertidos
-  pela migração `pins_com_hash`.
+  pela migração `pins_com_hash`. A migração `perguntar_pin_de_novo` zerou `pin_prompted`
+  de quem não tinha PIN, para o app oferecer criar um mais uma vez.
 - O login casa **exatamente** nome de usuário, e-mail, celular (com ou sem DDI) ou um dos
   apelidos (`encontrarAtletas`). Se o termo serve para mais de um atleta, responde 409 e
   pede e-mail/celular — nunca escolhe o primeiro.
@@ -257,6 +258,19 @@ o que estourava o limite de 512MB do plano gratuito do Render e deixava o app le
   branco se a exportação não esperasse.
 
 Resultado medido: `/users` 6.7MB → 5.7KB, `/stats` 6.7MB → 8.1KB, `/matches/:id` 6.2MB → 3.6KB.
+
+**Servidor dormindo (Render grátis):** depois de ~15 min sem uso o servidor dorme e leva até
+~50s para voltar. Chamadas à API devem passar por `api()` ou `fetchAcompanhado()`
+(`utils/api.js`): passando de 4s, elas disparam o evento `servidor-lento` e o
+`AvisoServidorLento` mostra a faixa "Acordando o servidor...". O primeiro carregamento da
+página não tem como ser coberto, porque o próprio frontend é servido pelo servidor dormindo.
+
+**Cabeçalho fixo:** o fundo do cartão fica no `.header::after` (opaco) e o `.header::before`
+cobre a faixa entre o topo da tela e o cabeçalho com o mesmo fundo do body. Não volte a
+deixar o `.header` translúcido: o conteúdo rolando por baixo aparecia através dele.
+
+**Tela da partida:** o cartão de cada time da lista detalhada é `match/CartaoDoTime.jsx`;
+os modais ficam em `match/*Modal.jsx`. O `MatchDetails.jsx` guarda estado e chamadas à API.
 
 **Hooks do React:** todo `useState`/`useEffect`/`useRef` precisa ficar acima do
 `if (!match) return <Carregando/>` em `MatchDetails.jsx`. Um hook declarado depois do
