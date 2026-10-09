@@ -3,8 +3,15 @@
 Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido até agora, para que você possa continuar o desenvolvimento em um novo chat sem perder o contexto do que já fizemos.
 
 ## 🛠️ Stack Tecnológica
-- **Frontend:** React + Vite, Framer Motion, Lucide Icons, html-to-image, CSS puro estruturado.
-- **Backend:** Node.js, Express, SQLite (banco de dados local `database.sqlite`).
+- **Frontend:** React 19 + Vite 8, Framer Motion, Lucide Icons, html-to-image, CSS puro estruturado.
+  As telas são carregadas sob demanda (`React.lazy` em `App.jsx`).
+- **Backend:** Node.js 22 + Express 5, banco **Turso** (libSQL) via `@libsql/client`. Sem as
+  variáveis do Turso, o desenvolvimento local usa o arquivo `backend/database.sqlite` com o
+  mesmo cliente. Como rodar e quais variáveis de ambiente existem: ver `README.md`.
+- **Módulos do backend:** `server.js` (rotas), `db.js` (conexão + `all/get/run/batch`),
+  `auth.js` (token, PIN, login), `evolucao.js` (prazo da votação e evolução das cartas, sem
+  banco), `schema.js` (tabelas e migrações). Testes em `backend/test/` e testes de
+  fumaça das telas em `frontend/src/test/` (vitest + jsdom, API falsa) — `npm test` na raiz roda os dois.
 
 ---
 
@@ -17,28 +24,32 @@ Este arquivo serve como um histórico de tudo que foi planejado e desenvolvido a
 - **Edição & Exclusão Limpa:** Formato de card em vidro com upload de foto e exclusão com limpeza de estado em cascata.
 
 ### 2. Sorteio Inteligente de Equipes por OVR (Snake Draft Ponderado)
-- **Cálculo da Força Efetiva:** \( OVR_{efetivo} = \text{OVR Base} + (\text{Nota Média} \times 2) \).
-- **Snake Draft:** Distribuição balanceada dos convocados entre as equipes para minimizar a diferença de OVR.
-- **Indicador em Tempo Real:** Exibe o OVR médio de cada equipe e placar da partida.
+- **Força usada:** só o `calcOVR` do atleta, que já vem evoluído pelo desempenho (ver
+  "Evolução das Cartas"). Somar a nota média de novo contaria o desempenho duas vezes.
+- **Snake Draft:** Distribuição balanceada dos convocados entre COM COLETE e SEM COLETE.
+- **Alternativa manual:** `ManualTeamsModal` deixa escolher o time de cada convocado.
+- **Indicador em Tempo Real:** Exibe o OVR médio de cada equipe (`calcTeamOVR`) e placar da partida.
 
 ### 3. 📸 Gerador de Arte da Escalação para WhatsApp (Killer Feature)
-- Botão **"📸 Exportar para WhatsApp"** na tela da partida (`MatchDetails.jsx`).
-- Converte o card visual da escalação (Time Jamaica em amarelo vs Time Roots em verde, com fotos de perfil e OVR dos convocados) em imagem PNG de alta definição para compartilhamento direto nos grupos.
+- Botão **"Exportar Escalação (WhatsApp)"** na tela da partida (`MatchDetails.jsx`).
+- Converte o card visual da escalação (COM COLETE x SEM COLETE, com fotos e OVR) em PNG.
+  Controles de tela dentro do card levam a classe `no-export` para não sair na imagem.
 
 ### 4. Agenda & Histórico Agrupado por Mês (`Matches.jsx`)
 - Agrupamento mensal automático (ex: *Setembro 2026*, *Agosto 2026*).
 - Status visuais nítidos: `🟡 Convocação Aberta / A definir times` vs `🟢 Partida Encerrada`.
 
 ### 5. Hall da Fama & Ranking do Mês vs Temporada (`Dashboard.jsx`)
-- **Filtro de Período:** Alternador entre `Mês Atual` (Craque do Mês) e `Temporada Completa` (MVP Geral).
+- **Filtro de Período:** Alternador entre `Mês Atual` (Craque do Mês) e a temporada (ano atual).
 - **Resumo de Carreira V/E/D:** Exibe Vitórias, Empates, Derrotas e % de Aproveitamento de cada jogador.
-- **Meta do Mês:** Barra de progresso para presença mensal nas peladas (Meta: 4 partidas/mês).
-- **Conquistas Automatizadas (Badges):** Medalhas de *Artilheiro*, *Garçom*, *Craque do Mês/MVP*, *Padrão Defesa* e *Pé Murcho*.
+- **Conquistas Automatizadas (Badges):** `getPlayerAchievements` em `formatters.js` é a única
+  regra de medalhas (Artilheiro, Garçom, Craque do Mês/MVP, Xerife etc.).
 
 ---
 
 ## 💡 Skills Instaladas no Projeto & Antigravity
-- **Locais (`.agents/skills/` e orquestrador `.agents/skills.json`):**
+- **Locais (`.agents/skills/` e orquestrador `.agents/skills.json`, só na máquina — a pasta
+  `.agents/` está no `.gitignore`):**
   - `fut-card-engine`: Regras de OVR posicional, enquadramento e Tiers visuais (Special 85+, Gold 75-84, Silver 65-74, Bronze <65).
   - `team-balancer-rules`: Algoritmo Snake Draft por OVR efetivo e suporte a partidas rivais vs rachas internos.
   - `pelada-achievements`: Lógica automatizada de medalhas/badges (*Artilheiro*, *Garçom*, *MVP/Craque*, *Quem Tá Voando*, *Paredão/Xerife*, *Café com Leite*).
@@ -67,13 +78,21 @@ Para garantir manutenibilidade, carregamento rápido e respeitar os limites de F
 
 ---
 
-## 🗄️ Otimizações do Banco de Dados & Turso
-- **Índices de Alta Performance (`runMigrations`):**
-  - `idx_team_players_team` e `idx_team_players_user`: Aceleram agregação de elencos e partidas disputadas.
-  - `idx_goals_match_user` e `idx_assists_match_user`: Otimizam cálculo de artilharia e ranking.
-  - `idx_ratings_match_rater`: Acelera a consulta de notas do usuário e prazo de votação.
-  - `idx_matches_date_status` e `idx_teams_match`: Agilizam listagens da agenda e histórico.
-- **Transações Sequenciais sem `db.serialize()`:** Operações de escrita em lote e deleção de dados usam estritamente `await dbRun(...)` sequencial, garantindo compatibilidade tanto com SQLite local quanto com @libsql/client (Turso).
+## 🗄️ Banco de Dados & Turso
+- **Schema versionado (`backend/schema.js`):** as tabelas são criadas com `CREATE TABLE IF NOT
+  EXISTS` a cada boot (no Turso não muda nada; num banco vazio o app sobe completo). Coluna
+  nova entra em `COLUNAS` como `ALTER TABLE`; índice novo em `INDICES`. Migração de DADOS
+  usa `aplicarUmaVez(nome, fn)` — nunca rode conversão de dados a cada boot.
+- **Credenciais só por variável de ambiente** (`TURSO_DATABASE_URL`, `TURSO_AUTH_TOKEN`).
+  O token antigo ficou exposto no histórico público do repositório e precisa ser revogado.
+- **Transações:** escrita que mexe em várias linhas (excluir partida/atleta, salvar times,
+  gols, notas, tirar jogador) usa `db.batch([...])`: ou tudo entra, ou nada. Comando que
+  depende do id criado na mesma transação usa `(SELECT MAX(id) FROM ...)`.
+- **Índices:** `idx_team_players_team/user`, `idx_goals_match_user`, `idx_assists_match_user`,
+  `idx_ratings_match_rater`, `idx_matches_date_status`, `idx_teams_match`, e os únicos
+  `ux_ratings_unicas` e `ux_team_players` (um atleta uma vez por time).
+- **Cache da evolução:** `obterFormas()` guarda o cálculo por até 1 minuto e é descartado a
+  cada requisição de escrita (qualquer método fora GET).
 
 
 ---
@@ -102,14 +121,16 @@ atletas daquele time. A tela e o ranking (`/stats`) usam essa mesma regra.
 ## 📈 Evolução das Cartas pelo Desempenho
 
 Os atributos gravados em `users` (pace, shooting...) são a **BASE**, vinda da planilha de
-avaliação do elenco. **Nunca grave desempenho neles.** A evolução é calculada a cada leitura
-por `calcularFormas()` + `aplicarForma()` no backend, e aplicada em `/users`, `/users/:id`,
-`/stats` e `/matches/:id`.
+avaliação do elenco. **Nunca grave desempenho neles.** A evolução é calculada na leitura
+por `calcularFormasDe()` + `aplicarForma()` (`backend/evolucao.js`, coberto por testes), e
+aplicada em `/users`, `/users/:id`, `/stats` e `/matches/:id`.
 
 Cada atleta chega com:
 - `pace`, `shooting`... → já evoluídos (o `calcOVR` do frontend usa estes)
 - `base_attrs` → os valores originais da planilha
-- `form` → quanto cada atributo mudou, mais `partidas` e `nota` ponderada (null se nunca jogou)
+- `form` → quanto cada atributo mudou, mais `partidas`, `nota` ponderada (null se nunca jogou),
+  `nota_esperada`, `bonus_gol` e `bonus_assist` (pontos vindos de participação em gols acima
+  do esperado — o `ResumoForma` usa para explicar a variação)
 
 **Cada atuação é comparada com o esperado para o NÍVEL e a POSIÇÃO do atleta** — não com
 uma régua única. Constantes em `EVOLUCAO`, calibradas com as partidas reais (set/2026):
@@ -178,19 +199,39 @@ lançado, só o administrador pode tirá-lo (gols são exclusivos do admin).
    a votação. Reabrir a partida zera `rating_deadline`. Toda conta de prazo passa por
    `fimDaAvaliacao()` no backend — inclusive a da evolução das cartas.
 
-A autorização usa o cabeçalho `x-user-id` (mesmo mecanismo do backup e da auditoria).
-Isso protege o uso normal, mas **não é autenticação de verdade** — quem souber forjar
-a requisição consegue se passar por admin. Corrigir isso exige sessão/token assinado.
-
 **Escala das notas:** de 0 a 10. As notas antigas (1 a 5) foram convertidas pelo dobro
-numa migração de dados registrada em `schema_migrations` — migração de DADOS nunca pode
-rodar a cada boot, use `aplicarUmaVez(nome, fn)`. A Força Efetiva do sorteio é
-`OVR + nota_média` (antes era `OVR + nota × 2`, porque a nota ia só até 5).
+numa migração de dados registrada em `schema_migrations`.
 
-**Armadilha do driver:** `db.serialize()` no wrapper do Turso NÃO serializa nada —
-ele só executa a função. Comandos que dependem de ordem (apagar filhos antes do pai,
-limpar antes de inserir) precisam de `await dbRun(...)` em sequência. Ignorar isso
-fazia o `DELETE` de partida falhar por FOREIGN KEY enquanto a API respondia sucesso.
+---
+
+## 🔑 Login, Sessão e PIN
+
+**Identidade = token assinado.** O login (`POST /login`, também `/register`) devolve o atleta
+com `token` (HMAC-SHA256, 180 dias, `backend/auth.js`). O app manda
+`Authorization: Bearer <token>` em toda chamada — use `authHeaders(user)` ou o helper
+`api(path, { user })` de `frontend/src/utils/api.js`. **Nunca volte a confiar em id mandado
+pelo cliente** (o antigo `x-user-id` deixava qualquer um virar admin pelo localStorage).
+
+- Middlewares no `server.js`: `requireAuth`, `requireAdmin`, `requireSelfOrAdmin`,
+  `requireOpenMatchOrAdmin`. `getRequester(req)` lê o token (ou devolve null).
+- **Admin só vale com PIN:** `isAdminUser` exige `is_admin = 1` E PIN definido. Admin sem PIN
+  é obrigado a criar um no login (`pinRequired`) e não pode pular nem remover o PIN.
+- O token carrega a "versão do PIN": criar, trocar ou resetar o PIN derruba as sessões
+  antigas daquele atleta. Por isso `POST /users/:id/pin` e `/reset-pin` devolvem `token`
+  novo quando o alvo é o próprio usuário — o front precisa trocar o token salvo.
+- PIN novo: exatamente 4 dígitos, guardado com scrypt (`hashPin`). 5 erros bloqueiam o PIN
+  daquele atleta por 15 minutos (em memória). PINs antigos em texto puro foram convertidos
+  pela migração `pins_com_hash`.
+- O login casa **exatamente** nome de usuário, e-mail, celular (com ou sem DDI) ou um dos
+  apelidos (`encontrarAtletas`). Se o termo serve para mais de um atleta, responde 409 e
+  pede e-mail/celular — nunca escolhe o primeiro.
+- Códigos de convite vêm de `INVITE_CODES`.
+- Resposta 401 no front dispara o evento `sessao-expirada` e o `AuthContext` desloga.
+  Sessões salvas sem `token` (de antes desta versão) são descartadas: o atleta entra de novo.
+
+**Dados pessoais:** telefone e e-mail nunca aparecem em listagens (`/users`, `/stats`,
+`/matches/:id`). `GET /users/:id` só os mostra ao próprio atleta e ao admin.
+`PUT /users/:id/profile` só altera os campos enviados e ignora telefone/e-mail em branco.
 
 ---
 
@@ -206,7 +247,9 @@ o que estourava o limite de 512MB do plano gratuito do Render e deixava o app le
   da string, e `withPhotoUrls(row)` / `buildPhotoRef(...)` para montar a URL curta.
 - As APIs devolvem `photo: "/users/:id/photo?v=<versão>"` em vez do Base64.
 - `GET /users/:id/photo` serve a imagem binária com `Cache-Control: immutable` e ETag.
-  A versão na URL vem do conteúdo, então trocar a foto invalida o cache sozinha.
+  A versão na URL vem do conteúdo, então trocar a foto invalida o cache sozinha. Sem `?v=`
+  a resposta é `no-cache` (senão a foto antiga ficaria presa no navegador).
+- Upload de foto fica só em memória (multer `memoryStorage`, até 4MB) e vira data URI no banco.
 - No frontend, **sempre** renderize com `formatPhotoUrl(player.photo)` — nunca concatene
   `API_URL` na mão.
 - Antes de exportar arte em PNG (`toPng`), chame `waitForImages(node)`
@@ -222,5 +265,6 @@ return antecipado quebra a tela com o erro React #310.
 ---
 
 ## 🚀 Como Executar o Projeto
-1. **Backend:** No diretório `backend/`, execute `node server.js` (Porta 3001).
-2. **Frontend:** No diretório `frontend/`, execute `npm run dev` (Porta 5173).
+Ver `README.md` (instalação, variáveis de ambiente, como promover o primeiro admin num banco
+vazio e como rodar os testes). O GitHub Actions (`.github/workflows/ci.yml`) roda testes do
+backend, lint e build do frontend a cada push.

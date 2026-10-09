@@ -29,3 +29,7 @@ Thumbs.db
 backend/database.sqlite
 backend/uploads/
 
+
+# Planilha de avaliação e o gerador dela têm os nomes do elenco: ficam só na máquina
+Planilha_Avaliacao_*.xlsx
+generate_spreadsheet.py
