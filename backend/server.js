@@ -18,6 +18,7 @@ const {
   calcularFormasDe,
   aplicarForma
 } = require('./evolucao');
+const { notasDoPeriodo, minimoParaPremio } = require('./ranking');
 
 const app = express();
 // Comprime JSON e o bundle do frontend (o JS principal cai de ~620KB para ~180KB)
@@ -1489,7 +1490,7 @@ app.get('/stats', async (req, res) => {
 
   try {
     // Consultas independentes: rodam juntas em vez de encadeadas
-    const [users, goalsRows, assistsRows, ratingsRows, matchDetails, formas] = await Promise.all([
+    const [users, goalsRows, assistsRows, ratingsRows, matchDetails, formas, periodo] = await Promise.all([
       db.all(`SELECT ${USER_COLS}, ${HAS_PIN_COL}, ${photoCols()} FROM users`),
 
       db.all(`SELECT g.user_id, COUNT(*) as cnt FROM goals g JOIN matches m ON g.match_id = m.id
@@ -1498,8 +1499,10 @@ app.get('/stats', async (req, res) => {
       db.all(`SELECT a.user_id, COUNT(*) as cnt FROM assists a JOIN matches m ON a.match_id = m.id
               WHERE m.status = 'completed'${dateFilter} GROUP BY a.user_id`, dateArgs),
 
-      db.all(`SELECT r.rated_id, AVG(r.score) as avg_score FROM ratings r JOIN matches m ON r.match_id = m.id
-              WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id`, dateArgs),
+      // Média de cada atleta em cada partida: a nota do ranking é a média dessas médias,
+      // e não de todos os votos juntos (senão a partida com mais votantes pesava mais)
+      db.all(`SELECT r.rated_id, r.match_id, AVG(r.score) as media FROM ratings r JOIN matches m ON r.match_id = m.id
+              WHERE m.status = 'completed'${dateFilter} GROUP BY r.rated_id, r.match_id`, dateArgs),
 
       // Detalhe por partida, necessário para calcular sequência e forma recente.
       // O placar de cada time segue a mesma regra da tela da partida: o digitado pelo
@@ -1530,13 +1533,18 @@ app.get('/stats', async (req, res) => {
 
       // A evolução da carta usa sempre o histórico completo, mesmo quando o ranking
       // está filtrado por mês: o OVR é do atleta, não do período
-      obterFormas()
+      obterFormas(),
+
+      // Partidas encerradas no período: base do mínimo de jogos para concorrer a prêmio
+      db.get(`SELECT COUNT(*) AS n FROM matches m WHERE m.status = 'completed'${dateFilter}`, dateArgs)
     ]);
 
     const porAtleta = (linhas, chave, valor) => Object.fromEntries(linhas.map(r => [r[chave], r[valor]]));
     const goalsMap = porAtleta(goalsRows, 'user_id', 'cnt');
     const assistsMap = porAtleta(assistsRows, 'user_id', 'cnt');
-    const ratingsMap = porAtleta(ratingsRows, 'rated_id', 'avg_score');
+    const { porAtleta: notas } = notasDoPeriodo(ratingsRows);
+    const partidasNoPeriodo = Number(periodo && periodo.n) || 0;
+    const minimoPremio = minimoParaPremio(partidasNoPeriodo);
 
     const userMatchMap = {};
     matchDetails.forEach(row => {
@@ -1563,11 +1571,19 @@ app.get('/stats', async (req, res) => {
       }
 
       const matchesCount = userMatches.length;
+      const nota = notas.get(Number(user.id));
       return {
         ...aplicarForma(withPhotoUrls(user), formas),
         goals: goalsMap[user.id] || 0,
         assists: assistsMap[user.id] || 0,
-        avg_rating: ratingsMap[user.id] || 0,
+        avg_rating: nota ? Math.round(nota.media * 100) / 100 : 0,
+        // Nota do ranking: puxada para a média do grupo quando há poucas partidas avaliadas
+        nota_ajustada: nota ? Math.round(nota.ajustada * 100) / 100 : null,
+        rated_matches: nota ? nota.avaliadas : 0,
+        // Concorre a MVP/Craque/Xerife quem jogou pelo menos metade das partidas do período
+        elegivel_premio: matchesCount >= minimoPremio,
+        minimo_para_premio: minimoPremio,
+        partidas_no_periodo: partidasNoPeriodo,
         matches_count: matchesCount,
         wins,
         draws,

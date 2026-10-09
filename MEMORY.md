@@ -128,36 +128,64 @@ aplicada em `/users`, `/users/:id`, `/stats` e `/matches/:id`.
 Cada atleta chega com:
 - `pace`, `shooting`... → já evoluídos (o `calcOVR` do frontend usa estes)
 - `base_attrs` → os valores originais da planilha
-- `form` → quanto cada atributo mudou, mais `partidas`, `nota` ponderada (null se nunca jogou),
-  `nota_esperada`, `bonus_gol` e `bonus_assist` (pontos vindos de participação em gols acima
-  do esperado — o `ResumoForma` usa para explicar a variação)
+- `form` → quanto cada atributo mudou, `partidas`, `vitorias/empates/derrotas`, `nota`
+  ponderada (null sem notas fechadas), `nota_esperada`, `jogos_avaliados`,
+  `jogos_recentes`, `confianca` e `componentes` (pontos de cada sinal, já com confiança —
+  o `ResumoForma` mostra um por linha)
 
-**Cada atuação é comparada com o esperado para o NÍVEL e a POSIÇÃO do atleta** — não com
-uma régua única. Constantes em `EVOLUCAO`, calibradas com as partidas reais (set/2026):
+**Cada partida gera quatro sinais, sempre contra o esperado** (constantes em `EVOLUCAO`,
+calibradas com as partidas reais de set/2026):
 
-- **Nota esperada cresce com o OVR base**: `6,2 + (OVR − 62) × 0,09`. O grupo já dá notas
-  maiores a quem tem OVR maior (correlação 0,64), então nota 7 é ótima para um 60 e abaixo do
-  esperado para um 81. Cada ponto de nota acima/abaixo do esperado move todos os atributos em 3.
-- **Gols e assistências contam como parcela dos gols do time**, comparada com o esperado da
-  posição (atacante 28% dos gols, zagueiro 3%...). Assim o placar do jogo não importa: 2 gols
-  numa pelada de 15 é pouco. Só ficar acima soma; ficar abaixo **nunca penaliza**.
+1. **Resultado** — existe em toda partida, com ou sem votação. Desempenho real do time
+   (60% vitória/empate/derrota + 40% saldo de gols sobre o total da partida) menos o
+   esperado pela diferença de OVR médio da planilha dos dois times (escala 15: 7 pontos de
+   diferença ≈ 75% de favoritismo). Contra rival (adversário sem atletas) o esperado é 50%.
+   Vale até ~±4 pontos e mexe em todos os atributos; na **defesa** o peso depende da posição
+   (zagueiro/goleiro 1,6x, volante/lateral 1,3x, atacante 0,6x). Antes disso, sem votação a
+   carta ficava parada e perder não custava nada.
+2. **Nota** — média recebida menos a nota esperada para o OVR base. A régua se recalibra
+   sozinha com as notas fechadas do grupo (com 20+ notas): passa pela média real e usa a
+   inclinação medida (limitada a 0,04–0,12). Com poucas notas: 6,8 com OVR 65, +0,08 por
+   ponto. A régua antiga (6,2 com OVR 62) era 0,4 baixa e inflava todas as cartas (+1 de
+   OVR médio). 1 ponto de nota = 3 pontos em todos os atributos.
+3. **Gols e assistências** — fatia dos gols lançados do time contra a fatia esperada da
+   posição **naquela formação**: peso da posição ÷ soma dos pesos do time (time de 5 espera
+   mais de cada um que time de 7). Pesos medidos: gols ATA 1,8 · MEI 1,1 · VOL/LAT 0,9 ·
+   ZAG 0,25; assistências MEI 1,4 · VOL 1,3 · LAT 1,2 · ATA 1,1 · ZAG 0,35. Ficar acima
+   rende 2 pontos por 10% extra (teto +8); ficar abaixo custa só 40% disso (piso −4).
+   Gols → finalização; assistências → passe; drible fica com metade de cada.
+4. **Assiduidade** — até +2 de físico para quem jogou 6+ partidas nos últimos 45 dias.
+
+Regras gerais:
 - O nível usado é sempre o **OVR base** da planilha — usar o evoluído realimentaria a fórmula.
-- Todas as partidas contam; peso 1 para a mais recente, 0,85 para a anterior, 0,72...
-- Confiança com poucos jogos: 1 jogo = 50%, 2 = 71%, 3 = 87%, 4+ = 100% (raiz quadrada).
+- Peso no tempo pela **data** da partida: meia-vida de 45 dias. Quem para de jogar perde
+  confiança e a forma volta aos poucos para a base.
+- Confiança = raiz da soma dos pesos ÷ 4 (≈1 jogo recente 50%, 4+ = 100%).
 - Acima de OVR 75 a subida fica mais lenta (um 85 sobe a 80% do ritmo, mínimo 60%).
 - Cada atributo varia no máximo ±10. A nota só entra quando a votação fecha (prazo
-  vencido ou finalizada pelo administrador).
+  vencido ou finalizada pelo administrador); resultado e gols contam na hora.
 
 A fórmula de OVR por posição vive só em `frontend/src/utils/ovr.js`; o backend carrega esse
 mesmo arquivo via `import()`. **Não copie a fórmula para o backend**, e mantenha o ovr.js sem
 imports, senão ele deixa de carregar no Node.
 
-O perfil do atleta mostra `ResumoForma`, que explica a variação ("nota 6,7, abaixo do esperado
-para OVR 81"). `form.nota_esperada` vem do backend para isso.
-
 No frontend, `calcBaseOVR(player)` e `ovrTrend(player)` (em `utils/ovr.js`) dão o OVR da
 planilha e a variação. O sorteio usa só `calcOVR` — somar a nota média de novo contaria o
 desempenho duas vezes.
+
+## 🏆 Ranking e Prêmios
+
+`/stats` devolve, além dos totais: `avg_rating` (média das médias por partida),
+`nota_ajustada` (média bayesiana: soma 2 partidas "imaginárias" na média do grupo — com
+poucas partidas avaliadas a nota fica perto da média), `rated_matches`, `elegivel_premio`,
+`minimo_para_premio` e `partidas_no_periodo` (`backend/ranking.js`).
+
+- O ranking ordena por `compararNoRanking` (`formatters.js`): nota ajustada, depois
+  aproveitamento, gols+assistências e jogos. Quem não tem nota fica no fim.
+- **MVP/Craque do Mês, Xerife e Pé Murcho** usam a nota ajustada e só valem para quem jogou
+  pelo menos metade das partidas do período (mínimo 2). Artilheiro, Garçom e sequência de
+  vitórias são totais e valem para todos. Motivo: em set/2026 um atleta com 8,4 em 2 jogos
+  era MVP na frente de quem tinha 8,3 em 5.
 
 ---
 

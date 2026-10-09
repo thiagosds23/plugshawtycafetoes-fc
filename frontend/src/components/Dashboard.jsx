@@ -5,7 +5,7 @@ import { motion } from 'framer-motion';
 import { AuthContext } from '../AuthContext';
 import { formatPhotoUrl } from '../config';
 import { api } from '../utils/api';
-import { getPrimaryName, getPlayerAchievements } from '../utils/formatters';
+import { getPrimaryName, getPlayerAchievements, notaDoRanking, elegivelAPremio, compararNoRanking, formatarNota } from '../utils/formatters';
 import AchievementBadge from './AchievementBadge';
 
 const CORES_DO_PODIO = ['#ffd700', '#c0c0c0', '#cd7f32'];
@@ -39,7 +39,8 @@ export default function Dashboard() {
     api(`/stats${query}`, { signal: controle.signal })
       .then(data => {
         const lista = Array.isArray(data) ? data : [];
-        lista.sort((a, b) => (b.avg_rating || 0) - (a.avg_rating || 0) || (b.goals || 0) - (a.goals || 0));
+        // Nota ajustada pelo número de partidas avaliadas (ver compararNoRanking)
+        lista.sort(compararNoRanking);
         setStats(lista);
       })
       .catch(err => {
@@ -68,7 +69,9 @@ export default function Dashboard() {
   // Top Performers for the Podium
   const topScorer = stats.filter(s => (s.goals || 0) > 0).sort((a, b) => (b.goals || 0) - (a.goals || 0))[0];
   const topPlaymaker = stats.filter(s => (s.assists || 0) > 0).sort((a, b) => (b.assists || 0) - (a.assists || 0))[0];
-  const mvp = stats.filter(s => (s.avg_rating || 0) > 0).sort((a, b) => (b.avg_rating || 0) - (a.avg_rating || 0))[0];
+  // MVP: melhor nota ajustada entre quem jogou o mínimo de partidas do período. Antes
+  // bastava a maior média crua, e quem jogou 2 partidas passava quem jogou todas.
+  const mvp = stats.filter(s => elegivelAPremio(s) && notaDoRanking(s) !== null).sort(compararNoRanking)[0];
 
   // Feature 1: Quem Tá Voando (Hot Streak / Melhor Momento Recente)
   const hotPlayer = stats.filter(s => (s.matches_count || 0) > 0)
@@ -76,7 +79,7 @@ export default function Dashboard() {
       const aStreak = a.win_streak || 0;
       const bStreak = b.win_streak || 0;
       if (bStreak !== aStreak) return bStreak - aStreak;
-      return (b.avg_rating || 0) - (a.avg_rating || 0) || (b.goals || 0) - (a.goals || 0);
+      return compararNoRanking(a, b);
     })[0];
 
   // Próxima partida: a agendada de data mais próxima a partir de hoje. O /matches vem em
@@ -400,8 +403,10 @@ export default function Dashboard() {
             </div>
           </div>
           <div className="flex justify-between items-center">
-            <span className="text-muted font-bold">NOTA MÉDIA</span>
-            <span className="font-extrabold text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? (mvp.avg_rating || 0).toFixed(1) : '0.0'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
+            <span className="text-muted font-bold" title="Média das notas ajustada pelo número de partidas avaliadas">
+              NOTA {mvp ? `(${mvp.rated_matches || 0} JOGO${(mvp.rated_matches || 0) === 1 ? '' : 'S'} AVALIADO${(mvp.rated_matches || 0) === 1 ? '' : 'S'})` : ''}
+            </span>
+            <span className="font-extrabold text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? formatarNota(notaDoRanking(mvp)) : '-'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
           </div>
         </div>
 
@@ -666,9 +671,12 @@ export default function Dashboard() {
                   </div>
 
                   <div style={{ textAlign: 'center', background: 'rgba(255,255,255,0.02)', padding: '6px 2px', borderRadius: '10px' }}>
-                    <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Nota Média</div>
-                    <div style={{ fontSize: '0.82rem', fontWeight: 900, color: '#00e5ff', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}>
-                      {player.avg_rating && player.avg_rating > 0 ? <><StarIcon size={13} fill="#fbbf24" color="#fbbf24" />{player.avg_rating.toFixed(1)}</> : '-'}
+                    <div style={{ fontSize: '0.6rem', color: 'var(--text-muted)', fontWeight: 800, textTransform: 'uppercase' }}>Nota</div>
+                    <div
+                      style={{ fontSize: '0.82rem', fontWeight: 900, color: '#00e5ff', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
+                      title={notaDoRanking(player) !== null ? `Média ${formatarNota(player.avg_rating)} em ${player.rated_matches || 0} partida(s) avaliada(s), ajustada pelo número de partidas` : undefined}
+                    >
+                      {notaDoRanking(player) !== null ? <><StarIcon size={13} fill="#fbbf24" color="#fbbf24" />{formatarNota(notaDoRanking(player))}</> : '-'}
                     </div>
                   </div>
                 </div>
@@ -694,7 +702,7 @@ export default function Dashboard() {
                 <th style={{ padding: '18px 20px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Últimos 5 Jogos</th>
                 <th style={{ padding: '18px 24px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>V / E / D</th>
                 <th style={{ padding: '18px 24px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Aproveit.</th>
-                <th style={{ padding: '18px 24px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Nota Média</th>
+                <th style={{ padding: '18px 24px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }} title="Média das notas ajustada pelo número de partidas avaliadas: com poucas partidas, a nota fica perto da média do grupo">Nota</th>
                 <th style={{ padding: '18px 24px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Gols</th>
                 <th style={{ padding: '18px 24px', textAlign: 'center', fontSize: '0.75rem', fontWeight: '800', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>Assist.</th>
               </tr>
@@ -810,16 +818,21 @@ export default function Dashboard() {
                     </td>
 
                     <td style={{ padding: '18px 24px', textAlign: 'center' }}>
-                      {player.avg_rating && player.avg_rating > 0 ? (
-                        <span style={{ 
-                          fontWeight: '900', 
-                          fontSize: '0.95rem',
-                          color: player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)'),
-                          display: 'inline-flex', alignItems: 'center', gap: '4px'
-                        }}>
-                          <StarIcon size={14} fill={player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)')} color={player.avg_rating >= 8 ? 'var(--primary)' : (player.avg_rating >= 6 ? '#fbbf24' : 'var(--text-muted)')} />{player.avg_rating.toFixed(1)}
-                        </span>
-                      ) : (
+                      {notaDoRanking(player) !== null ? (() => {
+                        const nota = notaDoRanking(player);
+                        const cor = nota >= 8 ? 'var(--primary)' : (nota >= 6 ? '#fbbf24' : 'var(--text-muted)');
+                        return (
+                          <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
+                            <span style={{ fontWeight: '900', fontSize: '0.95rem', color: cor, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                              <StarIcon size={14} fill={cor} color={cor} />{formatarNota(nota)}
+                            </span>
+                            {/* A média crua e quantas partidas ela tem: explica por que um 8,4 pode ficar atrás de um 8,2 */}
+                            <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
+                              {formatarNota(player.avg_rating)} em {player.rated_matches || 0} jogo{(player.rated_matches || 0) === 1 ? '' : 's'}
+                            </span>
+                          </div>
+                        );
+                      })() : (
                         <span className="text-muted">-</span>
                       )}
                     </td>

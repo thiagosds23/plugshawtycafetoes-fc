@@ -95,9 +95,48 @@ export function getCardTier(ovr) {
 const POSICOES_DEFENSIVAS = ['ZAG', 'LAT', 'LE', 'LD', 'VOL', 'GOL'];
 
 /**
+ * Nota que vale para o ranking e para os prêmios: a média ajustada pelo número de
+ * partidas avaliadas (calculada no servidor), que não deixa quem jogou 2 partidas passar
+ * na frente de quem manteve o nível em 5. Null se o atleta não tem nota no período.
+ */
+export function notaDoRanking(player) {
+  if (!player) return null;
+  if (player.nota_ajustada !== undefined && player.nota_ajustada !== null) return Number(player.nota_ajustada);
+  return player.avg_rating > 0 ? Number(player.avg_rating) : null;
+}
+
+/** Jogou o suficiente no período para concorrer a MVP, Craque do Mês, Xerife e Pé Murcho. */
+export function elegivelAPremio(player) {
+  if (!player) return false;
+  if (typeof player.elegivel_premio === 'boolean') return player.elegivel_premio;
+  return (player.matches_count || 0) >= 2;
+}
+
+/**
+ * Ordem do ranking: nota ajustada (quem tem nota vem antes), depois aproveitamento,
+ * participação em gols e número de jogos.
+ */
+export function compararNoRanking(a, b) {
+  const na = notaDoRanking(a);
+  const nb = notaDoRanking(b);
+  if (na !== null || nb !== null) {
+    if (na === null) return 1;
+    if (nb === null) return -1;
+    if (nb !== na) return nb - na;
+  }
+  return (b.win_rate || 0) - (a.win_rate || 0)
+    || ((b.goals || 0) + (b.assists || 0)) - ((a.goals || 0) + (a.assists || 0))
+    || (b.matches_count || 0) - (a.matches_count || 0);
+}
+
+/**
  * Regras automatizadas de conquistas e medalhas para jogadores (Skill: pelada-achievements).
  * Fonte única das medalhas: o ranking, o elenco e o perfil do atleta usam esta função.
  * `allStats` é o elenco inteiro do mesmo período, para comparar quem é o maior.
+ *
+ * Artilheiro, Garçom e sequência de vitórias são totais e valem para qualquer um. As
+ * medalhas que dependem de nota (MVP/Craque, Xerife, Pé Murcho) usam a nota ajustada e
+ * só consideram quem jogou o mínimo de partidas do período.
  */
 export function getPlayerAchievements(player, allStats = [], period = 'all') {
   if (!player || !allStats || allStats.length === 0) return [];
@@ -105,12 +144,14 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
 
   const maxGoals = Math.max(...allStats.map(s => s.goals || 0));
   const maxAssists = Math.max(...allStats.map(s => s.assists || 0));
-  const maxRating = Math.max(...allStats.map(s => s.avg_rating || 0));
   const maxStreak = Math.max(...allStats.map(s => s.win_streak || 0));
-  const activePlayers = allStats.filter(s => (s.matches_count || 0) >= 2);
-  const minRating = activePlayers.length > 2 
-    ? Math.min(...activePlayers.map(s => (s.avg_rating > 0 ? s.avg_rating : 99)))
-    : 99;
+
+  // Concorrem aos prêmios de nota só os elegíveis que têm nota no período
+  const comNota = allStats.filter(s => elegivelAPremio(s) && notaDoRanking(s) !== null);
+  const notaDele = notaDoRanking(player);
+  const concorre = elegivelAPremio(player) && notaDele !== null;
+  const maxNota = comNota.length ? Math.max(...comNota.map(notaDoRanking)) : null;
+  const minNota = comNota.length > 2 ? Math.min(...comNota.map(notaDoRanking)) : null;
 
   if (player.goals && player.goals === maxGoals && maxGoals > 0) {
     achievements.push({
@@ -140,7 +181,7 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     });
   }
 
-  if (player.avg_rating && player.avg_rating === maxRating && maxRating > 0) {
+  if (concorre && notaDele === maxNota) {
     achievements.push({
       id: 'mvp',
       title: period === 'month' ? 'Craque do Mês' : 'MVP da Temporada',
@@ -150,7 +191,7 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
       bg: 'linear-gradient(135deg, rgba(255, 215, 0, 0.25), rgba(218, 165, 32, 0.1))',
       border: 'rgba(255, 215, 0, 0.55)',
       glow: '0 0 12px rgba(255, 215, 0, 0.35)',
-      description: `Nota média de elite (${player.avg_rating.toFixed(1)})`
+      description: `Melhor nota do período (${formatarNota(notaDele)}, ajustada por ${player.rated_matches || player.matches_count || 0} partida(s) avaliada(s))`
     });
   }
 
@@ -168,10 +209,10 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
     });
   }
 
-  if (POSICOES_DEFENSIVAS.includes(player.position) && player.avg_rating && player.avg_rating >= 6.8 && (player.matches_count || 0) >= 2) {
-    const defenders = allStats.filter(s => POSICOES_DEFENSIVAS.includes(s.position) && (s.matches_count || 0) >= 2);
-    const topDefRating = Math.max(...defenders.map(d => d.avg_rating || 0));
-    if (player.avg_rating === topDefRating) {
+  if (concorre && POSICOES_DEFENSIVAS.includes(player.position) && notaDele >= 6.8) {
+    const defensores = comNota.filter(s => POSICOES_DEFENSIVAS.includes(s.position));
+    const melhorDefensor = Math.max(...defensores.map(notaDoRanking));
+    if (notaDele === melhorDefensor) {
       achievements.push({
         id: 'wall',
         title: 'Paredão / Xerife da Zaga',
@@ -181,12 +222,12 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
         bg: 'linear-gradient(135deg, rgba(192, 132, 252, 0.22), rgba(126, 34, 206, 0.08))',
         border: 'rgba(192, 132, 252, 0.45)',
         glow: '0 0 10px rgba(192, 132, 252, 0.25)',
-        description: `Melhor nota defensiva (${player.avg_rating.toFixed(1)})`
+        description: `Melhor nota defensiva (${formatarNota(notaDele)})`
       });
     }
   }
 
-  if (player.avg_rating && player.avg_rating === minRating && minRating < 6.0 && (player.matches_count || 0) >= 2 && activePlayers.length > 2) {
+  if (concorre && minNota !== null && notaDele === minNota && minNota < 6.0) {
     achievements.push({
       id: 'cafe_com_leite',
       title: 'Pé Murcho (Café com Leite)',
@@ -196,11 +237,9 @@ export function getPlayerAchievements(player, allStats = [], period = 'all') {
       bg: 'linear-gradient(135deg, rgba(255, 77, 121, 0.22), rgba(190, 18, 60, 0.08))',
       border: 'rgba(255, 77, 121, 0.45)',
       glow: '0 0 10px rgba(255, 77, 121, 0.25)',
-      description: `Menor nota média do elenco (${player.avg_rating.toFixed(1)})`
+      description: `Menor nota do elenco (${formatarNota(notaDele)})`
     });
   }
 
   return achievements;
 }
-
-
