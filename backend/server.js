@@ -1083,15 +1083,19 @@ app.get('/matches/:id', async (req, res) => {
         ORDER BY a.id ASC
       `, [matchId, matchId]),
 
+      // Todas as notas da partida, com quem deu cada uma. As notas são públicas, mas
+      // quem votou só aparece depois que a votação fecha (ver abaixo)
       db.all(`
-        SELECT r.rated_id, r.score, u.username, u.nickname
+        SELECT r.rated_id, r.score, u.username, u.nickname,
+               r.rater_id, av.username AS rater_username, av.nickname AS rater_nickname
         FROM ratings r
         JOIN users u ON r.rated_id = u.id
+        LEFT JOIN users av ON r.rater_id = av.id
         WHERE r.match_id = ?
+        ORDER BY r.rated_id, r.score DESC
       `, [matchId]),
 
-      // Quem já avaliou, para a tela mostrar o progresso. Não expomos qual nota
-      // cada um deu para ninguém além do próprio avaliador.
+      // Quem já avaliou, para a tela mostrar o progresso durante a votação
       db.all('SELECT DISTINCT rater_id FROM ratings WHERE match_id = ?', [matchId]),
 
       // As notas que quem está pedindo a partida já registrou
@@ -1154,6 +1158,14 @@ app.get('/matches/:id', async (req, res) => {
     match.server_now = new Date().toISOString();
     match.raters = raterRows.map(r => Number(r.rater_id));
     match.my_ratings = Object.fromEntries(myRatingRows.map(r => [r.rated_id, r.score]));
+
+    // As notas são públicas: depois que a votação fecha, todo mundo vê quem deu qual nota
+    // a quem. Enquanto ela corre, quem votou fica escondido, para ninguém votar já
+    // sabendo as notas dos outros (nem "responder" a uma nota baixa).
+    match.notas_publicas = !janela.aberta;
+    if (janela.aberta) {
+      match.ratings = match.ratings.map(({ rater_id, rater_username, rater_nickname, ...nota }) => nota);
+    }
 
     res.json(match);
   } catch (err) {

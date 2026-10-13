@@ -24,6 +24,7 @@ import RatingWindowAdmin from './match/RatingWindowAdmin';
 import ManualTeamsModal from './match/ManualTeamsModal';
 import TacticalPitch from './match/TacticalPitch';
 import CartaoDoTime from './match/CartaoDoTime';
+import NotasDaPartida from './match/NotasDaPartida';
 import NovoAtletaModal from './match/NovoAtletaModal';
 import EditarPartidaModal from './match/EditarPartidaModal';
 import AdicionarJogadorModal from './match/AdicionarJogadorModal';
@@ -1506,6 +1507,9 @@ export default function MatchDetails() {
             </div>
           </div>
         )}
+
+        {/* Notas públicas: quem deu qual nota a quem (só depois que a votação fecha) */}
+        {match.notas_publicas && <NotasDaPartida ratings={match.ratings} />}
 
           {/* Encerramento da partida e prazo de avaliação */}
           <motion.div

@@ -233,6 +233,11 @@ lançado, só o administrador pode tirá-lo (gols são exclusivos do admin).
    `rating_open`, `rating_ends_at`, `rating_hours` (duração total), `server_now` (para o
    contador não depender do relógio do celular), `raters` (quem já avaliou) e
    `my_ratings` (as notas de quem pediu).
+6. **As notas são públicas** (decisão do admin em out/2026, inclusive as antigas): depois
+   que a votação fecha, `GET /matches/:id` devolve em `ratings` quem deu cada nota
+   (`rater_id`, `rater_username`, `rater_nickname`) e `notas_publicas: true`; a tela mostra
+   em `match/NotasDaPartida.jsx` (notas recebidas e notas dadas). **Enquanto a votação está
+   aberta, quem votou fica escondido**, para ninguém votar já sabendo as notas dos outros.
 5. O administrador pode **finalizar a votação antes** ou **mudar a duração**
    (`PUT /matches/:id/rating-window` com `{ action: 'close' }` ou `{ hours }`, de 1 a 168).
    O prazo fica em `matches.rating_deadline`; vazio, vale o padrão de 12h depois de

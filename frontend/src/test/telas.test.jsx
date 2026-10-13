@@ -322,3 +322,33 @@ describe('Sortear de novo', () => {
     expect(screen.queryByRole('button', { name: /Sortear de novo/ })).toBeNull();
   });
 });
+
+describe('Notas públicas', () => {
+  const nota = (ratedId, rated, score, raterId, rater) => ({
+    rated_id: ratedId, score, username: rated, nickname: rated, rater_id: raterId, rater_username: rater, rater_nickname: rater
+  });
+  const votacaoFechada = partida(35, {
+    status: 'completed', finished_at: daqui(-30), rating_open: false, rating_ends_at: daqui(-18), notas_publicas: true,
+    teams: ENCERRADA.teams,
+    ratings: [nota(1, 'Fela', 9, 3, 'Stocco'), nota(1, 'Fela', 7, 2, 'Elias'), nota(3, 'Stocco', 6, 1, 'Fela'), nota(1, 'Fela', 8, 1, 'Fela')]
+  });
+
+  it('depois da votação, todos veem quem deu qual nota a quem', async () => {
+    mockApi({ 'GET /matches/35': votacaoFechada });
+    telaDaPartida(35, { user: ATLETA });
+    expect(await screen.findByText(/Notas da Partida \(4\)/)).toBeTruthy();
+    // Recebidas: o Fela recebeu do Stocco, do Elias e dele mesmo
+    expect(screen.getByText('de Stocco')).toBeTruthy();
+    expect(screen.getByText('de Elias')).toBeTruthy();
+    expect(screen.getByText('de Fela (a si mesmo)')).toBeTruthy();
+    // Dadas: o que o Fela deu ao Stocco
+    fireEvent.click(screen.getByRole('button', { name: 'Notas dadas' }));
+    expect(screen.getByText('para Stocco')).toBeTruthy();
+  });
+
+  it('com a votação aberta, as notas não aparecem', async () => {
+    telaDaPartida(30);
+    await screen.findByRole('button', { name: /Finalizar votação/ });
+    expect(screen.queryByText(/Notas da Partida/)).toBeNull();
+  });
+});
