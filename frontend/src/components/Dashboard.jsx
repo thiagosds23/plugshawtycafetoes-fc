@@ -7,6 +7,7 @@ import { formatPhotoUrl } from '../config';
 import { api } from '../utils/api';
 import { getPrimaryName, getPlayerAchievements, notaDoRanking, elegivelAPremio, compararNoRanking, formatarNota } from '../utils/formatters';
 import AchievementBadge from './AchievementBadge';
+import NotaClicavel from './NotaClicavel';
 
 const CORES_DO_PODIO = ['#ffd700', '#c0c0c0', '#cd7f32'];
 
@@ -187,7 +188,9 @@ export default function Dashboard() {
           <div className="glass-card" style={{ padding: '12px 4px', textAlign: 'center', borderRadius: '14px', background: 'rgba(0, 229, 255, 0.06)', border: '1px solid rgba(0, 229, 255, 0.2)' }}>
             <div className="text-muted font-bold" style={{ fontSize: '0.62rem' }}>Nota Média</div>
             <div className="font-extrabold" style={{ marginTop: '2px', color: '#00e5ff' }}>
-              {currentUserStats && currentUserStats.avg_rating > 0 ? currentUserStats.avg_rating.toFixed(1) : '-'}
+              {currentUserStats && currentUserStats.avg_rating > 0
+                ? <NotaClicavel atleta={currentUserStats}>{currentUserStats.avg_rating.toFixed(1)}</NotaClicavel>
+                : '-'}
             </div>
           </div>
         </div>
@@ -406,7 +409,7 @@ export default function Dashboard() {
             <span className="text-muted font-bold" title="Média das notas ajustada pelo número de partidas avaliadas">
               NOTA {mvp ? `(${mvp.rated_matches || 0} JOGO${(mvp.rated_matches || 0) === 1 ? '' : 'S'} AVALIADO${(mvp.rated_matches || 0) === 1 ? '' : 'S'})` : ''}
             </span>
-            <span className="font-extrabold text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? formatarNota(notaDoRanking(mvp)) : '-'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
+            <span className="font-extrabold text-gold" style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{mvp ? <NotaClicavel atleta={mvp}>{formatarNota(notaDoRanking(mvp))}</NotaClicavel> : '-'} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span>
           </div>
         </div>
 
@@ -433,7 +436,7 @@ export default function Dashboard() {
             <span className="font-extrabold" style={{ color: '#ff7700' }}>
               {hotPlayer && (hotPlayer.win_streak || 0) > 1 
                 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{hotPlayer.win_streak} Vitórias <Flame size={16} color="#ff7700" /></span>
-                : (hotPlayer && hotPlayer.avg_rating > 0 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>{hotPlayer.avg_rating.toFixed(1)} <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span> : 'Fase Regular')}
+                : (hotPlayer && hotPlayer.avg_rating > 0 ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}><NotaClicavel atleta={hotPlayer}>{hotPlayer.avg_rating.toFixed(1)}</NotaClicavel> <StarIcon size={16} fill="#fbbf24" color="#fbbf24" /></span> : 'Fase Regular')}
             </span>
           </div>
         </div>
@@ -676,7 +679,9 @@ export default function Dashboard() {
                       style={{ fontSize: '0.82rem', fontWeight: 900, color: '#00e5ff', marginTop: '2px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '4px' }}
                       title={notaDoRanking(player) !== null ? `Média ${formatarNota(player.avg_rating)} em ${player.rated_matches || 0} partida(s) avaliada(s), ajustada pelo número de partidas` : undefined}
                     >
-                      {notaDoRanking(player) !== null ? <><StarIcon size={13} fill="#fbbf24" color="#fbbf24" />{formatarNota(notaDoRanking(player))}</> : '-'}
+                      {notaDoRanking(player) !== null
+                        ? <NotaClicavel atleta={player} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}><StarIcon size={13} fill="#fbbf24" color="#fbbf24" />{formatarNota(notaDoRanking(player))}</NotaClicavel>
+                        : '-'}
                     </div>
                   </div>
                 </div>
@@ -822,15 +827,15 @@ export default function Dashboard() {
                         const nota = notaDoRanking(player);
                         const cor = nota >= 8 ? 'var(--primary)' : (nota >= 6 ? '#fbbf24' : 'var(--text-muted)');
                         return (
-                          <div style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px' }}>
-                            <span style={{ fontWeight: '900', fontSize: '0.95rem', color: cor, display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                          <NotaClicavel atleta={player} style={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '2px', textDecoration: 'none' }}>
+                            <span style={{ fontWeight: '900', fontSize: '0.95rem', color: cor, display: 'inline-flex', alignItems: 'center', gap: '4px', textDecoration: 'underline dotted rgba(255,255,255,0.35)', textUnderlineOffset: '3px' }}>
                               <StarIcon size={14} fill={cor} color={cor} />{formatarNota(nota)}
                             </span>
                             {/* A média crua e quantas partidas ela tem: explica por que um 8,4 pode ficar atrás de um 8,2 */}
                             <span style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>
                               {formatarNota(player.avg_rating)} em {player.rated_matches || 0} jogo{(player.rated_matches || 0) === 1 ? '' : 's'}
                             </span>
-                          </div>
+                          </NotaClicavel>
                         );
                       })() : (
                         <span className="text-muted">-</span>

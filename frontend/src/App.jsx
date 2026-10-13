@@ -6,6 +6,7 @@ import { LogOut, Trophy, Calendar, Users } from 'lucide-react';
 
 import Login from './components/Login';
 import AvisoServidorLento from './components/AvisoServidorLento';
+import NotasDoAtletaProvider from './components/player/NotasDoAtleta';
 import { formatPhotoUrl } from './config';
 import { getPrimaryName } from './utils/formatters';
 
@@ -254,7 +255,10 @@ function App() {
         {/* Quem pediu ao sistema para reduzir movimento recebe as animações simplificadas */}
         <MotionConfig reducedMotion="user">
           <AvisoServidorLento />
-          <AppContent />
+          {/* Tocar na nota de um atleta, em qualquer tela, abre o histórico de notas dele */}
+          <NotasDoAtletaProvider>
+            <AppContent />
+          </NotasDoAtletaProvider>
         </MotionConfig>
       </BrowserRouter>
     </AuthProvider>

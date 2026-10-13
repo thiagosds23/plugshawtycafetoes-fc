@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { Star, ChevronDown } from 'lucide-react';
 import { corDaNota, formatarNota, getPrimaryName } from '../../utils/formatters';
+import NotaClicavel from '../NotaClicavel';
 
 const nomeDe = (username, nickname) => getPrimaryName({ username, nickname });
 
@@ -26,11 +27,10 @@ function agrupar(notas, chaveDoGrupo, nomeDoGrupo, nomeDoOutro) {
 }
 
 /**
- * Notas da partida, abertas para todo mundo: quem deu qual nota a quem. O servidor só
- * manda quem votou depois que a votação fecha (match.notas_publicas), para ninguém
- * votar já sabendo as notas dos outros.
+ * Notas da partida, abertas para todo mundo (inclusive durante a votação): quem deu
+ * qual nota a quem.
  */
-export default function NotasDaPartida({ ratings = [] }) {
+export default function NotasDaPartida({ ratings = [], matchId = null }) {
   const [visao, setVisao] = useState('recebidas');
 
   const comAvaliador = useMemo(() => ratings.filter(r => r.rater_id !== null && r.rater_id !== undefined), [ratings]);
@@ -66,7 +66,7 @@ export default function NotasDaPartida({ ratings = [] }) {
         <Star size={18} /> Notas da Partida ({comAvaliador.length})
       </h5>
       <p className="text-muted" style={{ fontSize: '0.76rem', margin: '0 0 12px' }}>
-        Quem deu qual nota a quem. As notas aparecem para todos quando a votação fecha.
+        Quem deu qual nota a quem, inclusive durante a votação. Toque na média de um atleta para ver todas as notas dele.
       </p>
 
       <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', maxWidth: '440px' }}>
@@ -83,7 +83,9 @@ export default function NotasDaPartida({ ratings = [] }) {
               </span>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', flexShrink: 0, fontSize: '0.76rem', color: 'var(--text-muted)' }}>
                 {visao === 'recebidas' ? 'média' : 'média que deu'}
-                <strong style={{ color: corDaNota(g.media), fontSize: '0.9rem' }}>{formatarNota(g.media)}</strong>
+                <NotaClicavel atleta={{ id: g.id, username: g.nome }} matchId={matchId}>
+                  <strong style={{ color: corDaNota(g.media), fontSize: '0.9rem' }}>{formatarNota(g.media)}</strong>
+                </NotaClicavel>
                 · {g.itens.length} {g.itens.length === 1 ? 'nota' : 'notas'}
                 <ChevronDown size={14} aria-hidden="true" />
               </span>

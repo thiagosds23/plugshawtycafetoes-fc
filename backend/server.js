@@ -20,6 +20,7 @@ const {
 } = require('./evolucao');
 const { notasDoPeriodo, minimoParaPremio } = require('./ranking');
 const { resumirConfronto } = require('./comparacao');
+const { historicoDeNotas } = require('./notas');
 
 const app = express();
 // Comprime JSON e o bundle do frontend (o JS principal cai de ~620KB para ~180KB)
@@ -879,6 +880,33 @@ app.delete('/users/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// Todas as notas do atleta, partida por partida: as que recebeu (de quem) e as que deu
+// (a quem). As notas são públicas, inclusive durante a votação.
+app.get('/users/:id/ratings', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Atleta inválido.' });
+  try {
+    const [atleta, linhas] = await Promise.all([
+      db.get('SELECT id, username, nickname, position FROM users WHERE id = ?', [id]),
+      db.all(`
+        SELECT r.match_id, m.date, m.type, m.opponent, m.status, m.finished_at, m.rating_deadline,
+               r.rater_id, r.rated_id, r.score,
+               av.username AS rater_username, av.nickname AS rater_nickname,
+               ad.username AS rated_username, ad.nickname AS rated_nickname
+        FROM ratings r
+        JOIN matches m ON m.id = r.match_id
+        LEFT JOIN users av ON av.id = r.rater_id
+        LEFT JOIN users ad ON ad.id = r.rated_id
+        WHERE r.rated_id = ? OR r.rater_id = ?
+      `, [id, id])
+    ]);
+    if (!atleta) return res.status(404).json({ error: 'Atleta não encontrado' });
+    res.json({ atleta, ...historicoDeNotas(id, linhas) });
+  } catch (err) {
+    erroInterno(res, 'carregar as notas do atleta', err);
+  }
+});
+
 // Histórico detalhado de partidas e desempenho do atleta
 app.get('/users/:id/history', async (req, res) => {
   const userId = req.params.id;
@@ -1136,8 +1164,7 @@ app.get('/matches/:id', async (req, res) => {
         ORDER BY a.id ASC
       `, [matchId, matchId]),
 
-      // Todas as notas da partida, com quem deu cada uma. As notas são públicas, mas
-      // quem votou só aparece depois que a votação fecha (ver abaixo)
+      // Todas as notas da partida, com quem deu cada uma (as notas são públicas)
       db.all(`
         SELECT r.rated_id, r.score, u.username, u.nickname,
                r.rater_id, av.username AS rater_username, av.nickname AS rater_nickname
@@ -1212,13 +1239,9 @@ app.get('/matches/:id', async (req, res) => {
     match.raters = raterRows.map(r => Number(r.rater_id));
     match.my_ratings = Object.fromEntries(myRatingRows.map(r => [r.rated_id, r.score]));
 
-    // As notas são públicas: depois que a votação fecha, todo mundo vê quem deu qual nota
-    // a quem. Enquanto ela corre, quem votou fica escondido, para ninguém votar já
-    // sabendo as notas dos outros (nem "responder" a uma nota baixa).
-    match.notas_publicas = !janela.aberta;
-    if (janela.aberta) {
-      match.ratings = match.ratings.map(({ rater_id, rater_username, rater_nickname, ...nota }) => nota);
-    }
+    // As notas são públicas, inclusive durante a votação (decisão do admin): todo mundo
+    // vê quem deu qual nota a quem assim que a nota é enviada
+    match.notas_publicas = true;
 
     res.json(match);
   } catch (err) {

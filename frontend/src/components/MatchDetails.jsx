@@ -1511,8 +1511,8 @@ export default function MatchDetails() {
           </div>
         )}
 
-        {/* Notas públicas: quem deu qual nota a quem (só depois que a votação fecha) */}
-        {match.notas_publicas && <NotasDaPartida ratings={match.ratings} />}
+        {/* Notas públicas: quem deu qual nota a quem (inclusive durante a votação) */}
+        {match.notas_publicas && <NotasDaPartida ratings={match.ratings} matchId={match.id} />}
 
           {/* Encerramento da partida e prazo de avaliação */}
           <motion.div

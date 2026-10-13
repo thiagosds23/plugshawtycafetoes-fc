@@ -17,6 +17,7 @@ import Matches from '../components/Matches';
 import Players from '../components/Players';
 import MatchDetails from '../components/MatchDetails';
 import AvisoServidorLento from '../components/AvisoServidorLento';
+import NotasDoAtletaProvider from '../components/player/NotasDoAtleta';
 import { fetchAcompanhado } from '../utils/api';
 import { act } from 'react';
 
@@ -111,12 +112,14 @@ function montar(elemento, { user = ADMIN, rota = '/', caminho = '/' } = {}) {
   return {
     ...render(
       <AuthContext.Provider value={valor}>
-        <MemoryRouter initialEntries={[rota]}>
-          <Routes>
-            <Route path={caminho} element={elemento} />
-            <Route path="*" element={<div>outra tela</div>} />
-          </Routes>
-        </MemoryRouter>
+        <NotasDoAtletaProvider>
+          <MemoryRouter initialEntries={[rota]}>
+            <Routes>
+              <Route path={caminho} element={elemento} />
+              <Route path="*" element={<div>outra tela</div>} />
+            </Routes>
+          </MemoryRouter>
+        </NotasDoAtletaProvider>
       </AuthContext.Provider>
     ),
     auth: valor
@@ -346,10 +349,12 @@ describe('Notas públicas', () => {
     expect(screen.getByText('para Stocco')).toBeTruthy();
   });
 
-  it('com a votação aberta, as notas não aparecem', async () => {
+  it('com a votação aberta, as notas também aparecem', async () => {
+    mockApi({ 'GET /matches/30': { ...ENCERRADA, notas_publicas: true, ratings: [nota(3, 'Stocco', 8, 1, 'Fela')] } });
     telaDaPartida(30);
     await screen.findByRole('button', { name: /Finalizar votação/ });
-    expect(screen.queryByText(/Notas da Partida/)).toBeNull();
+    expect(screen.getByText(/Notas da Partida \(1\)/)).toBeTruthy();
+    expect(screen.getByText('de Fela')).toBeTruthy();
   });
 });
 
@@ -387,5 +392,46 @@ describe('Comparar atletas', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Comparar$/ }));
     const modal = await screen.findByRole('dialog', { name: /Comparar atletas/ });
     expect(within(modal).getByLabelText('Primeiro atleta').value).toBe('2');
+  });
+});
+
+describe('Histórico de notas do atleta', () => {
+  const historico = {
+    atleta: { id: 1, username: 'Fela', nickname: 'Fela', position: 'ATA' },
+    media_recebida: 8.2, partidas_com_nota: 2, media_dada: 7.4,
+    partidas: [
+      { match_id: 32, date: '2026-10-10', adversario: null, votacao_aberta: true, media_recebida: 8.3, media_dada: 7,
+        recebidas: [{ de_id: 2, de: 'Elias', nota: 9, propria: false }, { de_id: 3, de: 'Stocco', nota: 7.5, propria: false }],
+        dadas: [{ para_id: 3, para: 'Stocco', nota: 7, propria: false }] },
+      { match_id: 27, date: '2026-09-19', adversario: null, votacao_aberta: false, media_recebida: 8, media_dada: 8,
+        recebidas: [{ de_id: 3, de: 'Stocco', nota: 8, propria: false }],
+        dadas: [{ para_id: 2, para: 'Elias', nota: 8, propria: false }] }
+    ]
+  };
+
+  it('tocar na nota do ranking abre as notas recebidas e dadas, partida por partida', async () => {
+    mockApi({ 'GET /users/1/ratings': historico });
+    montar(<Dashboard />);
+    const nota = await screen.findAllByRole('button', { name: 'Ver as notas de Fela' });
+    fireEvent.click(nota[0]);
+
+    const janela = await screen.findByRole('dialog', { name: /Notas de Fela/ });
+    expect(await within(janela).findByText('de Elias')).toBeTruthy();
+    expect(within(janela).getByText(/votação em andamento/)).toBeTruthy();
+    fireEvent.click(within(janela).getByRole('button', { name: 'Notas que deu' }));
+    expect(within(janela).getByText('para Elias')).toBeTruthy();
+    expect(chamadas.some(c => c.caminho === '/users/1/ratings')).toBe(true);
+  });
+
+  it('no histórico do perfil, a nota de uma partida abre a janela nessa partida', async () => {
+    mockApi({
+      'GET /users/1/ratings': historico,
+      'GET /users/1/history': [{ match_id: 27, date: '2026-09-19', status: 'completed', team_name: 'COM COLETE', goals: 5, assists: 0, rating: '8.0' }]
+    });
+    telaDaPartida(30);
+    fireEvent.click((await screen.findAllByText('Fela'))[0]);
+    const notaDaPartida = await screen.findAllByRole('button', { name: 'Ver as notas de Fela' });
+    fireEvent.click(notaDaPartida[notaDaPartida.length - 1]);
+    expect(await screen.findByRole('dialog', { name: /Notas de Fela/ })).toBeTruthy();
   });
 });

@@ -35,7 +35,7 @@ test('jogo contra rival aparece como juntos, com o nome do adversário', () => {
   assert.equal(r.confrontos[0].adversario, 'Betas FC');
 });
 
-test('notas entre eles: só de votação fechada, média com uma casa', () => {
+test('notas entre eles: todas contam (inclusive de votação aberta), média com uma casa', () => {
   const r = resumirConfronto(1, 2, [], [
     { rater_id: 1, rated_id: 2, score: 8, ...fechada },
     { rater_id: 1, rated_id: 2, score: 7, ...fechada },
@@ -43,7 +43,7 @@ test('notas entre eles: só de votação fechada, média com uma casa', () => {
   ], agora);
   assert.equal(r.notas_entre_eles.a_para_b, 7.5);
   assert.equal(r.notas_entre_eles.a_para_b_qtd, 2);
-  assert.equal(r.notas_entre_eles.b_para_a, null, 'a nota da votação aberta não aparece');
+  assert.equal(r.notas_entre_eles.b_para_a, 9, 'a nota da votação aberta também aparece');
 });
 
 test('sem jogos em comum', () => {

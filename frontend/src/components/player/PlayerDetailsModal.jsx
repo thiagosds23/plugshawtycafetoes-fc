@@ -8,6 +8,7 @@ import { getPrimaryName, getPlayerAchievements } from '../../utils/formatters';
 import { useEscapeKey } from '../../utils/useEscapeKey';
 import ResumoForma from '../ResumoForma';
 import AchievementBadge from '../AchievementBadge';
+import NotaClicavel from '../NotaClicavel';
 
 export default function PlayerDetailsModal({
   isOpen,
@@ -177,7 +178,9 @@ export default function PlayerDetailsModal({
               </div>
               <div style={{ background: 'rgba(255,255,255,0.03)', padding: '10px 6px', minHeight: '68px', borderRadius: '14px', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', textAlign: 'center' }}>
                 <div style={{ fontSize: '1.25rem', fontWeight: 900, color: '#ffd700', lineHeight: 1.1 }}>
-                  {player.avg_rating ? Number(player.avg_rating).toFixed(1) : '-'}
+                  {player.avg_rating
+                    ? <NotaClicavel atleta={player}>{Number(player.avg_rating).toFixed(1)}</NotaClicavel>
+                    : '-'}
                 </div>
                 <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', fontWeight: 800, letterSpacing: '0.3px', marginTop: '4px' }}>NOTA MÉDIA</div>
               </div>
@@ -253,7 +256,11 @@ export default function PlayerDetailsModal({
                       <div style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '0.82rem', fontWeight: 800 }}>
                         {h.goals > 0 && <span style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Goal size={13} /> {h.goals}</span>}
                         {h.assists > 0 && <span style={{ color: '#fbbf24', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Footprints size={13} /> {h.assists}</span>}
-                        {h.rating && <span style={{ color: '#ffd700', display: 'inline-flex', alignItems: 'center', gap: '3px' }}><Star size={13} fill="#ffd700" color="#ffd700" /> {h.rating}</span>}
+                        {h.rating && (
+                          <NotaClicavel atleta={player} matchId={h.match_id} style={{ color: '#ffd700', display: 'inline-flex', alignItems: 'center', gap: '3px' }}>
+                            <Star size={13} fill="#ffd700" color="#ffd700" /> {h.rating}
+                          </NotaClicavel>
+                        )}
                       </div>
                     </div>
                   );
