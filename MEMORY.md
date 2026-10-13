@@ -58,6 +58,20 @@ saíam sempre os mesmos times. Agora `sortearTimes(jogadores, { historico })`:
 - **Conquistas Automatizadas (Badges):** `getPlayerAchievements` em `formatters.js` é a única
   regra de medalhas (Artilheiro, Garçom, Craque do Mês/MVP, Xerife etc.).
 
+### 6. Comparar Atletas (`player/CompararAtletas.jsx`)
+- Abre pelo botão "Comparar" do elenco (com o próprio usuário de um lado) ou pelo perfil de
+  qualquer atleta (prop `onCompare` do `PlayerDetailsModal`, no elenco e na partida). O
+  segundo atleta começa como o de OVR mais parecido.
+- Mostra as duas cartas, duelo de atributos, números (partidas, aproveitamento, gols,
+  gols/jogo, assistências, nota ajustada, evolução) e o **confronto direto**:
+  `GET /compare?a=&b=` (`backend/comparacao.js`, com testes) traz os jogos juntos e um contra
+  o outro e as notas que um deu ao outro (só de votações fechadas).
+- Exporta como PNG: no celular abre o compartilhamento (Web Share com arquivo), senão baixa.
+- **Carta FUT em tamanho menor:** os tamanhos `sm`/`xs` do `FutCard` estreitam a carta sem
+  reduzir o texto (ficam quebrados). Para cartas menores, desenhe no tamanho normal (310px,
+  fundo quadrado) e reduza com `transform: scale` num contêiner do tamanho final
+  (`CartaReduzida`) — assim também sai certo na imagem exportada.
+
 ---
 
 ## 💡 Skills Instaladas no Projeto & Antigravity

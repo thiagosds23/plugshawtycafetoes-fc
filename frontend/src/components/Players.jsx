@@ -4,7 +4,7 @@ import {
   Edit2, Plus, Loader2, UserCheck, Users, Search, 
   ArrowUpDown, FileSpreadsheet, ClipboardList, ExternalLink, 
   ShieldCheck, Download, HardDriveDownload, Check, X,
-  CheckCircle2, HelpCircle
+  CheckCircle2, HelpCircle, ArrowLeftRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toPng } from 'html-to-image';
@@ -22,6 +22,7 @@ import { downscaleForAI } from '../utils/imageProcessing';
 import EditPlayerModal from './player/EditPlayerModal';
 import AuditModal from './player/AuditModal';
 import PlayerDetailsModal from './player/PlayerDetailsModal';
+import CompararAtletas from './player/CompararAtletas';
 import '../fut-card.css';
 
 export default function Players() {
@@ -54,6 +55,8 @@ export default function Players() {
   });
   const [evalConfirmationView, setEvalConfirmationView] = useState(false);
   const [showAuditModal, setShowAuditModal] = useState(false);
+  // Comparação aberta: { a, b } com os ids dos atletas (b pode faltar)
+  const [comparacao, setComparacao] = useState(null);
 
   const fecharAvaliacao = () => { setShowEvalModal(false); setEvalConfirmationView(false); };
   useEscapeKey(fecharAvaliacao, showEvalModal);
@@ -685,6 +688,18 @@ export default function Players() {
               </span>
             </button>
 
+            {/* Comparar dois atletas (abre com o próprio usuário de um lado) */}
+            <button
+              type="button"
+              className="btn btn-secondary"
+              style={{ flex: 1, padding: '10px 6px', fontSize: '0.8rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px', whiteSpace: 'nowrap' }}
+              onClick={() => setComparacao({ a: players.some(p => p.id === meuId) ? meuId : null })}
+              disabled={players.length < 2}
+              title="Comparar dois atletas lado a lado"
+            >
+              <ArrowLeftRight size={16} style={{ flexShrink: 0 }} /> Comparar
+            </button>
+
             {isAdmin && (
               <>
                 <label 
@@ -1043,8 +1058,18 @@ export default function Players() {
         isMyPlayer={isMyPlayer}
         isAdmin={isAdmin}
         onEdit={(p) => startEditing(p)}
+        onCompare={(p) => setComparacao({ a: p.id })}
         allStats={players}
       />
+
+      {comparacao && (
+        <CompararAtletas
+          elenco={players}
+          inicialA={comparacao.a}
+          inicialB={comparacao.b}
+          onClose={() => setComparacao(null)}
+        />
+      )}
 
     </motion.div>
   );

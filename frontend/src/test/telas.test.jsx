@@ -352,3 +352,40 @@ describe('Notas públicas', () => {
     expect(screen.queryByText(/Notas da Partida/)).toBeNull();
   });
 });
+
+describe('Comparar atletas', () => {
+  const confronto = {
+    a: 3, b: 1, jogos_em_comum: 3,
+    mesmo_time: { jogos: 2, vitorias: 1, empates: 0, derrotas: 1 },
+    times_opostos: { jogos: 1, vitorias_a: 0, empates: 0, vitorias_b: 1 },
+    confrontos: [{ match_id: 30, date: '2026-09-26', adversario: null, mesmo_time: false, resultado_a: 'D', placar: '8 x 15', gols_a: 2, gols_b: 4, assists_a: 1, assists_b: 1 }],
+    notas_entre_eles: { a_para_b: 8, a_para_b_qtd: 2, b_para_a: 7.5, b_para_a_qtd: 2 }
+  };
+
+  it('no elenco: abre com o próprio atleta, mostra o duelo e o confronto direto', async () => {
+    mockApi({ 'GET /compare': confronto });
+    montar(<Players />, { user: ATLETA, rota: '/players', caminho: '/players' });
+    await screen.findAllByText('Luvluv');
+    fireEvent.click(screen.getByRole('button', { name: /Comparar/ }));
+
+    const modal = await screen.findByRole('dialog', { name: /Comparar atletas/ });
+    expect(within(modal).getByLabelText('Primeiro atleta').value).toBe('3');
+    expect(within(modal).getByText('Finalização')).toBeTruthy();
+    expect(await within(modal).findByText(/Um contra o outro:/)).toBeTruthy();
+    expect(within(modal).getByText(/Stocco deu/)).toBeTruthy();
+    expect(chamadas.some(c => c.caminho.startsWith('/compare?a=3&b='))).toBe(true);
+
+    // Trocar o segundo atleta busca o novo confronto
+    fireEvent.change(within(modal).getByLabelText('Segundo atleta'), { target: { value: '2' } });
+    await waitFor(() => expect(chamadas.some(c => c.caminho === '/compare?a=3&b=2')).toBe(true));
+  });
+
+  it('pelo perfil do atleta na partida', async () => {
+    mockApi({ 'GET /compare': confronto });
+    telaDaPartida(30);
+    fireEvent.click((await screen.findAllByText('Elias'))[0]);
+    fireEvent.click(await screen.findByRole('button', { name: /^Comparar$/ }));
+    const modal = await screen.findByRole('dialog', { name: /Comparar atletas/ });
+    expect(within(modal).getByLabelText('Primeiro atleta').value).toBe('2');
+  });
+});

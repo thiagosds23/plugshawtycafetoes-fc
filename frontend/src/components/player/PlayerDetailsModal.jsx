@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Goal, Footprints, Star, Edit2 } from 'lucide-react';
+import { X, Goal, Footprints, Star, Edit2, ArrowLeftRight } from 'lucide-react';
 import { calcOVR } from '../../utils/ovr';
 import { formatPhotoUrl } from '../../config';
 import { api } from '../../utils/api';
@@ -18,6 +18,8 @@ export default function PlayerDetailsModal({
   isMyPlayer = () => false,
   isAdmin = false,
   onEdit,
+  // Abre a comparação com este atleta já escolhido (opcional)
+  onCompare,
   // Elenco já carregado pela tela (lista de /stats). Sem ele, o modal busca sozinho.
   allStats
 }) {
@@ -275,9 +277,22 @@ export default function PlayerDetailsModal({
                 <Edit2 size={16} /> Editar Dados e Carta FUT
               </button>
             )}
-            <button 
-              className="btn btn-secondary" 
-              style={{ flex: onEdit && (isMyPlayer(player) || isAdmin) ? '0 0 100px' : 1, padding: '11px', fontSize: '0.85rem' }}
+            {onCompare && (
+              <button
+                className="btn btn-secondary"
+                style={{ flex: 1, padding: '11px', fontSize: '0.85rem', fontWeight: 800, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
+                onClick={() => {
+                  const p = player;
+                  onClose();
+                  onCompare(p);
+                }}
+              >
+                <ArrowLeftRight size={16} /> Comparar
+              </button>
+            )}
+            <button
+              className="btn btn-secondary"
+              style={{ flex: (onEdit && (isMyPlayer(player) || isAdmin)) || onCompare ? '0 0 90px' : 1, padding: '11px', fontSize: '0.85rem' }}
               onClick={onClose}
             >
               Fechar

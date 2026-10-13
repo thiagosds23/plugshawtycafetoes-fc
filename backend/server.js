@@ -19,6 +19,7 @@ const {
   aplicarForma
 } = require('./evolucao');
 const { notasDoPeriodo, minimoParaPremio } = require('./ranking');
+const { resumirConfronto } = require('./comparacao');
 
 const app = express();
 // Comprime JSON e o bundle do frontend (o JS principal cai de ~620KB para ~180KB)
@@ -1001,6 +1002,58 @@ app.put('/matches/:id', requireAdmin, async (req, res) => {
     res.json({ success: true });
   } catch (err) {
     erroInterno(res, 'atualizar a partida', err, 'Não foi possível atualizar a partida.');
+  }
+});
+
+// Confronto direto entre dois atletas: as partidas encerradas em que os dois jogaram,
+// juntos ou um contra o outro, e as notas que um deu ao outro (só de votações já
+// fechadas, como na tela da partida). Usado pela comparação de atletas.
+app.get('/compare', async (req, res) => {
+  const a = Number(req.query.a);
+  const b = Number(req.query.b);
+  if (!Number.isInteger(a) || !Number.isInteger(b) || a === b) {
+    return res.status(400).json({ error: 'Escolha dois atletas diferentes.' });
+  }
+
+  try {
+    const [linhas, notas] = await Promise.all([
+      db.all(`
+        WITH gols_do_time AS (
+               SELECT tp.team_id, COUNT(*) AS n FROM goals g
+               JOIN team_players tp ON tp.user_id = g.user_id
+               JOIN teams t ON t.id = tp.team_id AND t.match_id = g.match_id
+               GROUP BY tp.team_id
+             ),
+             placar_time AS (
+               SELECT t.id AS team_id, t.match_id, COALESCE(t.manual_score, COALESCE(gt.n, 0)) AS gols
+               FROM teams t LEFT JOIN gols_do_time gt ON gt.team_id = t.id
+             ),
+             dos_dois AS (
+               SELECT t.match_id FROM team_players tp JOIN teams t ON t.id = tp.team_id
+               WHERE tp.user_id IN (?, ?) GROUP BY t.match_id HAVING COUNT(DISTINCT tp.user_id) = 2
+             )
+        SELECT m.id AS match_id, m.date, m.type, m.opponent, tp.user_id, t.id AS team_id,
+               pro.gols AS placar_pro, COALESCE(adv.gols, 0) AS placar_contra,
+               (SELECT COUNT(*) FROM goals g WHERE g.match_id = m.id AND g.user_id = tp.user_id) AS gols,
+               (SELECT COUNT(*) FROM assists x WHERE x.match_id = m.id AND x.user_id = tp.user_id) AS assists
+        FROM team_players tp
+        JOIN teams t ON t.id = tp.team_id
+        JOIN matches m ON m.id = t.match_id
+        JOIN placar_time pro ON pro.team_id = t.id
+        LEFT JOIN placar_time adv ON adv.match_id = m.id AND adv.team_id != t.id
+        WHERE m.status = 'completed' AND tp.user_id IN (?, ?) AND m.id IN (SELECT match_id FROM dos_dois)
+        ORDER BY m.date DESC, m.id DESC
+      `, [a, b, a, b]),
+      db.all(`
+        SELECT r.match_id, r.rater_id, r.rated_id, r.score, m.status, m.finished_at, m.rating_deadline
+        FROM ratings r JOIN matches m ON m.id = r.match_id
+        WHERE (r.rater_id = ? AND r.rated_id = ?) OR (r.rater_id = ? AND r.rated_id = ?)
+      `, [a, b, b, a])
+    ]);
+
+    res.json(resumirConfronto(a, b, linhas, notas));
+  } catch (err) {
+    erroInterno(res, 'comparar atletas', err);
   }
 });
 

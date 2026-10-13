@@ -30,6 +30,7 @@ import EditarPartidaModal from './match/EditarPartidaModal';
 import AdicionarJogadorModal from './match/AdicionarJogadorModal';
 import SubstituirJogadorModal from './match/SubstituirJogadorModal';
 import PlayerDetailsModal from './player/PlayerDetailsModal';
+import CompararAtletas from './player/CompararAtletas';
 
 const DICA_PLACAR = 'Apague para voltar ao placar automático (soma dos gols)';
 
@@ -100,6 +101,8 @@ export default function MatchDetails() {
 
   // Player Stats & History Modal State
   const [selectedPlayerModal, setSelectedPlayerModal] = useState(null);
+  // Comparação aberta a partir do perfil de um atleta (id do atleta escolhido)
+  const [comparandoId, setComparandoId] = useState(null);
   const [playerHistory, setPlayerHistory] = useState([]);
   const [playerHistoryLoading, setPlayerHistoryLoading] = useState(false);
 
@@ -1667,8 +1670,17 @@ export default function MatchDetails() {
           setSelectedPlayerModal(null);
           navigate('/players', { state: { autoEdit: true, playerId } });
         }}
+        onCompare={allPlayers.length >= 2 ? (p) => setComparandoId(p.id) : undefined}
         allStats={allPlayers}
       />
+
+      {comparandoId && (
+        <CompararAtletas
+          elenco={allPlayers}
+          inicialA={comparandoId}
+          onClose={() => setComparandoId(null)}
+        />
+      )}
     </motion.div>
   );
 }

@@ -772,3 +772,11 @@ body {
   transform: translateY(0) scale(0.98);
 }
 
+
+/* Comparação de atletas: as duas cartas (reduzidas no componente) lado a lado */
+.comparacao-cartas {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
