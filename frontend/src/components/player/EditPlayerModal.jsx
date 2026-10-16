@@ -7,6 +7,7 @@ import { formatPhotoUrl } from '../../config';
 import { api } from '../../utils/api';
 import { useEscapeKey } from '../../utils/useEscapeKey';
 import { AuthContext } from '../../AuthContext';
+import EditorDeAtributos from './EditorDeAtributos';
 
 /** PIN válido: exatamente 4 números, a mesma regra do servidor. */
 const PIN_VALIDO = /^\d{4}$/;
@@ -22,6 +23,8 @@ export default function EditPlayerModal({
   onSelectNewPhoto,
   onDeletePhoto,
   onPinChanged,
+  // Depois que o admin salva os atributos (para a tela recarregar a lista)
+  onAtributosSalvos,
   fecharComEsc = true,
   isAdmin
 }) {
@@ -418,7 +421,16 @@ export default function EditPlayerModal({
             </div>
           </div>
 
-          {/* Atributos Oficiais da Carta FUT (Somente Leitura) */}
+          {/* Atributos da carta: o administrador edita os de qualquer atleta; os demais só veem */}
+          {isAdmin ? (
+            <EditorDeAtributos
+              key={player.id}
+              player={player}
+              position={editForm.position}
+              user={user}
+              onSalvo={onAtributosSalvos}
+            />
+          ) : (
           <div style={{ padding: '16px', borderRadius: '16px', background: 'rgba(255,255,255,0.02)', border: '1px solid var(--border)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
               <div>
@@ -465,6 +477,7 @@ export default function EditPlayerModal({
               ))}
             </div>
           </div>
+          )}
 
         </div>
 

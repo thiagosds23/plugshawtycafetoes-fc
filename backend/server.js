@@ -16,7 +16,8 @@ const {
   DURACAO_MAXIMA_DA_AVALIACAO,
   janelaDeAvaliacao,
   calcularFormasDe,
-  aplicarForma
+  aplicarForma,
+  ATRIBUTOS
 } = require('./evolucao');
 const { notasDoPeriodo, minimoParaPremio } = require('./ranking');
 const { resumirConfronto } = require('./comparacao');
@@ -142,9 +143,9 @@ const carregandoCalcOVR = import(
 ).then(modulo => modulo.calcOVR);
 carregandoCalcOVR.catch(err => console.error('⚠️  Não foi possível carregar a fórmula de OVR:', err.message));
 
-async function calcularFormas() {
-  const calcOVR = await carregandoCalcOVR;
-  const linhas = await db.all(`
+/** Uma linha por atleta em cada partida encerrada, com tudo que a evolução usa. */
+function carregarLinhasDaEvolucao() {
+  return db.all(`
     -- Os nomes dos CTEs não podem repetir os das tabelas: "assists AS (... FROM assists)"
     -- vira uma referência circular no SQLite
     WITH gols_partida AS (SELECT match_id, user_id, COUNT(*) AS n FROM goals GROUP BY match_id, user_id),
@@ -186,6 +187,10 @@ async function calcularFormas() {
     WHERE m.status = 'completed'
     ORDER BY m.date DESC, m.id DESC
   `);
+}
+
+async function calcularFormas() {
+  const [linhas, calcOVR] = await Promise.all([carregarLinhasDaEvolucao(), carregandoCalcOVR]);
   return calcularFormasDe(linhas, calcOVR);
 }
 
@@ -859,6 +864,68 @@ app.post('/users/import-ratings-excel', requireAdmin, docUpload.single('file'), 
     res.json({ success: true, updatedCount: updated.length, updatedPlayers: updated });
   } catch (err) {
     erroInterno(res, 'importar a planilha', err, 'Erro ao salvar notas no banco de dados.');
+  }
+});
+
+// O administrador ajusta os atributos de qualquer atleta. A tela manda os valores que
+// quer ver NA CARTA; o servidor desconta a evolução pelos jogos e grava a BASE (as
+// colunas de users), então a evolução continua valendo por cima. Como a evolução
+// depende do nível base, confere o resultado e corrige até a carta bater (até 3 vezes).
+app.put('/users/:id/attributes', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const valores = (req.body && req.body.valores) || {};
+  const desejado = {};
+  for (const k of ATRIBUTOS) {
+    if (valores[k] === undefined) continue;
+    const v = Number(valores[k]);
+    if (!Number.isInteger(v) || v < 1 || v > 99) {
+      return res.status(400).json({ error: 'Cada atributo precisa ser um número inteiro de 1 a 99.' });
+    }
+    desejado[k] = v;
+  }
+  if (Object.keys(desejado).length === 0) return res.status(400).json({ error: 'Nenhum atributo enviado.' });
+
+  try {
+    const antes = await db.get(`SELECT id, username, nickname, ${ATRIBUTOS.join(', ')} FROM users WHERE id = ?`, [id]);
+    if (!antes) return res.status(404).json({ error: 'Atleta não encontrado' });
+
+    // O admin escolhe a carta; o banco guarda a base. A evolução depende da própria base
+    // (acima de 75 sobe mais devagar, e o OVR muda o que se esperava do time), então a
+    // base certa sai por tentativas, simuladas em memória e gravadas uma vez só
+    const [linhas, calcOVR] = await Promise.all([carregarLinhasDaEvolucao(), carregandoCalcOVR]);
+    const linhasDoAtleta = linhas.filter(l => Number(l.user_id) === id);
+    const cartaCom = (b) => {
+      if (linhasDoAtleta.length === 0) return b;
+      linhasDoAtleta.forEach(l => Object.assign(l, b));
+      return aplicarForma({ id, ...b }, calcularFormasDe(linhas, calcOVR));
+    };
+    const distancia = (carta) => Object.entries(desejado).reduce((soma, [k, v]) => soma + Math.abs(carta[k] - v), 0);
+
+    const base = Object.fromEntries(ATRIBUTOS.map(k => [k, Number(antes[k]) || 50]));
+    let melhor = { base: { ...base }, distancia: Infinity };
+    for (let tentativa = 0; tentativa < 20; tentativa++) {
+      const carta = cartaCom(base);
+      const d = distancia(carta);
+      if (d < melhor.distancia) melhor = { base: { ...base }, distancia: d };
+      if (d === 0) break;
+      Object.entries(desejado).forEach(([k, v]) => { base[k] = Math.max(1, Math.min(99, base[k] + (v - carta[k]))); });
+    }
+    Object.assign(base, melhor.base);
+    await db.run(`UPDATE users SET ${ATRIBUTOS.map(k => `${k} = ?`).join(', ')} WHERE id = ?`, [...ATRIBUTOS.map(k => base[k]), id]);
+    invalidarFormas();
+
+    const mudancas = ATRIBUTOS
+      .filter(k => Number(antes[k]) !== base[k])
+      .map(k => `${k.slice(0, 3).toUpperCase()} ${antes[k]}→${base[k]}`);
+    auditar(req, 'ADMIN', `Ajustou os atributos base de ${nomeDoAtleta(antes)}${mudancas.length ? `: ${mudancas.join(', ')}` : ' (sem mudança)'}`);
+
+    const [row, formas] = await Promise.all([
+      db.get(`SELECT ${USER_COLS}, ${HAS_PIN_COL}, ${photoCols()} FROM users WHERE id = ?`, [id]),
+      obterFormas()
+    ]);
+    res.json(aplicarForma(withPhotoUrls(row), formas));
+  } catch (err) {
+    erroInterno(res, 'ajustar os atributos', err, 'Não foi possível salvar os atributos.');
   }
 });
 

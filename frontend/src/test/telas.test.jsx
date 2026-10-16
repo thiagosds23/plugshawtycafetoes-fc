@@ -435,3 +435,31 @@ describe('Histórico de notas do atleta', () => {
     expect(await screen.findByRole('dialog', { name: /Notas de Fela/ })).toBeTruthy();
   });
 });
+
+describe('Editar atributos (admin)', () => {
+  const abrirEdicao = (user, playerId) => montar(<Players />, {
+    user, rota: { pathname: '/players', state: { autoEdit: true, playerId } }, caminho: '/players'
+  });
+
+  it('admin muda o OVR, os atributos acompanham e salva para qualquer atleta', async () => {
+    mockApi({ 'PUT /users/3/attributes': { ...ELENCO[2], pace: 80, shooting: 80, passing: 80, dribbling: 80, defending: 70, physical: 75 } });
+    abrirEdicao(ADMIN, 3);
+    const editor = (await screen.findByText(/Atributos da carta \(admin\)/)).closest('div').parentElement;
+
+    fireEvent.change(within(editor).getByLabelText('OVR desejado'), { target: { value: '80' } });
+    const ritmo = Number(within(editor).getByLabelText('Valor de Ritmo').value);
+    expect(ritmo).toBeGreaterThan(70);
+
+    fireEvent.click(within(editor).getByRole('button', { name: /Salvar atributos/ }));
+    expect(await within(editor).findByText(/Atributos salvos/)).toBeTruthy();
+    const pedido = chamadas.find(c => c.metodo === 'PUT' && c.caminho === '/users/3/attributes');
+    expect(pedido.auth).toBe('Bearer token-admin');
+    expect(pedido.corpo.valores.pace).toBe(ritmo);
+  });
+
+  it('atleta comum vê os atributos só para leitura', async () => {
+    abrirEdicao(ATLETA, 3);
+    expect(await screen.findByText(/Estatísticas Oficiais do Atleta/)).toBeTruthy();
+    expect(screen.queryByText(/Atributos da carta \(admin\)/)).toBeNull();
+  });
+});

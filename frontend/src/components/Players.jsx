@@ -903,6 +903,7 @@ export default function Players() {
           onSelectNewPhoto={(e) => handlePhotoSelect(editingPlayer, e)}
           onDeletePhoto={() => removePlayerPhoto(editingPlayer.id)}
           onPinChanged={loadPlayers}
+          onAtributosSalvos={loadPlayers}
           // Com o ajuste de foto aberto por cima, o Esc fecha só ele (não perde a edição)
           fecharComEsc={!cropModalPlayer}
           isAdmin={isAdmin}

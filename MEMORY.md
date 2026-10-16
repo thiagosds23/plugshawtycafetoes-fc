@@ -200,6 +200,15 @@ No frontend, `calcBaseOVR(player)` e `ovrTrend(player)` (em `utils/ovr.js`) dão
 planilha e a variação. O sorteio usa só `calcOVR` — somar a nota média de novo contaria o
 desempenho duas vezes.
 
+**Ajuste manual pelo admin** (`player/EditorDeAtributos.jsx`, dentro do `EditPlayerModal`,
+só para admin): o admin escolhe os valores **da carta** (o que todos veem) ou digita o OVR
+desejado — `ajustarParaOVR(valores, alvo, posição)` em `utils/ovr.js` desloca os seis
+atributos por igual, mantendo o perfil, até o OVR bater. `PUT /users/:id/attributes`
+(`{ valores }`, só admin) converte carta → base: como a evolução depende da própria base
+(freio acima de 75, OVR do time), ele simula em memória com `carregarLinhasDaEvolucao()` +
+`calcularFormasDe()` até a carta bater, grava a base uma vez e registra na auditoria. A
+evolução continua valendo depois do ajuste.
+
 ## 🏆 Ranking e Prêmios
 
 `/stats` devolve, além dos totais: `avg_rating` (média das médias por partida),

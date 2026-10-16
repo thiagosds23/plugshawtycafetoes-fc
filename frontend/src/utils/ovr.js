@@ -61,6 +61,30 @@ export function calcBaseOVR(player) {
   return calcOVR({ ...player, ...player.base_attrs });
 }
 
+const CHAVES_DOS_ATRIBUTOS = ['pace', 'shooting', 'passing', 'dribbling', 'defending', 'physical'];
+
+/**
+ * Ajusta os seis atributos juntos (somando o mesmo valor a todos) até a carta ter o OVR
+ * `alvo` na posição dada. Mantém o perfil do atleta (quem chuta melhor que defende
+ * continua assim) e respeita os limites de 1 a 99.
+ */
+export function ajustarParaOVR(valores, alvo, position) {
+  const deslocar = (k) => {
+    const saida = { ...valores };
+    CHAVES_DOS_ATRIBUTOS.forEach(c => { saida[c] = Math.max(1, Math.min(99, Math.round((Number(valores[c]) || 50) + k))); });
+    return saida;
+  };
+  const ovrDe = (v) => calcOVR({ ...v, position });
+  let k = alvo - ovrDe(valores);
+  let resultado = deslocar(k);
+  // Arredondamento e limites podem deixar 1 ponto de diferença: corrige aos poucos
+  for (let i = 0; i < 30 && ovrDe(resultado) !== alvo; i++) {
+    k += alvo > ovrDe(resultado) ? 1 : -1;
+    resultado = deslocar(k);
+  }
+  return resultado;
+}
+
 /** OVR médio de um time (lista de atletas), arredondado. 0 se o time está vazio. */
 export function calcTeamOVR(players) {
   if (!Array.isArray(players) || players.length === 0) return 0;
